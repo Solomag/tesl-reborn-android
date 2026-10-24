@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 import zipfile
 
-LANGUAGES = dict(en_us=0, de_de=1, es_es=2, fr_fr=3, it_it=4,
-                 pl_pl=5, pt_br=6, ru_ru=7, tr_tr=8)
+LANGUAGES = dict(en_us=0, de_de=1, es_es=2, es_mx=3, fr_fr=4,
+                 it_it=5, pl_pl=6, pt_br=7, ru_ru=8, tr_tr=9)
 
 
 def inspect(path):

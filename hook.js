@@ -104,7 +104,7 @@ function createRebornUpdater(io, embedded) {
           readCore(clean);
           selected = clean;
           // Any fallback to previous is also a trial, committed only by ready().
-          trial = !state.active || selected.sha256 !== state.active.sha256;
+          trial = !state.active || selected.sha256 !== state.active.sha256 || selected.revision !== state.active.revision;
           break;
         } catch (error) {
           reject(candidate && candidate.sha256);

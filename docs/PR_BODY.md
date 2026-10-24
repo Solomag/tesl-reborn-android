@@ -14,6 +14,9 @@ Android core independently updateable through a stable loader.
   before building; no production feed is configured by this branch.
 - Add a pinned source build, model tests, and an OBB inventory tool that separates
   manifest declarations from matching archive entries.
+- Correct the language enum using the 11009 bundle paths (including es_mx),
+  fail incomplete cache restores, and add Git-channel publication and complete
+  APK migration helpers for testing the fork before opening a PR.
 
 Validation: `npm ci`, `npm run build`, `npm test`, Python syntax compilation and
 `git diff --check`. Tests cover UI geometry, native/fallback tooltips, pinching,

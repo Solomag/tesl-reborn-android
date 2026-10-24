@@ -68,8 +68,8 @@ DEVICE_CACHE = ("/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/
 PACKAGE = "com.bethsoft.theelderscrollslegends"
 
 ANDROID = BuildTarget.Android.value        # the build target of the player
-LANGUAGES = {"en_us": 0, "de_de": 1, "es_es": 2, "fr_fr": 3, "it_it": 4,
-             "pl_pl": 5, "pt_br": 6, "ru_ru": 7, "tr_tr": 8}
+LANGUAGES = {"en_us": 0, "de_de": 1, "es_es": 2, "es_mx": 3, "fr_fr": 4,
+             "it_it": 5, "pl_pl": 6, "pt_br": 7, "ru_ru": 8, "tr_tr": 9}
 
 
 def patch_platform(src, dst):
@@ -95,7 +95,7 @@ def main():
     ap.add_argument("--push", action="store_true",
                     help="copy the cache to the device")
     ap.add_argument("--serial", default=None, help="the device to use")
-    ap.add_argument("--language", default="en_us",
+    ap.add_argument("--language", default="en_us", choices=LANGUAGES,
                     help="the language of the audio bundles (en_us, de_de, ...)")
     ap.add_argument("--assets", default=None,
                     help="the StreamingAssets folder of the Windows game")
@@ -114,10 +114,18 @@ def main():
     versions = json.load(open(VERSIONS))
     entries = versions["_entries"] if isinstance(versions, dict) else versions
 
-    loc_code = LANGUAGES.get(args.language, 0)
+    loc_code = LANGUAGES[args.language]
     wanted = [e for e in entries
               if e["StorageMode"] == 0
               and (e["LocCode"] == loc_code or "filemanifest" in e["BundleName"])]
+
+    # Do not silently produce an incomplete language pack with exit status 0.
+    missing = [e["BundleName"] for e in wanted
+               if not os.path.isfile(os.path.join(WINDOWS_ASSETS, e["BundleName"]))]
+    if missing:
+        for name in missing:
+            print("missing in the Windows game:", name, file=sys.stderr)
+        sys.exit("Incomplete source assets; no bundles were restored")
 
     now = int(time.time())
     total = 0

@@ -107,3 +107,11 @@ console.log(`PASS: ${scenarios} update lifecycle, rollback, integrity, offline a
  assert.equal(requests,2,'embedded update channel works without external configuration');
 }
 console.log('PASS: APK upgrade revision floor and embedded HTTPS feed');
+{
+ const f=fixture();let u=f.launch();u.stage(meta(6),code(6));u=f.launch();u.ready();
+ const newer={...meta(6),revision:7,version:'test-7-identical-core'};
+ assert(u.stage(newer,code(6)));u=f.launch();u.ready();
+ assert.equal(f.disk.state.active.revision,7,'a manifest-only release must commit its new revision');
+ assert.equal(f.disk.state.pending,null);
+}
+console.log('PASS: higher revision with unchanged payload commits and clears pending');

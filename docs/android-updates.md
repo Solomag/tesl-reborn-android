@@ -1,5 +1,7 @@
 # Android feature parity and update loader
 
+For the fork-first device test procedure, see [Проверка перед PR](testing-ru.md).
+
 ## Behavior included
 
 Deck tiles show one correctly aligned win/loss statistic. Legendary title
@@ -90,6 +92,23 @@ from the original OBB and currently recovers them from PC StreamingAssets.
 Localized download packs must be generated from the verified Android cache,
 with shared filemanifest bundles separated from per-language bundles. Do not
 assume all required resources exist in an arbitrary online OBB.
+
+The verified 11009 manifest uses `es_mx=3`, `fr_fr=4`, `it_it=5`, `pl_pl=6`,
+`pt_br=7`, `ru_ru=8`, and `tr_tr=9`. The previous table omitted es_mx and shifted
+these codes. Both restore and inspection now use the corrected mapping. A
+restore fails before writing if any selected PC source bundle is missing.
+
+`tools/publish_hook.py` prepares `updates/<channel>/manifest.json` and a
+content-addressed payload under `updates/payloads/`. Committing and pushing
+these files publishes a raw-GitHub channel without requiring Pages. The phone
+downloads the compiled Android core, never `hook.ts` or the PC DLL. The command
+does not push or open a PR itself. Channel revisions must increase.
+
+`tools/prepare_test_apk.py` replaces the loader in an existing complete APK,
+preserving cache entries and native-library offsets. It adds the pinned emoji
+resources and produces an unsigned ZIP32 APK for subsequent signing with the
+existing certificate. This is a test/migration shortcut; it does not exercise
+all of `build_apk.py` from a clean base APK.
 
 ## Follow-up scope
 
