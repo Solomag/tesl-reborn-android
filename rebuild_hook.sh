@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Rebuild hook.js from hook.ts using the vendored node_modules.
+# Rebuild the core and the stable loader installed in the APK.
 set -e
 cd "$(dirname "$0")"
-node ./node_modules/frida-compile/dist/cli.js hook.ts -o hook.js -T none
+npm run build
 echo "built hook.js ($(wc -c < hook.js) bytes)"

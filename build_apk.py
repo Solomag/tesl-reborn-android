@@ -4,7 +4,7 @@
 The patched classes.dex is derived at build time from base.apk and the committed
 JNIBridge_a.patched.smali (no proprietary binary blob is shipped in the repo).
 """
-import json, os, shutil, subprocess, sys, zipfile, lief
+import hashlib, json, os, shutil, subprocess, sys, zipfile, lief
 
 HERE     = os.path.dirname(os.path.abspath(__file__))
 BASE     = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "base.apk")
@@ -15,6 +15,14 @@ ABI      = "lib/arm64-v8a"
 WORK     = os.path.join(HERE, "work")
 
 lief.logging.disable()
+emoji_resources = {
+    "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
+    "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa",
+}
+for name, expected in emoji_resources.items():
+    path = os.path.join(HERE, "resources", "emojis", name)
+    if not os.path.isfile(path) or hashlib.sha256(open(path, "rb").read()).hexdigest() != expected:
+        sys.exit("Missing or invalid emoji resources. Run: python3 tools/prepare_emojis.py")
 shutil.rmtree(WORK, ignore_errors=True); os.makedirs(WORK)
 
 # Rebuild patched_classes.dex from the committed smali source + the game's base dex.
@@ -64,6 +72,8 @@ extra = {
     f"{ABI}/libhook.js.so":       HOOK_JS,
     "classes.dex":                PATCHED_DEX,
 }
+for name in emoji_resources:
+    extra[f"assets/tesl-reborn/emojis/{name}"] = os.path.join(HERE, "resources", "emojis", name)
 with zipfile.ZipFile(BASE) as zin, zipfile.ZipFile(unsigned, "w", zipfile.ZIP_DEFLATED) as zout:
     for item in zin.infolist():
         n = item.filename
@@ -73,7 +83,8 @@ with zipfile.ZipFile(BASE) as zin, zipfile.ZipFile(unsigned, "w", zipfile.ZIP_DE
             continue                       # replaced below
         zout.writestr(item, zin.read(n), compress_type=item.compress_type)
     for name, path in extra.items():
-        zout.write(path, name, compress_type=zipfile.ZIP_DEFLATED)
+        method = zipfile.ZIP_STORED if name.startswith("assets/tesl-reborn/emojis/") else zipfile.ZIP_DEFLATED
+        zout.write(path, name, compress_type=method)
 
 # 4) align + sign (debug key, generated on first run)
 aligned = os.path.join(WORK, "aligned.apk")

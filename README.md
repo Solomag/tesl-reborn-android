@@ -3,6 +3,10 @@
 Android reimplementation of the Tesl Reborn client, built by injecting a Frida
 gadget-based hook (`hook.ts`) over the IL2CPP Unity player.
 
+The Android UI improvements, stable hook loader, update-channel configuration,
+emoji setup and OBB inspection tool are described in
+[Android features and updates](docs/android-updates.md).
+
 ## What you get
 
 The final artefact `tesl-reborn.xapk` is a single ~2.2 GB package. After
@@ -24,8 +28,7 @@ translations all load from local files. Auto-login works once a
   (`pip install lief UnityPy`).
 - Java JDK (for `zipalign` and `uber-apk-signer.jar`).
 - Android build-tools 14 (`android-14-buildtools`, must provide `zipalign`).
-- Node.js + `frida-compile` (from `node_modules`, created with
-  `npm install` in that directory).
+- Node.js and npm (`npm ci` installs the pinned build tool).
 - A Frida gadget for Android arm64 v8a (17.24.3, the file written as
   `gadget.so`).
 - Minimum Android: 10 (Android 14 was the development target).
@@ -49,9 +52,12 @@ Every command below runs from the `` directory, in order.
 ### 1. Compile the hook
 
 ```bash
-node node_modules/.bin/frida-compile hook.ts -o hook.js
+npm ci
+python3 tools/prepare_emojis.py
+npm run build
+npm test
 ```
-`rebuild_hook.sh` does the same using the vendored `node_modules`.
+`rebuild_hook.sh` rebuilds both the bundled core and its APK loader.
 
 ### 2. Inject the gadget + hook into `base.apk`
 

@@ -41,3 +41,6 @@ files_on_device
 obb_contents
 tesl-hook*.json
 node_modules/
+resources/
+release/
+obb-report.json

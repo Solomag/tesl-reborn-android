@@ -25,7 +25,16 @@ try {
     "int", ["int", "pointer", "pointer"]);
 } catch (e) { console.log(`${TAG} no liblog: ${e}`); }
 const tagPtr = Memory.allocUtf8String("tesl-hook");
+function redactLog(message) {
+  return String(message)
+    .replace(/("(?:password|encryptedAppTicket|token|sessionToken|access_token|refresh_token)"\s*:\s*")[^"\r\n]*("|$)/gi, '$1[REDACTED]$2')
+    .replace(/\b(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/((?:authorization|x-session-token)\s*:\s*)[^"\r\n]*/gi, '$1[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, '[REDACTED-JWT]');
+}
+
 const log = (m: string) => {
+  m = redactLog(m);
   console.log(`${TAG} ${m}`);
   try { androidLogWrite?.(4, tagPtr, Memory.allocUtf8String(m.length > 900 ? m.slice(0, 900) + "..." : m)); } catch (_) {}
 };
@@ -128,7 +137,7 @@ const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-3`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-23-port-source`);
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -297,43 +306,43 @@ Il2Cpp.perform(() => {
     });
   });
   // trace results via CallCallback (runs when a request completes; the state setter is inlined, so it can't be hooked)
+  // BEGIN android-ui: http-diagnostics
+function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
+  function reportHttpResult(req, ordinaryBudget) {
+    const uri = String(call(req, "get_Uri"));
+    const state = String(call(req, "get_State"));
+    const response = call(req, "get_Response");
+    let status = 0, info = "no response";
+    if (!isNull(response)) {
+      status = Number(call(response, "get_StatusCode"));
+      info = `status ${status}`;
+    } else {
+      try {
+        const exception = call(req, "get_Exception");
+        if (!isNull(exception)) info = `exception: ${String(exception)}`;
+      } catch (_) {}
+    }
+    // Failures and authentication completions must remain visible beyond the
+    // first 80 responses. Bodies and headers are deliberately omitted here.
+    if (ordinaryBudget || status === 0 || status >= 400 || /\/api\/account\//.test(uri))
+      log(`<- ${state} ${diagnosticUri(uri)} ${info}`);
+    if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
+      if (status === 200) writeSavedLogin(pendingLogin.username, pendingLogin.password);
+      else log(`login: HTTP ${status}; authentication did not complete successfully`);
+      pendingLogin = null;
+    }
+  }
   section("http trace", () => {
     let seen = 0;
     Interceptor.attach(cls(img, "BestHTTP.HTTPRequest").method("CallCallback").virtualAddress, {
       onEnter(args) {
-        if (seen++ > 80) return;
-        try {
-          const req = new Il2Cpp.Object(args[0]);
-          const uri = String(call(req, "get_Uri"));
-          const state = String(call(req, "get_State"));
-          const resp = call(req, "get_Response");
-          let info = "no response";
-          let status = 0;
-          if (resp && !resp.handle.isNull()) {
-            const code = Number(call(resp, "get_StatusCode"));
-            status = code;
-            let text = "";
-            try { text = String(call(resp, "get_DataAsText")?.content ?? ""); } catch (_) {}
-            info = `status ${code} body: ${text.replace(/\s+/g, " ").slice(0, 300)}`;
-          } else {
-            try { info = `exception: ${call(req, "get_Exception")}`; } catch (_) {}
-          }
-          let sent = "";
-          try { sent = ` sent-headers: ${String(call(req, "DumpHeaders")).replace(/\s+/g, " ").slice(0, 300)}`; } catch (_) {}
-          log(`<- ${state} ${uri} ${info}${sent}`);
-          // The credentials are only stored once the service accepted them, and they are dropped again
-          // as soon as the service rejects them.
-          if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
-            if (status === 200) writeSavedLogin(pendingLogin.username, pendingLogin.password);
-            else log("the service rejected the login, the saved credentials are dropped");
-            pendingLogin = null;
-          }
-        } catch (e) { log(`trace error: ${e}`); }
-      },
+        try { reportHttpResult(new Il2Cpp.Object(args[0]), seen++ < 80); }
+        catch (error) { log(`trace error: ${error}`); }
+      }
     });
   });
+// END android-ui: http-diagnostics
 
-  // 4) Error tracing: the in-game error dialog, and the pubsub websocket / socket.io layer
   const strOf = (p: NativePointer) => { try { return p.isNull() ? "" : String(new Il2Cpp.String(p).content ?? ""); } catch (_) { return "?"; } };
   const msgOf = (p: NativePointer) => { try { return p.isNull() ? "" : String(call(new Il2Cpp.Object(p), "get_Message")); } catch (_) { return "?"; } };
   const byName = (full: string, suffix: string, minParams = 0) => {
@@ -660,6 +669,17 @@ Il2Cpp.perform(() => {
   }
 
   // Builds a value type for a managed enum.
+  function unityStruct(name, fields) {
+    const boxed = ucls(name).alloc();
+    for (const key of Object.keys(fields)) boxed.field(key).value = fields[key];
+    return boxed.unbox();
+  }
+  function vec2(x, y) {
+    return unityStruct("UnityEngine.Vector2", { x, y });
+  }
+  function rgba(r, g, b, a) {
+    return unityStruct("UnityEngine.Color", { r, g, b, a });
+  }
   function enumBox(enumClass: Il2Cpp.Class, n: number): Il2Cpp.ValueType {
     const boxed = enumClass.alloc();
     boxed.field<number>("value__").value = n;
@@ -690,34 +710,62 @@ Il2Cpp.perform(() => {
 
   // A GET through the game's own HTTP stack. The callback is invoked by
   // BestHTTP from its update loop, so it runs on the Unity main thread.
-  function httpGet(url: string, withAuth: boolean, cb: (status: number, body: string) => void) {
-    try {
-      const uri = newWith(Il2Cpp.corlib.class("System.Uri"), Il2Cpp.string(url));
-      const del = Il2Cpp.delegate(cls(img, "BestHTTP.OnRequestFinishedDelegate"), (req: any, resp: any) => {
-        try {
-          if (isNull(resp)) { cb(-1, ""); return; }
-          const status = Number(call(resp, "get_StatusCode"));
-          let body = "";
-          try { body = String(call(resp, "get_DataAsText")?.content ?? ""); } catch (_) {}
-          cb(status, body);
-        } catch (e) { cb(-1, String(e)); }
-      });
-      const req = newWith(cls(img, "BestHTTP.HTTPRequest"), uri, del);
-      (req.method("AddHeader") as any).invoke(Il2Cpp.string("Accept"), Il2Cpp.string("application/json"));
-      if (withAuth) {
-        const token = authToken();
-        if (token) (req.method("AddHeader") as any).invoke(Il2Cpp.string("Authorization"), Il2Cpp.string("Bearer " + token));
+  function httpGet(url, withAuth, cb, updateRequest = false) {
+    // Avoid constructing a nested request in Inventory/Stats.OnResponse.
+    schedule(0, () => {
+      let stage = "URI constructor";
+      try {
+        const uri = ucls("System.Uri").alloc();
+        uri.method(".ctor").overload("System.String").invoke(Il2Cpp.string(url));
+        stage = "callback delegate";
+        const del = Il2Cpp.delegate(cls(img, "BestHTTP.OnRequestFinishedDelegate"), (req, resp) => {
+          try {
+            if (isNull(resp)) {
+              let detail = "response is null";
+              try { detail += `, state=${call(req, "get_State")}, exception=${call(req, "get_Exception")}`; } catch (_) {}
+              log(`GET ${url} failed: ${detail}`);
+              cb(-1, detail);
+              return;
+            }
+            const status = Number(call(resp, "get_StatusCode"));
+            let body = "";
+            try { body = String(call(resp, "get_DataAsText")?.content ?? ""); } catch (_) {}
+            log(`GET ${url} completed: HTTP ${status}`);
+            const cachedBody = status === 304 && body.trim().length > 0;
+            if (cachedBody) log(`GET ${url}: cached response body accepted`);
+            cb(cachedBody ? 200 : status, body);
+          } catch (e) {
+            log(`GET ${url} callback failed: ${e}`);
+            cb(-1, String(e));
+          }
+        });
+        stage = "HTTPRequest(Uri, OnRequestFinishedDelegate) constructor";
+        const req = cls(img, "BestHTTP.HTTPRequest").alloc();
+        req.method(".ctor").overload("System.Uri", "BestHTTP.OnRequestFinishedDelegate").invoke(uri, del);
+        stage = "update request constraints";
+        if (updateRequest) {
+          // Do not allow HTTPS release URLs to redirect to a different origin.
+          req.method("set_MaxRedirects").invoke(0);
+        }
+        stage = "headers";
+        req.method("AddHeader").invoke(Il2Cpp.string("Accept"), Il2Cpp.string("application/json"));
+        req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
+        if (withAuth) {
+          const token = authToken();
+          if (!token) throw new Error("session token unavailable in ServicesManager.AuthData");
+          req.method("AddHeader").invoke(Il2Cpp.string("Authorization"), Il2Cpp.string("Bearer " + token));
+        }
+        stage = "Send";
+        req.method("Send").invoke();
+        log(`GET ${url} queued`);
+      } catch (e) {
+        log(`GET ${url} setup failed at ${stage}: ${e}`);
+        cb(-1, String(e));
       }
-      (req.method("Send") as any).invoke();
-    } catch (e) { cb(-1, String(e)); }
+    });
   }
 
-  // ---------------------------------------------------------------------
-  // EndGameStatePatch / SoloArenaPatch: refresh the rewards after a match.
-  // The reborn server never sends the "matchrewards"/"rewards" push notices
-  // the original client waited for, so the client asks for them itself.
-  // ---------------------------------------------------------------------
-  section("rewards refresh", () => {
+    section("rewards refresh", () => {
     const pubSub = cls(img, "SparkleServices.PubSub");
     const createPush = pubSub.method("CreatePushNotification");
     const gameNetwork = cls(img, "SPTESL.GameNetworkManager");
@@ -832,6 +880,7 @@ Il2Cpp.perform(() => {
         }));
         statsFinishedLoading = true;
         log(`match history: ${matchEntryData.length} entries`);
+        refreshHistoryTooltips();
       } catch (e) { log(`fetchExtendedData parse error: ${e}`); statsFinishedLoading = true; }
     });
   }
@@ -896,127 +945,192 @@ Il2Cpp.perform(() => {
   // ---------------------------------------------------------------------
   // DeckTileAwakePatch: show the win/loss ratio on every deck tile.
   // ---------------------------------------------------------------------
-  const deckTiles = new Set<string>();
+  // Keep the actual components we created. The deck-name parent may be several
+  // levels below DeckTile; Transform.Find(name) does not search recursively.
+  // Keep the actual components we created. The deck-name parent may be several
+  // levels below DeckTile; Transform.Find(name) does not search recursively.
+  // BEGIN android-ui: deck-ui
+// Keep the actual components we created. The deck-name parent may be several
+  // levels below DeckTile; Transform.Find(name) does not search recursively.
+  const deckTiles = new Map();
+  let deckUiCreated = 0, deckUiShown = 0, deckUiMissing = 0;
+  let deckUiLastError = "", deckUiFailures = 0;
+
+  function rememberDeckTile(tile) {
+    const key = tile.handle.toString();
+    let record = deckTiles.get(key);
+    if (!record) {
+      record = { tile: tile.weakRef(false), container: null, label: null, shown: false, missing: false, rect: null };
+      deckTiles.set(key, record);
+    }
+    return record;
+  }
+
+  function forgetDeckTile(key) {
+    const record = deckTiles.get(key);
+    if (!record) return;
+    for (const handle of [record.tile, record.container, record.label, record.rect]) {
+      try { if (handle) handle.free(); } catch (_) {}
+    }
+    deckTiles.delete(key);
+  }
 
   function refreshDeckTileLabels() {
-    for (const key of Array.from(deckTiles)) {
+    for (const [key, record] of Array.from(deckTiles)) {
       try {
-        const tile = new Il2Cpp.Object(ptr(key));
-        if (tile.class.name !== "DeckTile") { deckTiles.delete(key); continue; }
+        const tile = record.tile.target;
+        if (isNull(tile)) { forgetDeckTile(key); continue; }
         updateDeckTileLabel(tile);
-      } catch (_) { deckTiles.delete(key); }
+      } catch (error) {
+        forgetDeckTile(key);
+        log(`stats UI: discarded destroyed tile: ${error}`);
+      }
     }
   }
 
-  function updateDeckTileLabel(tile: Il2Cpp.Object) {
+  function createDeckTileLabel(tile) {
+    const record = rememberDeckTile(tile);
+    if (record.container && record.label) return true;
+    let container = null;
     try {
-      const transform = call(tile, "get_transform");
-      if (isNull(transform)) return;
-      const container = call(transform, "Find", Il2Cpp.string("WinLossRatioContainer"));
-      if (isNull(container)) return;
-      const labelTransform = call(container, "Find", Il2Cpp.string("WinLossRatioLabel"));
-      if (isNull(labelTransform)) return;
-      const label = (labelTransform as any).method("GetComponent")
-        .overload("System.Type").invoke(ucls("UnityEngine.UI.Text").type.object) as Il2Cpp.Object;
-      if (isNull(label)) return;
-      const stats = deckStats.get(Number(call(tile, "GetDeckId")));
-      const text = stats ? `${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)` : "";
-      (label.method("set_text") as any).invoke(Il2Cpp.string(text));
-      const labelObject = call(labelTransform, "gameObject");
-      if (!isNull(labelObject)) (labelObject.method("SetActive") as any).invoke(stats != null);
-    } catch (e) { log(`deck tile label failed: ${e}`); }
+      const nameText = tile.field("DeckNameText").value;
+      if (isNull(nameText)) return false;
+      const parent = call(tile, "get_transform");
+      if (isNull(parent)) return false;
+      const rectType = ucls("UnityEngine.RectTransform");
+      const gameObject = ucls("UnityEngine.GameObject");
+      const layer = Number(call(call(parent, "get_gameObject"), "get_layer"));
+      const makeUiObject = (name, parentTransform) => {
+        const go = newWith(gameObject, Il2Cpp.string(name),
+          Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [rectType.type.object]));
+        call(go, "set_layer", layer);
+        call(go, "get_transform").method("SetParent")
+          .overload("UnityEngine.Transform", "System.Boolean").invoke(parentTransform, false);
+        return go;
+      };
+      const rectOf = go => go.method("GetComponent").overload("System.Type").invoke(rectType.type.object);
+      const addComponent = (go, type) => go.method("AddComponent").overload("System.Type").invoke(ucls(type).type.object);
+      const stretch = rect => {
+        call(rect, "set_anchorMin", vec2(0, 0));
+        call(rect, "set_anchorMax", vec2(1, 1));
+        call(rect, "set_offsetMin", vec2(0, 0));
+        call(rect, "set_offsetMax", vec2(0, 0));
+      };
+      container = makeUiObject("WinLossRatioContainer", parent);
+      call(container, "SetActive", false);
+      const containerTransform = call(container, "get_transform");
+      const containerRect = rectOf(container);
+      call(containerRect, "set_anchorMin", vec2(1, 0));
+      call(containerRect, "set_anchorMax", vec2(1, 0));
+      call(containerRect, "set_pivot", vec2(1, 0));
+      call(containerRect, "set_anchoredPosition", vec2(-1, 1));
+      call(containerRect, "set_sizeDelta", vec2(100, 24));
+      const background = makeUiObject("Background", containerTransform);
+      stretch(rectOf(background));
+      const backgroundImage = addComponent(background, "UnityEngine.UI.Image");
+      call(backgroundImage, "set_color", rgba(0, 0, 0, 0.7));
+      call(backgroundImage, "set_raycastTarget", false);
+      // Match the actual renderer family. A TMP_FontAsset must never be passed
+      // to UnityEngine.UI.Text.set_font, which expects UnityEngine.Font.
+      const ancestry = Array.from(nameText.class.hierarchy()).map(c => c.type.name);
+      const isTmp = ancestry.includes("TMPro.TextMeshProUGUI") || ancestry.includes("TMPro.TMP_Text");
+      const isLegacy = ancestry.includes("UnityEngine.UI.Text");
+      if (!isTmp && !isLegacy) throw Error(`Unsupported deck-name renderer: ${nameText.class.type.name}`);
+      const labelObject = makeUiObject("WinLossRatioLabel", containerTransform);
+      stretch(rectOf(labelObject));
+      const renderer = isTmp ? "TMPro.TextMeshProUGUI" : "UnityEngine.UI.Text";
+      const label = addComponent(labelObject, renderer);
+      const font = call(nameText, "get_font");
+      if (isNull(font)) throw Error("DeckNameText has no font");
+      call(label, "set_font", font);
+      call(label, "set_fontSize", 16);
+      if (isTmp) {
+        call(label, "set_enableAutoSizing", false);
+        const alignmentClass = ucls("TMPro.TextAlignmentOptions");
+        const center = enumVal(alignmentClass.field("Center").value);
+        call(label, "set_alignment", enumBox(alignmentClass, center));
+        const wrapping = label.tryMethod("set_enableWordWrapping", 1);
+        if (wrapping) wrapping.invoke(false);
+      } else {
+        call(label, "set_resizeTextForBestFit", false);
+        call(label, "set_alignment", 4); // MiddleCenter
+        call(label, "set_horizontalOverflow", 1); // Overflow
+        call(label, "set_verticalOverflow", 1); // Overflow
+      }
+      call(label, "set_color", rgba(1, 1, 1, 1));
+      call(label, "set_raycastTarget", false);
+      call(label, "set_enabled", true);
+      record.rect = containerRect.ref(false);
+      record.container = container.ref(false);
+      record.label = label.ref(false);
+      if (++deckUiCreated <= 8) log(`stats UI: created panel ${deckUiCreated}, layer=${layer}, renderer=${renderer}, template=${nameText.class.type.name}`);
+      return true;
+    } catch (error) {
+      if (container) {
+        try { ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(container); } catch (_) {}
+      }
+      const detail = String(error);
+      if (detail !== deckUiLastError) { deckUiLastError = detail; deckUiFailures = 0; }
+      deckUiFailures++;
+      if (deckUiFailures <= 3 || deckUiFailures % 25 === 0)
+        log(`stats UI: creation failed (${deckUiFailures}): ${detail}`);
+      return false;
+    }
   }
 
-  function createDeckTileLabel(tile: Il2Cpp.Object) {
+  function updateDeckTileLabel(tile) {
+    const key = tile.handle.toString();
     try {
-      const nameText = tile.field<Il2Cpp.Object>("DeckNameText").value;
-      if (isNull(nameText)) return;
-      const nameTransform = call(nameText, "get_transform");
-      const parent = call(nameTransform, "get_parent");
-      if (isNull(parent)) return;
-
-      const gameObject = ucls("UnityEngine.GameObject");
-      const rectType = ucls("UnityEngine.RectTransform");
-      // A game object with a RectTransform, so it can be laid out.
-      const container = newWith(gameObject, Il2Cpp.string("WinLossRatioContainer"),
-        Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [rectType.type.object]));
-      const containerTransform = call(container, "get_transform");
-      (containerTransform.method("SetParent", 2) as any).invoke(parent, false);
-      const containerRect = (container as any).method("GetComponent")
-        .overload("System.Type").invoke(rectType.type.object) as Il2Cpp.Object;
-      if (!isNull(containerRect)) {
-        (containerRect.method("set_anchorMin") as any).invoke(1, 0);
-        (containerRect.method("set_anchorMax") as any).invoke(1, 0);
-        (containerRect.method("set_pivot") as any).invoke(1, 0);
-        (containerRect.method("set_anchoredPosition") as any).invoke(-3, 2);
+      const record = rememberDeckTile(tile);
+      if (!createDeckTileLabel(tile)) return;
+      const container = record.container.target;
+      const label = record.label.target;
+      if (isNull(container) || isNull(label)) { forgetDeckTile(key); return; }
+      call(container, "SetActive", false);
+      const deckId = Number(call(tile, "GetDeckId"));
+      const stats = deckStats.get(deckId);
+      if (!stats) {
+        if (!record.missing && deckUiMissing++ < 8) log(`stats UI: no data for deckId=${deckId}, loaded=${deckStats.size}`);
+        record.missing = true;
+        return;
       }
-      // A black plate behind the numbers.
-      const background = newWith(gameObject, Il2Cpp.string("Background"),
-        Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [rectType.type.object]));
-      const backgroundTransform = call(background, "get_transform");
-      (backgroundTransform.method("SetParent", 2) as any).invoke(containerTransform, false);
-      const backgroundImage = (background as any).method("GetComponent")
-        .overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object) as Il2Cpp.Object;
-      if (!isNull(backgroundImage)) {
-        (backgroundImage.method("set_color") as any).invoke(0, 0, 0, 0.7);
-        (backgroundImage.method("set_raycastTarget") as any).invoke(false);
-      }
-      // The label itself is a copy of the deck name text, so it uses the
-      // same font and style as the rest of the tile.
-      const label = (ucls("UnityEngine.Application").method("Instantiate", 3) as any)
-        .invoke(nameText, containerTransform, false) as Il2Cpp.Object;
-      if (isNull(label)) return;
-      (label.method("set_name") as any).invoke(Il2Cpp.string("WinLossRatioLabel"));
-      (label.method("set_alignment") as any).invoke(5);            // MiddleRight
-      (label.method("set_fontSize") as any).invoke(16);
-      (label.method("set_horizontalOverflow") as any).invoke(1);   // Wrap
-      (label.method("set_verticalOverflow") as any).invoke(1);     // Truncate
-      (label.method("set_raycastTarget") as any).invoke(false);
-      const labelRect = call(label, "get_RectTransform");
-      if (!isNull(labelRect)) {
-        (labelRect.method("set_anchorMin") as any).invoke(0, 0);
-        (labelRect.method("set_anchorMax") as any).invoke(1, 1);
-        (labelRect.method("set_offsetMin") as any).invoke(5, 2.5);
-        (labelRect.method("set_offsetMax") as any).invoke(-5, -2.5);
-      }
-      const labelObject = call(label, "gameObject");
-      if (!isNull(labelObject)) (labelObject.method("SetActive") as any).invoke(false);
-    } catch (e) { log(`deck tile label creation failed: ${e}`); }
+      const text = `${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
+      call(label, "set_text", Il2Cpp.string(text));
+      // preferredWidth is available on both legacy Text and TMP_Text. Keep the
+      // right edge anchored and size the plate to the current ratio string.
+      const width = Number(call(label, "get_preferredWidth"));
+      if (!Number.isFinite(width) || width < 0) throw Error("Invalid statistics text width");
+      call(record.rect.target, "set_sizeDelta", vec2(Math.ceil(width) + 6, 24));
+      call(container, "SetActive", true);
+      if (!record.shown && deckUiShown++ < 8) log(`stats UI: shown deckId=${deckId}, ${text}`);
+      record.shown = true;
+    } catch (error) {
+      forgetDeckTile(key);
+      log(`stats UI: update failed: ${error}`);
+    }
   }
 
   section("deck tile win/loss label", () => {
     const deckTile = cls(img, "DeckTile");
-    // SetData fills the tile, so the label has to exist afterwards.
     Interceptor.attach(deckTile.method("SetData", 2).virtualAddress, {
-      onEnter(args) {
-        try {
-          this.tile = args[0];
-          const tile = new Il2Cpp.Object(args[0]);
-          deckTiles.add(tile.handle.toString());
-          const transform = call(tile, "get_transform");
-          if (isNull(transform)) return;
-          const container = call(transform, "Find", Il2Cpp.string("WinLossRatioContainer"));
-          if (isNull(container)) createDeckTileLabel(tile);
-        } catch (e) { log(`deck tile setdata failed: ${e}`); }
-      },
-      onLeave() {
-        try {
-          if (!this.tile) return;
-          updateDeckTileLabel(new Il2Cpp.Object(this.tile));
-        } catch (_) {}
-      },
-    });
-    // Remember the tile so the label can be refreshed when the stats arrive.
-    Interceptor.attach(deckTile.method("Awake").virtualAddress, {
       onEnter(args) { this.tile = args[0]; },
-      onLeave() { try { deckTiles.add(this.tile.toString()); } catch (_) {} },
+      onLeave() {
+        try { if (this.tile) updateDeckTileLabel(new Il2Cpp.Object(this.tile)); }
+        catch (error) { log(`stats UI: SetData failed: ${error}`); }
+      }
     });
+    // Only capture this exact class to avoid attaching to an inherited shared
+    // MonoBehaviour method. Weak references do not retain destroyed deck tiles.
+    const destroy = deckTile.methods.find(m => m.name === "OnDestroy" && !m.isStatic && m.parameterCount === 0);
+    if (destroy && !destroy.virtualAddress.isNull()) {
+      Interceptor.attach(destroy.virtualAddress, {
+        onEnter(args) { forgetDeckTile(args[0].toString()); }
+      });
+    }
   });
+// END android-ui: deck-ui
 
-  // ---------------------------------------------------------------------
-  // NewsPatch: the game's own news feed (legends.bethesda.net) is dead,
-  // tesl-reborn.com serves its own news.json instead.
-  // ---------------------------------------------------------------------
+
   const MONTH_KEYS = ["months.January", "months.February", "months.March", "months.April", "months.May", "months.June",
     "months.July", "months.August", "months.September", "months.October", "months.November", "months.December"];
   const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
@@ -1376,6 +1490,26 @@ Il2Cpp.perform(() => {
     if (!apk) { log("payload: the apk was not found"); return; }
     const zip = new ZipReader(apk);
     if (!zip) return;
+    // Keep Reborn artwork out of git, but install the verified build resources
+    // from the APK so a clean installation does not require an ADB asset push.
+    const emojiHashes = {
+      "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
+      "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa"
+    };
+    for (const [name, expected] of Object.entries(emojiHashes)) {
+      const entry = zip.find(`assets/tesl-reborn/emojis/${name}`);
+      if (!entry) { log(`emoji payload: missing ${name}`); continue; }
+      if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) throw Error("Invalid emoji APK entry");
+      const directory = `${persistentPath()}/tesl-reborn-emojis`;
+      const target = `${directory}/${name}`;
+      let current = false;
+      try { current = Checksum.compute("sha256", File.readAllBytes(target)) === expected; } catch (_) {}
+      if (current) continue;
+      makeDirectory(directory);
+      zip.copy(entry, target);
+      if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid emoji payload: ${name}`);
+      log(`emoji payload: restored ${name}`);
+    }
     const obb = zip.find("assets/tesl-payload/obb.bin");
     const cache = zip.find("assets/tesl-payload/cache.bin");
     const perFileEntries = zip.list().filter(e => e.startsWith("assets/tesl-payload/UnityCache/Shared/"));
@@ -1671,48 +1805,127 @@ Il2Cpp.perform(() => {
   // common one and get the gold colour, and the legendary rarity filter is
   // revealed in the profile title list.
   // ---------------------------------------------------------------------
+  function revealLegendaryTitleFilter(self) {
+    try {
+      const root = call(self, "get_transform");
+      if (isNull(root)) return;
+      const queue = [{ transform: root, path: "", depth: 0 }];
+      let found = 0, visited = 0;
+      const filterPaths = [];
+      while (queue.length && visited++ < 512) {
+        const node = queue.shift();
+        const name = String(call(node.transform, "get_name")?.content || "");
+        const path = `${node.path}/${name}`;
+        if (/filter/i.test(name) && filterPaths.length < 12) filterPaths.push(path);
+        // Require 'filter' in the ancestry to avoid activating title-list items.
+        if (/legendary/i.test(name) && /filter/i.test(path)) {
+          call(call(node.transform, "get_gameObject"), "SetActive", true);
+          found++;
+        }
+        if (node.depth >= 12) continue;
+        const count = Math.min(100, Number(call(node.transform, "get_childCount")));
+        for (let i = 0; i < count; i++) queue.push({ transform: call(node.transform, "GetChild", i), path, depth: node.depth + 1 });
+      }
+      if (found) log(`titles UI: revealed ${found} legendary filter(s)`);
+      else log(`titles UI: legendary filter not found; filter nodes=${filterPaths.join(" | ") || "none"}`);
+    } catch (error) { log(`titles UI: filter failed: ${error}`); }
+  }
   section("player profile titles (legendary filter)", () => {
     const ppt = cls(img, "PlayerProfileTitles");
-    Interceptor.attach(ppt.method("Awake").virtualAddress, {
-      onEnter(args) {
-        try {
-          const self = new Il2Cpp.Object(args[0]);
-          const t = call(self, "get_transform");
-          if (isNull(t)) return;
-          const found = call(t, "Find", Il2Cpp.string("Layout_Filters/Widget_Filters_Rarity/KEEP_HIDDEN_Item_Filter_Legendary"));
-          if (isNull(found)) return;
-          const go = call(found, "get_gameObject");
-          if (!isNull(go)) (go.method("SetActive") as any).invoke(true);
-          log("PlayerProfileTitles: revealed the legendary rarity filter");
-        } catch (e) { log(`player profile titles awake failed: ${e}`); }
-      },
-    });
+    const hooks = ppt.methods.filter(m => ["Awake", "OnEnable"].includes(m.name) && !m.isStatic && m.parameterCount === 0);
+    if (!hooks.length) throw Error("No own Awake/OnEnable method on PlayerProfileTitles");
+    for (const method of hooks) {
+      if (method.virtualAddress.isNull()) continue;
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) { this.self = args[0]; },
+        // Fields and mobile UI bindings must already have been initialized.
+        onLeave() { try { revealLegendaryTitleFilter(new Il2Cpp.Object(this.self)); } catch (error) { log(`titles UI: ${error}`); } }
+      });
+    }
   });
 
+
+  // BEGIN android-ui: title-list
+// Android can overwrite the initial Graphic tint from a selectable/tween.
+  // Track only the actual BackgroundImage bound to a legendary title row.
+  const legendaryTitleRows = new Map();
+  function titleListColour(self) {
+    const key = self.handle.toString();
+    const data = self.field("_titleData").value;
+    if (isNull(data)) return;
+    const legendary = enumVal(data.field("Rarity").value) === RARITY_LEGENDARY;
+    const previous = legendaryTitleRows.get(key);
+    if (!legendary) {
+      if (previous) { previous.row.free(); previous.image.free(); legendaryTitleRows.delete(key); }
+      return;
+    }
+    const image = self.field("BackgroundImage").value;
+    if (isNull(image)) return;
+    const resources = call(ucls("UIResourceManager"), "get_Instance");
+    if (!isNull(resources)) {
+      const sprite = resources.method("GetTitleBannerSprite", 1).invoke(enumBox(cls(img, "SPTESL.CardRarity"), 0));
+      if (!isNull(sprite)) call(image, "set_overrideSprite", sprite);
+    }
+    call(image, "set_color", rgba(1, 0.75, 0, 1));
+    if (!previous) {
+      legendaryTitleRows.set(key, { row: self.weakRef(false), image: image.weakRef(false), repairs: 0, warned: false });
+      const transform = call(image, "get_transform");
+      log(`titles UI: list tint target=${String(call(transform, "get_name")?.content || "?")}`);
+      uiLogTree(call(self, "get_transform"), "titles UI list paths");
+    }
+  }
+  function maintainTitleListColours() {
+    for (const [key, record] of legendaryTitleRows) {
+      try {
+        const row = record.row.target, image = record.image.target;
+        if (isNull(row) || isNull(image)) {
+          record.row.free(); record.image.free(); legendaryTitleRows.delete(key); continue;
+        }
+        const data = row.field("_titleData").value;
+        if (isNull(data) || enumVal(data.field("Rarity").value) !== RARITY_LEGENDARY) {
+          record.row.free(); record.image.free(); legendaryTitleRows.delete(key); continue;
+        }
+        if (!Boolean(call(call(image, "get_gameObject"), "get_activeInHierarchy"))) continue;
+        const colour = call(image, "get_color");
+        if (Math.abs(Number(colour.field("r").value) - 1) > 0.01 ||
+            Math.abs(Number(colour.field("g").value) - 0.75) > 0.01 ||
+            Math.abs(Number(colour.field("b").value)) > 0.01 || Number(colour.field("a").value) < 0.99) {
+          call(image, "set_color", rgba(1, 0.75, 0, 1));
+          if (record.repairs++ < 2) log("titles UI: list tint restored after native UI reset");
+        }
+      } catch (error) {
+        if (!record.warned) { record.warned = true; log(`titles UI: list maintenance failed: ${error}`); }
+        record.row.free(); record.image.free(); legendaryTitleRows.delete(key);
+      }
+    }
+  }
   section("player profile title item (legendary colour)", () => {
-    const ppti = cls(img, "PlayerProfileTitleItem");
-    Interceptor.attach(ppti.method("UpdateUi").virtualAddress, {
-      onEnter(args) { this.self = args[0]; },
-      onLeave() {
-        try {
-          const self = new Il2Cpp.Object(this.self);
-          const titleData = self.field<Il2Cpp.Object>("_titleData").value;
-          if (isNull(titleData)) return;
-          const rarity = enumVal(titleData.field<any>("Rarity").value);
-          if (rarity !== RARITY_LEGENDARY) return;
-          const bg = self.field<Il2Cpp.Object>("BackgroundImage").value;
-          if (isNull(bg)) return;
-          const uiRes = (ucls("UIResourceManager").method("get_Instance") as any).invoke();
-          if (!isNull(uiRes)) {
-            const sprite = (uiRes.method("GetTitleBannerSprite") as any).invoke(enumBox(cls(img, "SPTESL.CardRarity"), RARITY_LEGENDARY));
-            if (!isNull(sprite)) (bg.method("set_overrideSprite") as any).invoke(sprite);
-          }
-          (bg.method("set_color") as any).invoke(1, 0.75, 0, 1);
-          log("PlayerProfileTitleItem: coloured a legendary title");
-        } catch (e) { log(`player profile title item update failed: ${e}`); }
-      },
-    });
+    const klass = cls(img, "PlayerProfileTitleItem");
+    const methods = klass.methods.filter(m => ["UpdateUi", "SetData"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull());
+    if (!methods.length) throw Error("Title item callbacks not found");
+    const attached = new Set();
+    for (const method of methods) {
+      const key = method.virtualAddress.toString();
+      if (attached.has(key)) continue;
+      attached.add(key);
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) { this.self = args[0]; },
+        onLeave() { try { titleListColour(new Il2Cpp.Object(this.self)); }
+          catch (error) { log(`titles UI: list tint failed: ${error}`); } }
+      });
+    }
+    // Use a render callback when present, otherwise the existing main-thread scheduler.
+    const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
+    if (render && !render.virtualAddress.isNull()) {
+      Interceptor.attach(render.virtualAddress, { onEnter() { maintainTitleListColours(); } });
+      log("titles UI: list colour guard uses Canvas render callback");
+    } else {
+      const tick = () => { maintainTitleListColours(); schedule(100, tick); };
+      schedule(100, tick);
+      log("titles UI: list colour guard uses main-thread scheduler");
+    }
   });
+// END android-ui: title-list
 
   section("player info panel (legendary title banner)", () => {
     const pip = cls(img, "PlayerInfoPanel");
@@ -1754,7 +1967,7 @@ Il2Cpp.perform(() => {
           if (!isNull(commonBanner)) {
             const go = call(commonBanner, "get_gameObject");
             if (!isNull(go)) (go.method("SetActive") as any).invoke(true);
-            (commonBanner.method("set_color") as any).invoke(1, 0.75, 0, 1);
+            (commonBanner.method("set_color") as any).invoke(rgba(1, 0.75, 0, 1));
           }
         } catch (e) { log(`player info panel update failed: ${e}`); }
       },
@@ -1806,6 +2019,1101 @@ Il2Cpp.perform(() => {
         } catch (e) { log(`bundle hash report failed: ${e}`); }
       },
     });
+  });
+
+  // The original port fetched matchEntryData without ever displaying it.
+  // Gather actual mobile class/layout metadata before writing a history UI
+  // patch; do not invent desktop field names or match rows by list position.
+  // Exact classes identified in the previous device log; no Google Play or
+  // in-match action-history probes. Log field TYPES only, never field values.
+  // BEGIN android-ui: ui-common
+function uiComponent(go, type) {
+    return go.method("GetComponent").overload("System.Type").invoke(ucls(type).type.object);
+  }
+  function uiAdd(go, type) {
+    return go.method("AddComponent").overload("System.Type").invoke(ucls(type).type.object);
+  }
+  function uiNew(name, parent) {
+    const go = newWith(ucls("UnityEngine.GameObject"), Il2Cpp.string(name),
+      Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [ucls("UnityEngine.RectTransform").type.object]));
+    call(go, "set_layer", Number(call(call(parent, "get_gameObject"), "get_layer")));
+    call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parent, false);
+    return go;
+  }
+  function uiRect(go) { return uiComponent(go, "UnityEngine.RectTransform"); }
+  function uiPlace(go, ax, ay, px, py, x, y, width, height) {
+    const rect = uiRect(go);
+    call(rect, "set_anchorMin", vec2(ax, ay)); call(rect, "set_anchorMax", vec2(ax, ay));
+    call(rect, "set_pivot", vec2(px, py)); call(rect, "set_anchoredPosition", vec2(x, y));
+    call(rect, "set_sizeDelta", vec2(width, height));
+    return rect;
+  }
+  function uiStretch(rect) {
+    call(rect, "set_anchorMin", vec2(0, 0)); call(rect, "set_anchorMax", vec2(1, 1));
+    call(rect, "set_offsetMin", vec2(0, 0)); call(rect, "set_offsetMax", vec2(0, 0));
+  }
+  function uiXY(value) { return { x: Number(value.field("x").value), y: Number(value.field("y").value) }; }
+  function uiEnum(type, field) { const c = ucls(type); return enumBox(c, enumVal(c.field(field).value)); }
+  function uiList(type) {
+    const klass = Il2Cpp.corlib.class("System.Collections.Generic.List`1").inflate(type);
+    const list = klass.alloc(); list.method(".ctor").overload().invoke(); return list;
+  }
+  function uiPlain(text) { return String(text).replace(/</g, "‹").replace(/>/g, "›"); }
+  function uiLogTree(root, prefix) {
+    const queue = [{ node: root, path: "", depth: 0 }];
+    let visited = 0, line = "";
+    while (queue.length && visited++ < 140) {
+      const item = queue.shift();
+      const path = `${item.path}/${String(call(item.node, "get_name")?.content || "")}`;
+      if (line.length + path.length > 700) { log(`${prefix}: ${line}`); line = ""; }
+      line += `${path} | `;
+      if (item.depth >= 6) continue;
+      for (let i = 0, count = Math.min(80, Number(call(item.node, "get_childCount"))); i < count; i++)
+        queue.push({ node: call(item.node, "GetChild", i), path, depth: item.depth + 1 });
+    }
+    if (line) log(`${prefix}: ${line}`);
+  }
+  let uiFontHandle = null;
+  function uiFont() {
+    if (uiFontHandle) return uiFontHandle.target;
+    const objects = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
+      .invoke(ucls("TMPro.TextMeshProUGUI").type.object);
+    let fallback = null;
+    for (let i = 0; i < objects.length; i++) {
+      const font = call(objects.get(i), "get_font");
+      if (isNull(font)) continue;
+      fallback = fallback || font;
+      try { if (/Merriweather/i.test(String(call(font, "get_name")?.content))) { fallback = font; break; } } catch (_) {}
+    }
+    if (!fallback) fallback = ucls("TMPro.TMP_FontAsset").method("get_defaultFontAsset").invoke();
+    if (isNull(fallback)) throw Error("No loaded TMP font");
+    uiFontHandle = fallback.ref(false); return fallback;
+  }
+  function uiText(go, text, size = 20) {
+    const label = uiAdd(go, "TMPro.TextMeshProUGUI");
+    call(label, "set_font", uiFont()); call(label, "set_fontSize", size);
+    call(label, "set_enableAutoSizing", false); call(label, "set_raycastTarget", false);
+    call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Center"));
+    call(label, "set_color", rgba(1, 1, 1, 1)); call(label, "set_text", Il2Cpp.string(text)); return label;
+  }
+  function uiButton(go, graphic, action) {
+    const button = uiAdd(go, "UnityEngine.UI.Button");
+    call(button, "set_targetGraphic", graphic);
+    const callback = Il2Cpp.delegate(ucls("UnityEngine.Events.UnityAction"), () => {
+      try { action(); } catch (error) { log(`UI button failed: ${error}`); }
+    });
+    call(call(button, "get_onClick"), "AddListener", callback); return button;
+  }
+  function uiLabeledButton(name, parent, text, x, y, width, action) {
+    const go = uiNew(name, parent); uiPlace(go, 1, 1, 1, 1, x, y, width, 28);
+    const bg = uiAdd(go, "UnityEngine.UI.Image"); call(bg, "set_color", rgba(0.12, 0.12, 0.12, 0.96));
+    const labelGO = uiNew("Label", call(go, "get_transform")); uiStretch(uiRect(labelGO)); uiText(labelGO, text, 18);
+    uiButton(go, bg, action); return go;
+  }
+// END android-ui: ui-common
+
+
+  // BEGIN android-ui: history-ui
+const historyRows = new Map(), historyTargets = new Map();
+  let historyUiReports = 0, historyPopup = null, historyActiveKey = null, historyLastFetch = 0;
+  let historyUsingNative = false, historyNativeFailureReported = false;
+  const historyTriggerOwners = new Map();
+  function historyReleaseTrigger(key, record) {
+    if (!record.triggerKey) return;
+    const owner = historyTriggerOwners.get(record.triggerKey);
+    if (owner) {
+      owner.users.delete(key);
+      if (!owner.users.size) {
+        try { if (!isNull(owner.trigger.target)) call(owner.trigger.target, "set_enabled", owner.wasEnabled); } catch (_) {}
+        owner.trigger.free(); historyTriggerOwners.delete(record.triggerKey);
+      }
+    }
+    record.triggerKey = null;
+  }
+  function historyOwnTrigger(key, record, trigger) {
+    const id = trigger.handle.toString();
+    if (record.triggerKey !== id) historyReleaseTrigger(key, record);
+    let owner = historyTriggerOwners.get(id);
+    if (!owner) {
+      owner = { trigger: trigger.ref(false), wasEnabled: Boolean(call(trigger, "get_enabled")), users: new Set() };
+      historyTriggerOwners.set(id, owner);
+    }
+    owner.users.add(key); record.triggerKey = id;
+    call(trigger, "set_enabled", false); // Manual tap owns this one tooltip; suppress automatic hover.
+  }
+  function historyNativeManager() { return cls(img, "TooltipManager").method("get_Instance", 0).invoke(); }
+  function historyTryNative(record) {
+    let manager = null, boxHandle = null, messageHandle = null;
+    try {
+      manager = historyNativeManager();
+      if (isNull(manager)) throw Error("TooltipManager is not ready");
+      call(manager, "HideTooltip");
+      const settingsClass = cls(img, "TooltipShowSettings"), settings = settingsClass.alloc(); boxHandle = settings.ref(false);
+      settings.field("anchorRectTransform").value = record.hits[0].rect.target;
+      for (const [name, number] of [["anchorEdge", 2], ["tooltipEdge", 3]]) {
+        const field = settings.field(name); field.value = enumBox(field.type.class, number);
+      }
+      settings.field("anchorEdgeOffset").value = 0.5;
+      settings.field("tooltipEdgeOffset").value = 0.5;
+      settings.field("distanceFromAnchor").value = 5;
+      settings.field("locKeys").value = uiList(Il2Cpp.corlib.class("System.String"));
+      const messages = uiList(Il2Cpp.corlib.class("System.String")); messageHandle = messages.ref(false);
+      call(messages, "Add", Il2Cpp.string(record.text));
+      settings.unbox().method("SetLocalizedMessages", 1).invoke(messages);
+      // Exact PC API contract: ShowTooltip(TooltipShowSettings, GameObject, Boolean).
+      manager.method("ShowTooltip").overload(settingsClass.type.name, "UnityEngine.GameObject", "System.Boolean")
+        .invoke(settings.unbox(), call(record.hits[0].rect.target, "get_gameObject"), true);
+      return true;
+    } catch (error) {
+      if (manager) { try { call(manager, "HideTooltip"); } catch (_) {} }
+      if (!historyNativeFailureReported) { historyNativeFailureReported = true; log(`history UI: native popup unavailable; using single fallback: ${error}`); }
+      return false;
+    } finally {
+      if (messageHandle) messageHandle.free(); if (boxHandle) boxHandle.free();
+    }
+  }
+  function historyPopupOpened(key, record, provider) {
+    historyActiveKey = key;
+    log(`history UI: popup opened index=${record.index} side=${record.side} hasName=${record.hasName} provider=${provider}`);
+    if (!record.hasName && Date.now() - historyLastFetch > 5000) {
+      historyLastFetch = Date.now(); schedule(0, () => refreshMatchEntries());
+    }
+  }
+  function historyTooltipText(name, stats, deleted = false) {
+    if (!name) return "No deck data available";
+    const title = `<b>${uiPlain(name)}</b>`;
+    if (stats) return `${title}\n${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
+    return deleted ? `${title}\n<color=#FF6666>deleted</color>` : title;
+  }
+  function historyHidePopup() {
+    if (historyUsingNative) { try { call(historyNativeManager(), "HideTooltip"); } catch (_) {} }
+    if (historyPopup) call(historyPopup.go.target, "SetActive", false);
+    historyActiveKey = null; historyUsingNative = false;
+  }
+  function historyDropTarget(key) {
+    const record = historyTargets.get(key);
+    if (!record) return;
+    if (historyActiveKey === key) historyHidePopup();
+    historyReleaseTrigger(key, record);
+    for (const hit of record.hits) {
+      try { const go = hit.go.target; if (!isNull(go)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go); } catch (_) {}
+      hit.go.free(); hit.rect.free();
+    }
+    record.row.free(); historyTargets.delete(key);
+  }
+  function historyCanvas(component) {
+    let canvas = component.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+    if (isNull(canvas)) throw Error("History canvas not found");
+    const root = canvas.tryMethod("get_rootCanvas", 0);
+    if (root) canvas = root.invoke();
+    return canvas;
+  }
+  function historyShowPopup(key, toggle = true) {
+    const record = historyTargets.get(key);
+    if (!record) return;
+    if (toggle && historyActiveKey === key) { historyHidePopup(); return; }
+    historyHidePopup();
+    if (historyTryNative(record)) {
+      historyUsingNative = true; historyPopupOpened(key, record, "native"); return;
+    }
+    const canvas = historyCanvas(record.hits[0].rect.target);
+    const canvasTransform = call(canvas, "get_transform"), canvasKey = canvas.handle.toString();
+    if (historyPopup && historyPopup.canvasKey !== canvasKey) {
+      ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(historyPopup.go.target);
+      historyPopup.go.free(); historyPopup.label.free(); historyPopup.rect.free(); historyPopup = null;
+    }
+    if (!historyPopup) {
+      const go = uiNew("RebornHistoryDeckPopup", canvasTransform);
+      uiPlace(go, 0.5, 0.5, 0.5, 0.5, 0, 0, 360, 100);
+      call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+      const background = uiAdd(go, "UnityEngine.UI.Image");
+      call(background, "set_color", rgba(0.035, 0.03, 0.02, 0.98));
+      const labelGO = uiNew("Text", call(go, "get_transform"));
+      const rect = uiRect(labelGO); uiStretch(rect);
+      call(rect, "set_offsetMin", vec2(12, 10)); call(rect, "set_offsetMax", vec2(-12, -10));
+      const label = uiText(labelGO, "", 23); call(label, "set_richText", true); call(label, "set_enableWordWrapping", true);
+      const autoContainer = label.tryMethod("set_autoSizeTextContainer", 1);
+      if (autoContainer) { try { autoContainer.invoke(false); } catch (_) {} }
+      // TMP creation can reset its rectangle; set the fallback label bounds afterwards.
+      call(rect, "set_anchorMin", vec2(0, 0)); call(rect, "set_anchorMax", vec2(1, 1)); call(rect, "set_pivot", vec2(0.5, 0.5));
+      call(rect, "set_sizeDelta", vec2(-24, -20)); call(rect, "set_anchoredPosition", vec2(0, 0));
+      historyPopup = { go: go.ref(false), label: label.ref(false), rect: uiRect(go).ref(false), canvasKey };
+    }
+    const area = call(uiRect(call(canvasTransform, "get_gameObject")), "get_rect");
+    const width = Number(area.field("m_Width").value), height = Number(area.field("m_Height").value);
+    const panelWidth = Math.max(100, Math.min(420, width - 24));
+    call(historyPopup.label.target, "set_text", Il2Cpp.string(record.text));
+    let panelHeight = 100;
+    try {
+      const label = historyPopup.label.target;
+      const size = label.method("GetPreferredValues").overload("System.String", "System.Single", "System.Single")
+        .invoke(Il2Cpp.string(record.text), panelWidth - 24, 100000);
+      panelHeight = Math.max(64, Math.min(height - 24, uiXY(size).y + 24));
+    } catch (_) {}
+    let x = 0, y = 0;
+    try {
+      const point = canvasTransform.method("InverseTransformPoint").overload("UnityEngine.Vector3")
+        .invoke(call(record.hits[0].rect.target, "get_position"));
+      const local = uiXY(point);
+      x = local.x - Number(area.field("m_XMin").value) - width / 2;
+      y = local.y - Number(area.field("m_YMin").value) - height / 2 + panelHeight / 2 + 28;
+    } catch (_) {} // A stripped positioning helper must not prevent displaying the text.
+    x = Math.max(-width / 2 + panelWidth / 2 + 8, Math.min(width / 2 - panelWidth / 2 - 8, x));
+    y = Math.max(-height / 2 + panelHeight / 2 + 8, Math.min(height / 2 - panelHeight / 2 - 8, y));
+    call(historyPopup.rect.target, "set_sizeDelta", vec2(panelWidth, panelHeight));
+    call(historyPopup.rect.target, "set_anchoredPosition", vec2(x, y));
+    call(historyPopup.go.target, "SetActive", true);
+    call(call(historyPopup.go.target, "get_transform"), "SetAsLastSibling");
+    historyPopupOpened(key, record, "fallback");
+  }
+  function setHistoryDeckTooltip(row, fieldName, name, stats, index = -1, deleted = false) {
+    const images = row.field(fieldName).value;
+    if (isNull(images)) return;
+    const count = Number(call(images, "get_Count")), key = `${row.handle}:${fieldName}`;
+    if (!count) { historyDropTarget(key); return; }
+    const imageKeys = [];
+    for (let i = 0; i < count; i++) imageKeys.push(images.method("get_Item", 1).invoke(i).handle.toString());
+    const signature = imageKeys.join(",");
+    let record = historyTargets.get(key);
+    if (record && record.signature !== signature) { historyDropTarget(key); record = null; }
+    if (!record) {
+      record = { row: row.weakRef(false), hits: [], signature, side: fieldName === "_userDeckImages" ? "user" : "opponent" };
+      historyTargets.set(key, record);
+      for (let i = 0; i < count; i++) {
+        const image = images.method("get_Item", 1).invoke(i);
+        const hit = uiNew("RebornDeckTap", call(image, "get_transform")), rect = uiRect(hit); uiStretch(rect);
+        call(rect, "set_offsetMin", vec2(-5, -5)); call(rect, "set_offsetMax", vec2(5, 5));
+        call(uiAdd(hit, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+        const graphic = uiAdd(hit, "UnityEngine.UI.Image"); call(graphic, "set_color", rgba(1, 1, 1, 0));
+        call(graphic, "set_raycastTarget", true);
+        uiButton(hit, graphic, () => historyShowPopup(key));
+        record.hits.push({ go: hit.ref(false), rect: rect.ref(false) });
+      }
+    }
+    record.text = historyTooltipText(name, stats, deleted); record.hasName = Boolean(name); record.index = index;
+    // Stop the native hover path for these deck icons; taps use TooltipManager directly.
+    try {
+      let parent = call(images.method("get_Item", 1).invoke(0), "get_transform"), tooltip = null;
+      for (let i = 0; i < 4 && !isNull(parent); i++) {
+        parent = call(parent, "get_parent");
+        if (!isNull(parent)) tooltip = parent.method("GetComponent").overload("System.Type").invoke(cls(img, "TooltipTrigger").type.object);
+        if (!isNull(tooltip)) break;
+      }
+      if (!isNull(tooltip)) {
+        historyOwnTrigger(key, record, tooltip);
+      }
+    } catch (error) { log(`history UI: automatic tooltip suppression failed: ${error}`); }
+    if (historyActiveKey === key) historyShowPopup(key, false);
+  }
+  function updateHistoryTooltips(row, match) {
+    let index = -1;
+    try {
+      const manager = cls(img, "SparkleServices.ServicesManager").method("get_Instance").invoke();
+      const history = call(manager.field("Stats").value, "get_MatchHistory");
+      index = Number(history.method("IndexOf", 1).invoke(match));
+    } catch (error) { log(`history UI: service index failed: ${error}`); }
+    const extra = index >= 0 && index < matchEntryData.length ? matchEntryData[index] : null;
+    setHistoryDeckTooltip(row, "_userDeckImages", extra?.deckName || "", extra?.deckStats || null, index, extra?.deckId === -1);
+    const difficulty = String(match.field("aiDifficulty").value?.content || "");
+    if (!difficulty || difficulty === "None")
+      setHistoryDeckTooltip(row, "_opponentDeckImages", extra?.opponentDeckName || "", extra?.opponentDeckStats || null, index);
+    else historyDropTarget(`${row.handle}:_opponentDeckImages`);
+    if (historyUiReports++ < 12) log(`history UI: tap targets index=${index} extended=${Boolean(extra)}`);
+  }
+  function refreshHistoryTooltips() {
+    for (const [key, handles] of historyRows) {
+      try {
+        const row = handles.row.target, match = handles.match.target;
+        if (!isNull(row) && !isNull(match)) { updateHistoryTooltips(row, match); continue; }
+      } catch (error) { log(`history UI: refresh failed: ${error}`); }
+      historyDropTarget(`${key}:_userDeckImages`); historyDropTarget(`${key}:_opponentDeckImages`);
+      handles.row.free(); handles.match.free(); historyRows.delete(key);
+    }
+  }
+  function historyPoll() {
+    if (!historyActiveKey || (!historyUsingNative && !historyPopup)) return;
+    try {
+      const record = historyTargets.get(historyActiveKey);
+      if (!record || isNull(record.row.target) || !Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) {
+        historyHidePopup(); return;
+      }
+      const input = ucls("UnityEngine.Input"); let point, down;
+      if (Number(input.method("get_touchCount", 0).invoke()) > 0) {
+        const touch = input.method("GetTouch", 1).invoke(0);
+        down = enumVal(touch.method("get_phase", 0).invoke()) === 0;
+        point = uiXY(touch.method("get_position", 0).invoke());
+      } else {
+        down = Boolean(input.method("GetMouseButtonDown", 1).invoke(0));
+        point = uiXY(input.method("get_mousePosition", 0).invoke());
+      }
+      if (!down) return;
+      const canvas = historyCanvas(record.hits[0].rect.target), camera = call(canvas, "get_worldCamera");
+      if (!historyUsingNative && chatContains(historyPopup.rect.target, point, camera)) return;
+      for (const target of historyTargets.values()) for (const hit of target.hits) {
+        if (Boolean(call(hit.go.target, "get_activeInHierarchy")) && chatContains(hit.rect.target, point, camera)) return;
+      }
+      historyHidePopup();
+    } catch (error) { log(`history UI: popup input failed: ${error}`); historyHidePopup(); }
+  }
+  section("match history deck tooltips", () => {
+    const klass = cls(img, "MatchEntry"), seen = new Set();
+    for (const method of klass.methods.filter(m => ["UpdateUi", "SetData"].includes(m.name) && !m.isStatic && m.parameterCount === 1 &&
+        m.parameters[0].type.name === "SparkleServices.Stats.MatchEntry")) {
+      const address = method.virtualAddress.toString();
+      if (method.virtualAddress.isNull() || seen.has(address)) continue; seen.add(address);
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) { this.row = args[0]; this.match = args[1]; },
+        onLeave() {
+          try {
+            const row = new Il2Cpp.Object(this.row), match = new Il2Cpp.Object(this.match);
+            const key = row.handle.toString(), old = historyRows.get(key);
+            if (old) { old.row.free(); old.match.free(); }
+            historyRows.set(key, { row: row.weakRef(false), match: match.weakRef(false) });
+            updateHistoryTooltips(row, match);
+          } catch (error) { log(`history UI: binding failed: ${error}`); }
+        }
+      });
+    }
+    if (!seen.size) throw Error("MatchEntry data callbacks not found");
+    log(`history UI: tap hooks installed callbacks=${seen.size}`);
+    const update = cls(img, "SparkleServices.ServicesManager").methods.find(m => m.name === "Update" && m.parameterCount === 0);
+    if (!update) throw Error("ServicesManager.Update not found");
+    Interceptor.attach(update.virtualAddress, { onLeave() { historyPoll(); } });
+  });
+// END android-ui: history-ui
+
+  // BEGIN android-ui: title-intro
+function titleDataByName(name) {
+    const manager = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
+    const titles = manager.field("Config").value.field("Titles").value;
+    const count = Number(call(titles, "get_Count"));
+    for (let i = 0; i < count; i++) {
+      const title = titles.method("get_Item", 1).invoke(i);
+      const id = title.field("ResourceId").value;
+      if (String(id.field("UniqueName").value?.content || "") === name) return title;
+    }
+    return null;
+  }
+  // Missing from the old Android port; mirrors SequenceMatchIntroPatch in PC.
+  section("match intro title colour", () => {
+    const sequence = cls(img, "SPTESL.SequenceMatchIntro");
+    const execute = sequence.methods.find(m => m.name === "Execute" && m.parameterCount === 2 &&
+      /MatchLogAnimationData$/.test(m.parameters[0].type.name) && /BoardState$/.test(m.parameters[1].type.name));
+    if (!execute) throw Error("SequenceMatchIntro.Execute(data, boardState) not found");
+    log(`titles UI: intro Execute parameters=${execute.parameters.map(p => p.type.name).join(",")}`);
+    if (execute.parameters.some(p => p.type.class.isValueType)) throw Error("Intro value-type parameters need a separate ABI adapter");
+    Interceptor.attach(execute.virtualAddress, {
+      onEnter(args) { const start = execute.isStatic ? 0 : 1; this.data = args[start]; this.board = args[start + 1]; },
+      onLeave() {
+        try {
+          const data = new Il2Cpp.Object(this.data), board = new Il2Cpp.Object(this.board);
+          const players = call(data.field("ActionData").value, "get_MatchIntroPlayers");
+          if (isNull(players)) return;
+          const win = board.field("MatchUI").value.field("MatchIntroWin").value;
+          const network = cls(img, "SPTESL.GameNetworkManager").method("get_Instance").invoke();
+          for (let i = 0, count = Number(call(players, "get_Count")); i < count; i++) {
+            const player = players.method("get_Item", 1).invoke(i);
+            const types = call(player, "get_InventoryTypes");
+            const titleIndex = Number(types.method("IndexOf", 1).invoke(Il2Cpp.string("title")));
+            if (titleIndex < 0) continue;
+            const values = call(player, "get_InventoryValues");
+            const titleName = String(values.method("get_Item", 1).invoke(titleIndex)?.content || "");
+            const title = titleDataByName(titleName);
+            if (isNull(title) || enumVal(title.field("Rarity").value) !== RARITY_LEGENDARY) continue;
+            const own = enumVal(network.method("GetPlayerControllerType", 1).invoke(call(player, "get_PlayerInstanceId"))) === 0;
+            const panel = win.field(own ? "MyInfoPanel" : "UrInfoPanel").value;
+            const banner = panel.field("TitleBanner").value;
+            const resources = cls(img, "UIResourceManager").method("get_Instance").invoke();
+            const sprite = resources.method("GetTitleBannerSprite", 1).invoke(enumBox(cls(img, "SPTESL.CardRarity"), 0));
+            if (!isNull(sprite)) call(banner, "set_overrideSprite", sprite);
+            call(banner, "set_color", rgba(1, 0.75, 0, 1));
+            log("titles UI: match intro legendary banner tinted");
+          }
+        } catch (error) { log(`titles UI: intro tint failed: ${error}`); }
+      }
+    });
+  });
+// END android-ui: title-intro
+
+
+  // BEGIN android-ui: chat-emojis
+const emojiByName = new Map(), emojiByAscii = new Map();
+  let emojiDefinitions = [], emojiAsset = null, emojiTexture = null, emojiInitAttempted = false;
+  const emojiHandles = [];
+  function emojiIndex(definition, columns) { return (definition.Row - 1) * columns + definition.Column - 1; }
+  function emojiFormat(message) {
+    // PC sends this markup too. Resolve its name against the verified atlas.
+    let plain = String(message).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
+    plain = uiPlain(plain);
+    plain = plain.split(" ").map(word => emojiByAscii.has(word) ? `:${emojiByAscii.get(word)}:` : word).join(" ");
+    return plain.replace(/:([a-z0-9_]+):/gi, (whole, name) => {
+      const definition = emojiByName.get(name);
+      return definition ? `<size=130%><sprite=${definition.index}></size>` : whole;
+    });
+  }
+  function initializeEmojis() {
+    if (emojiAsset) return true;
+    if (emojiInitAttempted) return false;
+    emojiInitAttempted = true;
+    try {
+      const path = `${persistentPath()}/tesl-reborn-emojis`;
+      const jsonBytes = File.readAllBytes(`${path}/people.json`), pngBytes = File.readAllBytes(`${path}/people.png`);
+      if (Checksum.compute("sha256", jsonBytes) !== "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d" ||
+          Checksum.compute("sha256", pngBytes) !== "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa") throw Error("Emoji resource checksum mismatch");
+      const definition = JSON.parse(File.readAllText(`${path}/people.json`));
+      const shader = ucls("UnityEngine.Shader").method("Find", 1).invoke(Il2Cpp.string("TextMeshPro/Sprite"));
+      if (isNull(shader)) throw Error("TextMeshPro/Sprite shader is unavailable");
+      const texture = ucls("UnityEngine.Texture2D").alloc();
+      emojiHandles.push(texture.ref(false));
+      texture.method(".ctor").overload("System.Int32", "System.Int32", "UnityEngine.TextureFormat", "System.Boolean")
+        .invoke(2, 2, enumBox(ucls("UnityEngine.TextureFormat"), 4), false);
+      const managedBytes = Il2Cpp.corlib.class("System.IO.File").method("ReadAllBytes", 1).invoke(Il2Cpp.string(`${path}/people.png`));
+      const loaded = ucls("UnityEngine.ImageConversion").method("LoadImage").overload("UnityEngine.Texture2D", "System.Byte[]").invoke(texture, managedBytes);
+      if (!loaded) throw Error("PNG decoding failed");
+      const width = Number(call(texture, "get_width")), height = Number(call(texture, "get_height"));
+      const columns = width / definition.SpriteSize, rows = height / definition.SpriteSize;
+      if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns * rows > 4096) throw Error("Invalid emoji atlas dimensions");
+      const material = ucls("UnityEngine.Material").alloc();
+      emojiHandles.push(material.ref(false));
+      material.method(".ctor").overload("UnityEngine.Shader").invoke(shader);
+      call(material, "set_mainTexture", texture);
+      const asset = ucls("UnityEngine.ScriptableObject").method("CreateInstance").overload("System.Type").invoke(ucls("TMPro.TMP_SpriteAsset").type.object);
+      emojiHandles.push(asset.ref(false));
+      asset.field("spriteSheet").value = texture; asset.field("material").value = material;
+      const list = uiList(ucls("TMPro.TMP_Sprite"));
+      emojiHandles.push(list.ref(false));
+      for (let i = 0; i < columns * rows; i++) call(list, "Add", NULL);
+      const definitions = definition.Groups.flatMap(group => group.Sprites);
+      for (const item of definitions) {
+        if (item.Row < 1 || item.Column < 1 || item.Row > rows || item.Column > columns || !/^[a-z0-9_]+$/.test(item.Name))
+          throw Error("Invalid emoji definition");
+        const index = emojiIndex(item, columns), sprite = newWith(ucls("TMPro.TMP_Sprite"));
+        const spriteHandle = sprite.ref(false);
+        const fields = { id: index, name: Il2Cpp.string(item.Name), unicode: index,
+          x: (item.Column - 1) * definition.SpriteSize, y: height - item.Row * definition.SpriteSize,
+          width: definition.SpriteSize, height: definition.SpriteSize, xOffset: 0,
+          yOffset: definition.SpriteSize * 0.8, xAdvance: definition.SpriteSize, scale: 1 };
+        for (const [key, value] of Object.entries(fields)) sprite.field(key).value = value;
+        list.method("set_Item", 2).invoke(index, sprite);
+        spriteHandle.free();
+        const entry = Object.assign({}, item, { index, u: (item.Column - 1) / columns, v: 1 - item.Row / rows, du: 1 / columns, dv: 1 / rows });
+        emojiByName.set(item.Name, entry);
+        for (const ascii of String(item.Ascii || "").split(" ").filter(Boolean)) emojiByAscii.set(ascii, item.Name);
+      }
+      asset.field("spriteInfoList").value = list;
+      emojiDefinitions = definitions.map(item => emojiByName.get(item.Name));
+      emojiAsset = asset; emojiTexture = texture;
+      log(`emoji: initialized ${emojiDefinitions.length} sprites from PC atlas`);
+      return true;
+    } catch (error) { emojiByName.clear(); emojiByAscii.clear(); log(`emoji: initialization failed: ${error}`); return false; }
+  }
+  const chatMessages = new Map();
+  let chatMessageReports = 0;
+  function chatResetTextRect(rect) {
+    call(rect, "set_anchorMin", vec2(0, 0)); call(rect, "set_anchorMax", vec2(1, 1));
+    call(rect, "set_pivot", vec2(0.5, 0.5));
+    call(rect, "set_sizeDelta", vec2(-16, -8)); call(rect, "set_anchoredPosition", vec2(0, 0));
+  }
+  function chatFitTextBox(record) {
+    const row = call(record.rect.target, "get_rect"), box = call(record.textRect.target, "get_rect");
+    const expectedWidth = Number(row.field("m_Width").value) - 16;
+    const expectedHeight = Number(row.field("m_Height").value) - 8;
+    if (Math.abs(Number(box.field("m_Width").value) - expectedWidth) > 0.5 ||
+        Math.abs(Number(box.field("m_Height").value) - expectedHeight) > 0.5) {
+      chatResetTextRect(record.textRect.target);
+      if (record.boxRepairs++ < 2) log("chat UI: repaired TMP text container bounds");
+    }
+  }
+  function chatPrepareViewport(self) {
+    const root = call(self, "get_transform");
+    const viewport = call(root, "Find", Il2Cpp.string("Window/Section_TopBigChat/Section_Messages/Panel_Messages/Scroll_Messages/Viewport"));
+    if (isNull(viewport)) { log("chat UI: viewport path missing"); return; }
+    const go = call(viewport, "get_gameObject");
+    ucls("UnityEngine.UI.RectMask2D"); // Check availability before disabling the original mask.
+    let rectangle = uiComponent(go, "UnityEngine.UI.RectMask2D");
+    if (isNull(rectangle)) rectangle = uiAdd(go, "UnityEngine.UI.RectMask2D");
+    const mask = uiComponent(go, "UnityEngine.UI.Mask");
+    if (!isNull(mask)) call(mask, "set_enabled", false);
+    const image = uiComponent(go, "UnityEngine.UI.Image");
+    if (!isNull(image)) call(image, "set_enabled", false);
+    call(rectangle, "set_enabled", true);
+    log("chat UI: PC viewport mask fix applied (Mask off, Image off, RectMask2D on)");
+  }
+  function chatLogMessageBounds(record) {
+    try {
+      let rect = call(record.text.target, "get_rectTransform");
+      for (let depth = 0; depth < 7 && !isNull(rect); depth++) {
+        const name = String(call(rect, "get_name")?.content || "?");
+        const area = call(rect, "get_rect"), point = uiXY(call(rect, "get_anchoredPosition"));
+        const scale = uiXY(call(rect, "get_localScale")), pivot = uiXY(call(rect, "get_pivot"));
+        log(`chat UI geometry: ${depth}:${name} rect=${Number(area.field("m_Width").value).toFixed(1)}x${Number(area.field("m_Height").value).toFixed(1)} pos=${point.x.toFixed(1)},${point.y.toFixed(1)} pivot=${pivot.x.toFixed(1)},${pivot.y.toFixed(1)} scale=${scale.x.toFixed(2)},${scale.y.toFixed(2)}`);
+        const parent = call(rect, "get_parent");
+        if (isNull(parent)) break;
+        rect = uiRect(call(parent, "get_gameObject"));
+      }
+    } catch (error) { log(`chat UI: geometry probe failed: ${error}`); }
+  }
+  function chatResizeMessage(record) {
+    const row = record.row.target, text = record.text.target;
+    if (isNull(row) || isNull(text)) return;
+    const rect = record.rect.target;
+    const area = call(rect, "get_rect");
+    const width = Math.max(32, Number(area.field("m_Width").value) - 16);
+    if (Math.abs(width - record.width) < 0.5 && record.height > 0) {
+      const currentHeight = Number(area.field("m_Height").value);
+      if (Math.abs(currentHeight - record.height) > 0.5) {
+        call(record.layout.target, "set_preferredHeight", record.height);
+        call(record.layout.target, "set_minHeight", record.height);
+        call(record.layout.target, "set_flexibleHeight", 0);
+        const delta = uiXY(call(rect, "get_sizeDelta"));
+        call(rect, "set_sizeDelta", vec2(delta.x, delta.y + record.height - currentHeight));
+      }
+      chatFitTextBox(record);
+      return;
+    }
+    let height;
+    const preferred = text.tryMethod("GetPreferredValues", 3);
+    if (preferred) height = uiXY(preferred.overload("System.String", "System.Single", "System.Single")
+      .invoke(Il2Cpp.string(record.value), width, 100000)).y;
+    else height = Number(call(text, "get_preferredHeight"));
+    height = Math.ceil(Math.max(28, height) + 8);
+    if (!Number.isFinite(height) || height > 20000) throw Error("Invalid chat message height");
+    if (Math.abs(height - record.height) > 0.5 || Math.abs(width - record.width) > 0.5) {
+      call(record.layout.target, "set_preferredHeight", height);
+      call(record.layout.target, "set_minHeight", height);
+      call(record.layout.target, "set_flexibleHeight", 0);
+      const currentHeight = Number(area.field("m_Height").value), delta = uiXY(call(rect, "get_sizeDelta"));
+      call(rect, "set_sizeDelta", vec2(delta.x, delta.y + height - currentHeight));
+      record.height = height; record.width = width;
+    }
+    chatFitTextBox(record);
+  }
+  function chatRefreshMessageSizes() {
+    for (const [key, record] of chatMessages) {
+      try {
+        if (!isNull(record.row.target)) {
+          if (Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) chatResizeMessage(record);
+          continue;
+        }
+      } catch (error) {
+        if (!record.warned) { record.warned = true; log(`chat UI: message layout failed: ${error}`); }
+      }
+      for (const handle of [record.row, record.text, record.rect, record.layout, record.textRect]) handle.free();
+      chatMessages.delete(key);
+    }
+  }
+  function renderChatMessage(row, message) {
+    if (!initializeEmojis()) return;
+    const legacy = row.field("_input").value;
+    if (isNull(legacy)) return;
+    const template = call(legacy, "get_textComponent");
+    if (isNull(template)) return;
+    const key = row.handle.toString();
+    let record = chatMessages.get(key);
+    if (!record) {
+      // The old InputField moves its text rectangle for horizontal scrolling.
+      // A message renderer must use the row's bounds, not that shifted rectangle.
+      const rowGO = call(row, "get_gameObject"), rowRect = uiRect(rowGO);
+      const go = uiNew("RebornEmojiMessage", call(rowGO, "get_transform")), rect = uiRect(go);
+      call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+      const text = uiText(go, "", 22);
+      // AddComponent<TMP> can reset sizeDelta to its default (observed +200,+50).
+      // Configure the container AFTER component creation, independently of font auto-sizing.
+      const autoContainer = text.tryMethod("set_autoSizeTextContainer", 1);
+      let containerConfigured = false;
+      if (autoContainer) { try { autoContainer.invoke(false); containerConfigured = true; } catch (_) {} }
+      if (!containerConfigured) { try { text.field("m_autoSizeTextContainer").value = false; } catch (_) {} }
+      call(text, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "TopLeft"));
+      call(text, "set_raycastTarget", true); // ScrollRect needs a raycast target after the viewport Image is disabled.
+      call(text, "set_enableWordWrapping", true); call(text, "set_richText", true);
+      call(text, "set_spriteAsset", emojiAsset);
+      chatResetTextRect(rect);
+      let layout = uiComponent(rowGO, "UnityEngine.UI.LayoutElement");
+      if (isNull(layout)) layout = uiAdd(rowGO, "UnityEngine.UI.LayoutElement");
+      const parent = call(rowRect, "get_parent");
+      const group = uiComponent(call(parent, "get_gameObject"), "UnityEngine.UI.VerticalLayoutGroup");
+      if (!isNull(group)) {
+        call(group, "set_childControlHeight", true); call(group, "set_childForceExpandHeight", false);
+        call(group, "set_childControlWidth", true); call(group, "set_childForceExpandWidth", true);
+        call(group, "set_childAlignment", enumBox(ucls("UnityEngine.TextAnchor"), 0));
+      }
+      record = { row: row.weakRef(false), text: text.ref(false), rect: rowRect.ref(false), layout: layout.ref(false), textRect: rect.ref(false),
+        width: -1, height: -1, value: "", warned: false, boxRepairs: 0 };
+      chatMessages.set(key, record);
+      if (chatMessages.size <= 2) schedule(500, () => chatLogMessageBounds(record));
+    }
+    const username = String(message.field("Username").value?.content || "");
+    const body = String(message.field("Text").value?.content || "");
+    const value = `${username ? `<b>${uiPlain(username)}</b>\n` : ""}${emojiFormat(body)}`;
+    if (record.value !== value) { record.value = value; record.width = -1; record.height = -1; }
+    call(record.text.target, "set_text", Il2Cpp.string(value));
+    chatResizeMessage(record);
+    // Keep the native object and its event wiring, but stop InputField text scrolling.
+    call(legacy, "set_enabled", false);
+    call(template, "set_enabled", false);
+    if (chatMessageReports++ < 4) log(`chat UI: message fitted height=${record.height}; row-relative bounds`);
+  }
+  section("chat emoji rendering", () => {
+    const klass = cls(img, "ChatMessageEntry");
+    const method = klass.methods.find(m => m.name === "SetData" && m.parameterCount >= 1 && !m.isStatic);
+    if (!method || method.parameters[0].type.class.isValueType) throw Error("ChatMessageEntry.SetData reference Message not found");
+    Interceptor.attach(method.virtualAddress, {
+      onEnter(args) { this.row = args[0]; this.message = args[1]; },
+      onLeave() { try { renderChatMessage(new Il2Cpp.Object(this.row), new Il2Cpp.Object(this.message)); }
+        catch (error) { log(`emoji: message rendering failed: ${error}`); } }
+    });
+  });
+
+
+  section("chat message layout refresh", () => {
+    const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
+    if (render && !render.virtualAddress.isNull()) {
+      Interceptor.attach(render.virtualAddress, { onEnter() { chatRefreshMessageSizes(); } });
+    } else {
+      const tick = () => { chatRefreshMessageSizes(); schedule(100, tick); }; schedule(100, tick);
+    }
+  });
+// END android-ui: chat-emojis
+
+  // BEGIN android-ui: message-preview
+const messagePreviews = new Map();
+  let messagePreviewReports = 0;
+  function emojiPreviewFormat(source, richText) {
+    // Preserve native name/time/style markup, and use the same name->sprite map as chat.
+    const normalized = String(source).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
+    if (!richText) return emojiFormat(normalized);
+    return normalized.split(/(<\/?(?:b|i|size|color)(?:=[^<>]*)?>)/gi)
+      .map(part => /^<\/?(?:b|i|size|color)(?:=[^<>]*)?>$/i.test(part) ? part : emojiFormat(part)).join("");
+  }
+  function messagePreviewBounds(record) {
+    const rect = record.rect.target;
+    call(rect, "set_anchorMin", vec2(0, 0)); call(rect, "set_anchorMax", vec2(1, 1));
+    call(rect, "set_pivot", vec2(0.5, 0.5)); call(rect, "set_sizeDelta", vec2(0, 0));
+    call(rect, "set_anchoredPosition", vec2(0, 0));
+  }
+  function refreshMessagePreview(record) {
+    const template = record.template.target, label = record.label.target;
+    if (isNull(template) || isNull(label)) return false;
+    let source = String(call(template, "get_text")?.content || "");
+    if (!source) source = record.fallbackText;
+    const richText = Boolean(call(template, "get_supportRichText"));
+    if (source !== record.source || richText !== record.richText) {
+      call(label, "set_text", Il2Cpp.string(emojiPreviewFormat(source, richText)));
+      record.source = source; record.richText = richText;
+    }
+    const fontSize = Number(call(template, "get_fontSize"));
+    if (fontSize > 0 && fontSize !== record.fontSize) { call(label, "set_fontSize", fontSize); record.fontSize = fontSize; }
+    // Native preview fade/colour animations can target the legacy graphic itself.
+    call(label, "set_color", call(template, "get_color"));
+    try {
+      const originalRenderer = call(template, "get_canvasRenderer"), renderer = call(label, "get_canvasRenderer");
+      call(renderer, "SetColor", call(originalRenderer, "GetColor"));
+    } catch (_) {}
+    const parentArea = call(call(template, "get_rectTransform"), "get_rect");
+    const area = call(record.rect.target, "get_rect");
+    if (Math.abs(Number(area.field("m_Width").value) - Number(parentArea.field("m_Width").value)) > 0.5 ||
+        Math.abs(Number(area.field("m_Height").value) - Number(parentArea.field("m_Height").value)) > 0.5) messagePreviewBounds(record);
+    call(template, "set_enabled", false); // Keep the original GameObject, layout and click handlers active.
+    return true;
+  }
+  function dropMessagePreview(key, record) {
+    try { if (!isNull(record.template.target)) call(record.template.target, "set_enabled", true); } catch (_) {}
+    try { if (!isNull(record.label.target)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(record.label.target, "get_gameObject")); } catch (_) {}
+    for (const handle of [record.row, record.template, record.label, record.rect]) handle.free();
+    messagePreviews.delete(key);
+  }
+  function renderMessagePreview(row, message) {
+    // A preview may arrive before chat assets/shaders have been loaded. Do not
+    // consume the chat's one initialization attempt while the sprite shader is absent.
+    if (!emojiAsset) {
+      try {
+        if (isNull(ucls("UnityEngine.Shader").method("Find", 1).invoke(Il2Cpp.string("TextMeshPro/Sprite")))) return;
+      } catch (_) { return; }
+    }
+    if (!initializeEmojis()) return;
+    const template = row.field("_text").value;
+    if (isNull(template)) return;
+    const key = row.handle.toString();
+    let record = messagePreviews.get(key);
+    if (record && (isNull(record.template.target) || record.template.target.handle.toString() !== template.handle.toString())) {
+      dropMessagePreview(key, record); record = null;
+    }
+    if (!record) {
+      let go = null;
+      try {
+        go = uiNew("PreviewRichText", call(template, "get_transform"));
+        call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+        const label = uiText(go, "", 22);
+        const autoContainer = label.tryMethod("set_autoSizeTextContainer", 1);
+        let configured = false;
+        if (autoContainer) { try { autoContainer.invoke(false); configured = true; } catch (_) {} }
+        if (!configured) { try { label.field("m_autoSizeTextContainer").value = false; } catch (_) {} }
+        call(label, "set_richText", true); call(label, "set_raycastTarget", true);
+        call(label, "set_enableWordWrapping", enumVal(call(template, "get_horizontalOverflow")) === 0);
+        const alignments = ["TopLeft", "Top", "TopRight", "Left", "Center", "Right", "BottomLeft", "Bottom", "BottomRight"];
+        const alignment = enumVal(call(template, "get_alignment"));
+        call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", alignments[alignment] || "TopLeft"));
+        const overflow = label.method("set_overflowMode", 1);
+        overflow.invoke(enumBox(overflow.parameters[0].type.class, 3)); // Truncate, same as PC MessagePreviewEntryPatch.
+        call(label, "set_spriteAsset", emojiAsset);
+        record = { row: row.weakRef(false), template: template.weakRef(false), label: label.ref(false), rect: uiRect(go).ref(false),
+          fallbackText: "", source: null, richText: null, fontSize: null };
+        messagePreviewBounds(record); // Always AFTER TMP creation and configuration.
+        messagePreviews.set(key, record);
+      } catch (error) {
+        if (go) { try { ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go); } catch (_) {} }
+        throw error;
+      }
+    }
+    const username = String(message.field("Username").value?.content || "");
+    const body = String(message.field("Text").value?.content || "");
+    record.fallbackText = `${username ? `${username}: ` : ""}${body}`;
+    refreshMessagePreview(record);
+    if (messagePreviewReports++ < 4) log("emoji preview: rendered with shared chat sprite atlas");
+  }
+  function refreshMessagePreviews() {
+    for (const [key, record] of messagePreviews) {
+      try {
+        if (!isNull(record.row.target) && !isNull(record.template.target)) {
+          if (Boolean(call(call(record.template.target, "get_gameObject"), "get_activeInHierarchy"))) refreshMessagePreview(record);
+          continue;
+        }
+      } catch (error) {
+        try { if (!isNull(record.template.target)) call(record.template.target, "set_enabled", true); } catch (_) {}
+        log(`emoji preview: refresh failed: ${error}`);
+      }
+      dropMessagePreview(key, record);
+    }
+  }
+  section("message preview emoji rendering", () => {
+    const klass = cls(img, "MessagePreviewEntry");
+    const methods = klass.methods.filter(m => m.name === "SetData" && !m.isStatic && m.parameterCount >= 1 &&
+      m.parameters[0].type.class.name === "Message" && !m.parameters[0].type.class.isValueType && !m.virtualAddress.isNull());
+    if (!methods.length) throw Error("MessagePreviewEntry.SetData(Message, ...) not found");
+    const seen = new Set();
+    for (const method of methods) {
+      const address = method.virtualAddress.toString(); if (seen.has(address)) continue; seen.add(address);
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) { this.row = args[0]; this.message = args[1]; },
+        onLeave() { try { renderMessagePreview(new Il2Cpp.Object(this.row), new Il2Cpp.Object(this.message)); }
+          catch (error) { log(`emoji preview: rendering failed: ${error}`); } }
+      });
+    }
+    const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
+    if (render && !render.virtualAddress.isNull()) Interceptor.attach(render.virtualAddress, { onEnter() { refreshMessagePreviews(); } });
+    else { const tick = () => { refreshMessagePreviews(); schedule(100, tick); }; schedule(100, tick); }
+    log(`emoji preview: hooks installed callbacks=${seen.size}`);
+  });
+// END android-ui: message-preview
+
+  // BEGIN android-ui: chat-scale
+function chatScaleApply(record) {
+    if (!record.baseScale || !Number.isFinite(record.factor)) return;
+    const rect = record.rect.target, current = call(rect, "get_localScale"), base = record.baseScale;
+    const x = base.x * record.factor, y = base.y * record.factor;
+    if (Math.abs(Number(current.field("x").value) - x) > 0.001 || Math.abs(Number(current.field("y").value) - y) > 0.001)
+      call(rect, "set_localScale", unityStruct("UnityEngine.Vector3", { x, y, z: base.z }));
+  }
+  function chatScaleSetup(record) {
+    const rect = record.rect.target, scale = call(rect, "get_localScale");
+    record.baseScale = { x: Number(scale.field("x").value) || 1, y: Number(scale.field("y").value) || 1,
+      z: Number(scale.field("z").value) || 1 };
+    const area = call(rect, "get_rect"), screen = chatScreen();
+    const canvasScale = Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
+    record.maxFactor = Math.max(0.45, Math.min(1.8,
+      (screen.width / canvasScale - 24) / Math.max(1, Number(area.field("m_Width").value) * Math.abs(record.baseScale.x)),
+      (screen.height / canvasScale - 24) / Math.max(1, Number(area.field("m_Height").value) * Math.abs(record.baseScale.y))));
+    record.factor = Math.min(1, record.maxFactor);
+    try {
+      const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-scale.json`) || "null");
+      if (saved && Number.isFinite(saved.factor)) record.factor = Math.max(0.45, Math.min(record.maxFactor, saved.factor));
+    } catch (_) {}
+    record.scaleEnabled = true;
+    chatScaleApply(record);
+    log(`chat UI: scale enabled range=0.45..${record.maxFactor.toFixed(2)}; pinch only`);
+  }
+  function chatScaleSet(record, factor) {
+    record.factor = Math.max(0.45, Math.min(record.maxFactor, factor)); chatScaleApply(record);
+  }
+  function chatScaleSave(record) {
+    writeTextFile(`${persistentPath()}/tesl-reborn-chat-scale.json`, JSON.stringify({ factor: record.factor }));
+    log(`chat UI: scale saved factor=${record.factor.toFixed(2)}`);
+  }
+  function chatScaleUpdate(record) {
+    if (!record.scaleEnabled) return false;
+    const input = ucls("UnityEngine.Input"), count = Number(input.method("get_touchCount", 0).invoke());
+    const camera = call(record.canvas.target, "get_worldCamera");
+    if (count >= 2) {
+      const a = input.method("GetTouch", 1).invoke(0), b = input.method("GetTouch", 1).invoke(1);
+      const ap = uiXY(a.method("get_position", 0).invoke()), bp = uiXY(b.method("get_position", 0).invoke());
+      const phases = [a, b].map(t => enumVal(t.method("get_phase", 0).invoke()));
+      if (phases.some(p => p === 3 || p === 4)) {
+        if (record.pinch) { record.pinch = null; chatScaleSave(record); } return true;
+      }
+      if (!record.pinch) {
+        if (!chatContains(record.rect.target, ap, camera) || !chatContains(record.rect.target, bp, camera)) return false;
+        record.pinch = { distance: Math.max(1, Math.hypot(ap.x - bp.x, ap.y - bp.y)), factor: record.factor };
+        record.dragging = false; record.armed = false;
+      }
+      chatScaleSet(record, record.pinch.factor * Math.hypot(ap.x - bp.x, ap.y - bp.y) / record.pinch.distance);
+      return true;
+    }
+    if (record.pinch) { record.pinch = null; chatScaleSave(record); return true; }
+    return false;
+  }
+// END android-ui: chat-scale
+
+  // BEGIN android-ui: chat-window
+const chatWindows = new Map();
+  const chatSetupDiagnosed = new Set();
+  function chatInputInsert(record, name) {
+    const input = record.input.target;
+    const text = String(call(input, "get_text")?.content || "");
+    const index = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
+    const insertion = `:${name}: `;
+    call(input, "set_text", Il2Cpp.string(text.slice(0, index) + insertion + text.slice(index)));
+    record.caret = index + insertion.length;
+    const caret = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
+    if (caret) caret.invoke(record.caret);
+    call(input, "ActivateInputField");
+  }
+  function chatBuildPicker(record) {
+    if (record.picker) return true;
+    if (!initializeEmojis()) return false;
+    const go = uiNew("RebornEmojiPicker", record.window.target);
+    uiPlace(go, 1, 0, 1, 0, -16, 84, 284, 250);
+    call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+    const bg = uiAdd(go, "UnityEngine.UI.Image"); call(bg, "set_color", rgba(0.08, 0.08, 0.08, 0.98));
+    const root = call(go, "get_transform");
+    record.picker = go.ref(false); record.page = 0; record.cells = [];
+    for (let i = 0; i < 48; i++) {
+      const cell = uiNew(`Emoji${i}`, root);
+      uiPlace(cell, 0, 1, 0, 1, 6 + (i % 8) * 34, -6 - Math.floor(i / 8) * 34, 30, 30);
+      const icon = uiAdd(cell, "UnityEngine.UI.RawImage"); call(icon, "set_texture", emojiTexture);
+      uiButton(cell, icon, () => {
+        const entry = emojiDefinitions[record.page * 48 + i];
+        if (!entry) return;
+        chatInputInsert(record, entry.Name); call(record.picker.target, "SetActive", false);
+      });
+      record.cells.push({ object: cell.ref(false), image: icon.ref(false) });
+    }
+    uiLabeledButton("Previous", root, "<", -196, -216, 68, () => chatPickerPage(record, -1));
+    uiLabeledButton("Next", root, ">", -112, -216, 68, () => chatPickerPage(record, 1));
+    uiLabeledButton("Close", root, "X", -8, -216, 68, () => call(record.picker.target, "SetActive", false));
+    chatPickerPage(record, 0);
+    call(go, "SetActive", false);
+    return true;
+  }
+  function chatPickerPage(record, delta) {
+    const pages = Math.ceil(emojiDefinitions.length / 48);
+    record.page = (record.page + delta + pages) % pages;
+    for (let i = 0; i < record.cells.length; i++) {
+      const entry = emojiDefinitions[record.page * 48 + i], cell = record.cells[i];
+      call(cell.object.target, "SetActive", !!entry);
+      if (!entry) continue;
+      call(cell.image.target, "set_uvRect", unityStruct("UnityEngine.Rect", {
+        m_XMin: entry.u, m_YMin: entry.v, m_Width: entry.du, m_Height: entry.dv
+      }));
+    }
+    log(`emoji: picker page ${record.page + 1}/${pages}`);
+  }
+  function chatFind(root, path) {
+    const value = call(root, "Find", Il2Cpp.string(path));
+    if (isNull(value)) throw Error(`Chat UI path missing: ${path}`);
+    return value;
+  }
+  function chatSetup(self) {
+    const key = self.handle.toString();
+    if (chatWindows.has(key)) return;
+    let controls = null, pickerCreated = null, createdRecord = null;
+    try {
+      const root = call(self, "get_transform"), window = chatFind(root, "Window");
+      const inputTransform = chatFind(root, "Window/Section_BottomSmallChat/Input_Message");
+      const inputGO = call(inputTransform, "get_gameObject");
+      let input = uiComponent(inputGO, "TMPro.TMP_InputField");
+      if (isNull(input)) input = uiComponent(inputGO, "UnityEngine.UI.InputField");
+      if (isNull(input)) throw Error("Chat input component not found");
+      const canvas = window.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+      if (isNull(canvas)) throw Error("Chat canvas not found");
+      const windowGO = call(window, "get_gameObject"), rect = uiRect(windowGO);
+      // Drag the existing player header. Keep Move only as a prefab fallback.
+      const header = call(root, "Find", Il2Cpp.string("Window/Section_TopBigChat/Section_PlayerInfo"));
+      let handle;
+      if (!isNull(header)) handle = uiRect(call(header, "get_gameObject"));
+      else {
+        controls = uiNew("RebornChatControls", window); uiPlace(controls, 0.5, 1, 0.5, 1, 0, -3, 70, 28);
+        call(uiAdd(controls, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+        handle = uiRect(uiLabeledButton("MoveChat", call(controls, "get_transform"), "Move", 0, 0, 70, () => {}));
+      }
+      const record = { self: self.weakRef(false), window: window.ref(false), rect: rect.ref(false),
+        input: input.ref(false), canvas: canvas.ref(false), controls: (controls || windowGO).ref(false),
+        dragging: false, caret: null, errors: 0, picker: null, desired: null, handle: handle.ref(false) };
+      createdRecord = record;
+      // Same smiley (sprite index 8), 46x46 size and input-relative placement as PC.
+      const picker = uiNew("EmojiPickerButton", inputTransform);
+      pickerCreated = picker;
+      uiPlace(picker, 1, 1, 1, 0, -16, -63, 46, 46);
+      call(uiAdd(picker, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+      const hit = uiAdd(picker, "UnityEngine.UI.Image");
+      call(hit, "set_color", rgba(1, 1, 1, 0));
+      const labelGO = uiNew("Label", call(picker, "get_transform"));
+      uiStretch(uiRect(labelGO));
+      const label = uiText(labelGO, "", 30);
+      if (initializeEmojis()) {
+        call(label, "set_spriteAsset", emojiAsset);
+        call(label, "set_richText", true);
+        call(label, "set_text", Il2Cpp.string("<sprite=8>"));
+      } else call(label, "set_text", Il2Cpp.string(":)"));
+      // No colour transition on an invisible hit target; the sprite is the label.
+      const pickerButton = uiButton(picker, hit, () => {
+        if (!chatBuildPicker(record)) return;
+        const panel = record.picker.target;
+        call(panel, "SetActive", !Boolean(call(panel, "get_activeSelf")));
+        if (Boolean(call(panel, "get_activeSelf"))) call(call(panel, "get_transform"), "SetAsLastSibling");
+      });
+      const transition = pickerButton.tryMethod("set_transition", 1);
+      if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
+      record.pickerButton = uiRect(picker).ref(false);
+      // Ignore positions from v9: the failed bounds calculation could leave one invalid.
+      try {
+        const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`) || "null");
+        const screen = chatScreen();
+        if (saved && saved.width === screen.width && saved.height === screen.height &&
+            Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+          record.desired = { x: saved.x, y: saved.y };
+          call(rect, "set_anchoredPosition", vec2(saved.x, saved.y));
+        }
+      } catch (_) {}
+      chatWindows.set(key, record);
+      try { chatPrepareViewport(self); } catch (error) { log(`chat UI: viewport preparation failed: ${error}`); }
+      try { chatScaleSetup(record); } catch (error) { log(`chat UI: scale setup failed: ${error}`); }
+      log(`chat UI: drag=${controls ? "Move fallback" : "player header"}; PC smiley installed`);
+    } catch (error) {
+      for (const object of [controls, pickerCreated]) if (object) {
+        try { ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(object); } catch (_) {}
+      }
+      if (createdRecord) for (const value of Object.values(createdRecord)) {
+        if (value && typeof value.free === "function") { try { value.free(); } catch (_) {} }
+      }
+      log(`chat UI: setup failed: ${error}`);
+      if (!chatSetupDiagnosed.has(key)) {
+        chatSetupDiagnosed.add(key);
+        try { uiLogTree(call(self, "get_transform"), "chat UI paths"); } catch (_) {}
+      }
+    }
+  }
+  function chatContains(rect, point, camera) {
+    return Boolean(ucls("UnityEngine.RectTransformUtility").method("RectangleContainsScreenPoint")
+      .overload("UnityEngine.RectTransform", "UnityEngine.Vector2", "UnityEngine.Camera")
+      .invoke(rect, vec2(point.x, point.y), camera));
+  }
+  function chatScreen() {
+    const screen = ucls("UnityEngine.Screen");
+    return { width: Number(screen.method("get_width", 0).invoke()), height: Number(screen.method("get_height", 0).invoke()) };
+  }
+  function chatBoundPointer(point) {
+    // Bound the grabbed handle, not the full Window RectTransform. On mobile that
+    // rect may stretch across the viewport even when the visible chat is small.
+    const screen = chatScreen();
+    return { x: Math.max(16, Math.min(screen.width - 16, point.x)),
+      y: Math.max(16, Math.min(screen.height - 16, point.y)) };
+  }
+  function chatApplyPosition(record) {
+    if (!record.desired) return;
+    const rect = record.rect.target, current = uiXY(call(rect, "get_anchoredPosition"));
+    if (Math.abs(current.x - record.desired.x) > 0.1 || Math.abs(current.y - record.desired.y) > 0.1)
+      call(rect, "set_anchoredPosition", vec2(record.desired.x, record.desired.y));
+  }
+  function chatUpdate(self) {
+    const record = chatWindows.get(self.handle.toString());
+    if (!record || record.errors > 3) return;
+    try {
+      if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
+      if (chatScaleUpdate(record)) return;
+      const input = record.input.target;
+      if (Boolean(call(input, "get_isFocused"))) {
+        const caret = input.tryMethod("get_stringPosition", 0) || input.tryMethod("get_caretPosition", 0);
+        if (caret) record.caret = Number(caret.invoke());
+      }
+      const unityInput = ucls("UnityEngine.Input");
+      let point, held, down;
+      if (Number(unityInput.method("get_touchCount").invoke()) > 0) {
+        const touch = unityInput.method("GetTouch", 1).invoke(0);
+        point = uiXY(touch.method("get_position", 0).invoke());
+        const phase = enumVal(touch.method("get_phase", 0).invoke());
+        down = phase === 0; // Began; independent of simulateMouseWithTouches.
+        held = phase !== 3 && phase !== 4; // Ended / Canceled.
+      } else {
+        point = uiXY(unityInput.method("get_mousePosition").invoke());
+        held = Boolean(unityInput.method("GetMouseButton", 1).invoke(0));
+        down = Boolean(unityInput.method("GetMouseButtonDown", 1).invoke(0));
+      }
+      const camera = call(record.canvas.target, "get_worldCamera");
+      const rect = record.rect.target;
+      if (down && Boolean(call(call(record.handle.target, "get_gameObject"), "get_activeInHierarchy")) && chatContains(record.handle.target, point, camera)) {
+        record.armed = true; record.start = point; record.origin = uiXY(call(rect, "get_anchoredPosition"));
+      }
+      if (record.armed && held && !record.dragging && Math.hypot(point.x - record.start.x, point.y - record.start.y) >= 8) {
+        record.dragging = true;
+        log("chat UI: drag started");
+      }
+      if (record.dragging && held) {
+        const scale = Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
+        const bounded = chatBoundPointer(point);
+        record.desired = { x: record.origin.x + (bounded.x - record.start.x) / scale,
+          y: record.origin.y + (bounded.y - record.start.y) / scale };
+        chatApplyPosition(record);
+      }
+      if (record.dragging && !held) {
+        record.dragging = false;
+        const screen = chatScreen();
+        writeTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`, JSON.stringify(Object.assign({}, record.desired, screen)));
+        log("chat UI: position saved");
+      }
+      if (!held) record.armed = false;
+      chatApplyPosition(record); // Keep the chosen position after native Update rewrites it.
+      chatScaleApply(record);
+      if (down && record.picker && Boolean(call(record.picker.target, "get_activeSelf")) &&
+          !chatContains(uiRect(record.picker.target), point, camera) && !chatContains(record.pickerButton.target, point, camera))
+        call(record.picker.target, "SetActive", false);
+      record.errors = 0;
+    } catch (error) { record.errors++; record.dragging = false; log(`chat UI: update failed: ${error}`); }
+  }
+  section("movable chat and emoji picker", () => {
+    const klass = cls(img, "FriendsChatWin");
+    const update = klass.methods.find(m => m.name === "Update" && !m.isStatic && m.parameterCount === 0);
+    if (!update) throw Error("FriendsChatWin.Update not found");
+    for (const method of klass.methods.filter(m => ["Awake", "Show"].includes(m.name) && !m.isStatic)) {
+      if (method.virtualAddress.isNull()) continue;
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) { this.self = args[0]; },
+        onLeave() { try { chatSetup(new Il2Cpp.Object(this.self)); } catch (error) { log(`chat UI: ${error}`); } }
+      });
+    }
+    const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
+    if (render && !render.virtualAddress.isNull()) Interceptor.attach(render.virtualAddress, {
+      onLeave() { for (const record of chatWindows.values()) {
+        try { if (Boolean(call(record.controls.target, "get_activeInHierarchy"))) { chatApplyPosition(record); chatScaleApply(record); } }
+        catch (_) {}
+      } }
+    });
+    Interceptor.attach(update.virtualAddress, {
+      onEnter(args) { this.self = args[0]; },
+      onLeave() { try { chatUpdate(new Il2Cpp.Object(this.self)); } catch (_) {} }
+    });
+  });
+// END android-ui: chat-window
+
+
+  section("Reborn Android updater and diagnostics", () => {
+    const uriClass = ucls("System.Uri");
+    log(`HTTP URI assembly: ${uriClass.image.name}`);
+    log("Android feature hooks are active; server data and UI results are checked separately");
+    const updater = globalThis.TeslRebornUpdater;
+    if (updater) {
+      updater.ready();
+      schedule(10000, () => updater.check((url, cb) => httpGet(url, false, cb, true)));
+    }
   });
 
   log("setup finished");

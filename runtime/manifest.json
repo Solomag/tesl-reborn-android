@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "format": "tesl-reborn-hook-v1",
+  "loaderApi": 1,
+  "gameVersionCode": 11009,
+  "abi": "arm64-v8a",
+  "revision": 23,
+  "version": "android-23-port-source",
+  "bytes": 274022,
+  "sha256": "d666fe41ce68d37852f2f45f56ff7a856a0b3269196fc87ec7fc2353abe0d79a",
+  "resources": [
+    {
+      "name": "people.json",
+      "sha256": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
+      "bytes": 31248
+    },
+    {
+      "name": "people.png",
+      "sha256": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa",
+      "bytes": 748977
+    }
+  ]
+}
