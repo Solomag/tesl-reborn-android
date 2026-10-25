@@ -26,10 +26,11 @@ try {
 } catch (e) { console.log(`${TAG} no liblog: ${e}`); }
 const tagPtr = Memory.allocUtf8String("tesl-hook");
 function redactLog(message) {
+  // Handle escaped quotes and unterminated values before limiting log length.
   return String(message)
-    .replace(/("(?:password|encryptedAppTicket|token|sessionToken|access_token|refresh_token)"\s*:\s*")[^"\r\n]*("|$)/gi, '$1[REDACTED]$2')
+    .replace(/("(?:password|encryptedAppTicket|token|sessionToken|access_token|refresh_token|authorization|x-session-token)"\s*:\s*")(?:[^"\\]|\\[\s\S])*(?:"|\\?$)/gi, '$1[REDACTED]"')
     .replace(/\b(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-    .replace(/((?:authorization|x-session-token)\s*:\s*)[^"\r\n]*/gi, '$1[REDACTED]')
+    .replace(/((?:authorization|x-session-token)\s*:\s*)[^\r\n]*/gi, '$1[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, '[REDACTED-JWT]');
 }
 
@@ -38,6 +39,13 @@ const log = (m: string) => {
   console.log(`${TAG} ${m}`);
   try { androidLogWrite?.(4, tagPtr, Memory.allocUtf8String(m.length > 900 ? m.slice(0, 900) + "..." : m)); } catch (_) {}
 };
+let nativeRename = null;
+function atomicRename(from: string, to: string): boolean {
+  try {
+    if (!nativeRename) nativeRename = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("rename"), "int", ["pointer", "pointer"]);
+    return nativeRename(Memory.allocUtf8String(from), Memory.allocUtf8String(to)) === 0;
+  } catch (_) { return false; }
+}
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 function fakeTicket(len = 32): string {      // base64 of `len` random bytes, like the plugin's Generate()
   const b: number[] = [];
@@ -54,8 +62,11 @@ function fakeTicket(len = 32): string {      // base64 of `len` random bytes, li
 
 // Calls a managed delegate whose single parameter is a 32-bit value (e.g. Action<ResultCode>).
 function invokeDelegateInt(del: Il2Cpp.Object, value: number) {
-  const fn = new NativeFunction(del.field<NativePointer>("method_ptr").value, "void", ["pointer", "int32", "pointer"]);
-  fn(del.field<NativePointer>("m_target").value, value, del.field<NativePointer>("method").value);
+  const method = del.method("Invoke"), klass = method.parameters[0].type.class;
+  if (klass.isEnum) {
+    const boxed = klass.alloc(); boxed.field("value__").value = value;
+    method.invoke(boxed.unbox());
+  } else method.invoke(value);
 }
 
 function nested(image: Il2Cpp.Image, outer: string, inner: string): Il2Cpp.Class {
@@ -64,11 +75,18 @@ function nested(image: Il2Cpp.Image, outer: string, inner: string): Il2Cpp.Class
   return c;
 }
 
+  // A managed enum field reads back as a value type; dig the number out of it.
+  function enumVal(v: any): number {
+    if (v == null) return -1;
+    if (typeof v === "number") return v;
+    try { return Number((v as any).field("value__").value); } catch (_) { return -1; }
+  }
+
 function channelFrom(settings: Il2Cpp.Object | null): string {
   try {
     if (settings && !settings.handle.isNull()) {
       const names = settings.field<Il2Cpp.Array<Il2Cpp.String>>("_channelNames").value;
-      const idx = Number(settings.field<any>("_channel").value);
+      const idx = enumVal(settings.field<any>("_channel").value);
       return names.get(idx).content ?? "live";
     }
   } catch (e) { log(`channel lookup failed: ${e}`); }
@@ -93,7 +111,7 @@ function bodyOf(req: Il2Cpp.Object): string {
     const n = Math.min(Number(raw.length), 1500);
     let t = "";
     for (let i = 0; i < n; i++) t += String.fromCharCode(Number(raw.get(i)));
-    return t.replace(/("(?:password|encryptedAppTicket|token|sessionToken)"\s*:\s*")[^"]*"/g, '$1***"');
+    return redactLog(t);
   } catch (e) { return `(unreadable: ${e})`; }
 }
 
@@ -129,15 +147,16 @@ function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
 }
 // Calls a managed delegate whose single parameter is a reference (e.g. Action<string>).
 function invokeDelegatePtr(del: Il2Cpp.Object, value: NativePointer) {
-  const fn = new NativeFunction(del.field<NativePointer>("method_ptr").value, "void", ["pointer", "pointer", "pointer"]);
-  fn(del.field<NativePointer>("m_target").value, value, del.field<NativePointer>("method").value);
+  const method = del.method("Invoke"), handle = value?.handle ?? value;
+  const argument = method.parameters[0].type.name === "System.String" ? new Il2Cpp.String(handle) : new Il2Cpp.Object(handle);
+  method.invoke(argument);
 }
 
 const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true if the server says "account not found"
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-26-resources`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-27-data-archive`);
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -264,11 +283,12 @@ Il2Cpp.perform(() => {
       const raw = call(req, "get_RawData");
       if (!raw || raw.handle.isNull()) return;
       const length = Number(raw.length);
+      if (length > 65536) { log("login request exceeds capture limit"); return; }
       let text = "";
-      for (let i = 0; i < length; i++) text += String.fromCharCode(Number(raw.get(i)));
-      const body = JSON.parse(decodeURIComponent(escape(text)));
+      for (let i = 0; i < length; i++) text += "%" + Number(raw.get(i)).toString(16).padStart(2, "0");
+      const body = JSON.parse(decodeURIComponent(text));
       if (body && body.username) pendingLogin = { username: String(body.username), password: String(body.password ?? "") };
-    } catch (e) { log(`could not read the login: ${e}`); }
+    } catch (e) { log("could not read login credentials from request body"); }
   }
 
   // 2) Config redirect: FetchConfig.StartProcess(localConfigUrl, configUrl, attemptLocalConnect, callback)
@@ -296,17 +316,29 @@ Il2Cpp.perform(() => {
       onEnter(args) {
         try {
           const req = new Il2Cpp.Object(args[0]);
-          req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
+          let hasVersion = false;
+          try { hasVersion = Boolean(call(req, "HasHeader", Il2Cpp.string("X-TeslRebornPlugin-Version"))); } catch (_) {}
+          if (!hasVersion) req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
           const uri = String(call(req, "get_Uri"));
           captureLogin(req, uri);
           rewriteAuthBody(req, uri);
-          if (seen++ < 60) log(`-> ${uri} body: ${bodyOf(req)}`);
+          if (seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
         } catch (e) { log(`header hook error: ${e}`); }
       },
     });
   });
   // trace results via CallCallback (runs when a request completes; the state setter is inlined, so it can't be hooked)
   // BEGIN android-ui: http-diagnostics
+function loginOutcome(status, body) {
+  if (status !== 200) return "unknown";
+  try {
+    const json = JSON.parse(body), code = json?.resultCode;
+    const token = json?.data?.token ?? json?.token;
+    if (typeof token === "string" && token.length > 0 && (code === 0 || code == null)) return "success";
+    if (code === 15 || code === 17) return "rejected";
+  } catch (_) {}
+  return "unknown";
+}
 function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   function reportHttpResult(req, ordinaryBudget) {
     const uri = String(call(req, "get_Uri"));
@@ -327,8 +359,13 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     if (ordinaryBudget || status === 0 || status >= 400 || /\/api\/account\//.test(uri))
       log(`<- ${state} ${diagnosticUri(uri)} ${info}`);
     if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
-      if (status === 200) writeSavedLogin(pendingLogin.username, pendingLogin.password);
-      else log(`login: HTTP ${status}; authentication did not complete successfully`);
+      let body = ""; try { body = String(call(response, "get_DataAsText")?.content ?? ""); } catch (_) {}
+      const outcome = loginOutcome(status, body);
+      if (outcome === "success") writeSavedLogin(pendingLogin.username, pendingLogin.password);
+      else if (outcome === "rejected") {
+        writeSavedLogin(pendingLogin.username, ""); // Keep the name, forget only the rejected password.
+        log("login: credentials explicitly rejected; username retained");
+      } else log(`login: HTTP ${status}; saved credentials unchanged`);
       pendingLogin = null;
     }
   }
@@ -625,13 +662,6 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         .invoke(Il2Cpp.string(path), Il2Cpp.string(text));
       return true;
     } catch (e) { return false; }
-  }
-
-  // A managed enum field reads back as a value type; dig the number out of it.
-  function enumVal(v: any): number {
-    if (v == null) return -1;
-    if (typeof v === "number") return v;
-    try { return Number((v as any).field("value__").value); } catch (_) { return -1; }
   }
 
   // A new source fingerprint: 32 hex digits without dashes, the way the game
@@ -1383,7 +1413,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
 
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
-    let lastLanguage = "", loaded = false, switching = false, languageInputDepth = 0;
+    let lastLanguage = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0;
     // Account/bootstrap code also calls SetLanguage. Only an actual settings
     // handler may open setup; background locale changes must not restart login.
     const languageHandlers = new Set();
@@ -1486,6 +1516,9 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           }
           if (!fixes) return;
           if (isNull(data)) return;
+          const fingerprint = `${resourceLanguage() || code}:${data.handle}`;
+          if (lastFixed === fingerprint) return;
+          lastFixed = fingerprint;
           let changed = 0;
           for (const key of Object.keys(fixes)) {
             // The keys of the plugin are not in the game's text bundle, they
@@ -1542,10 +1575,13 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         }
       } catch (e) {
         log(`payload: the apk cannot be read: ${e}`);
+        try { this.file?.close(); } catch (_) {}
         this.file = null;
       }
     }
 
+    close() { try { this.file?.close(); } finally { this.file = null; } }
+    valid() { return this.file !== null; }
     find(name: string): any { return this.entries.get(name) ?? null; }
 
     list(): string[] { return [...this.entries.keys()]; }
@@ -1556,14 +1592,18 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     }
 
     copy(entry: any, target: string) {
-      const out = new File(target, "wb");
-      let done = 0;
-      while (done < entry.size) {
-        const n = Math.min(4 * 1024 * 1024, entry.size - done);
-        out.write(this.read(entry, done, n));
-        done += n;
-      }
-      out.close();
+      if (entry.method !== 0) throw Error("Legacy payload must be stored");
+      const part = target + ".part", out = new File(part, "wb");
+      try {
+        let done = 0;
+        while (done < entry.size) {
+          const n = Math.min(4 * 1024 * 1024, entry.size - done), bytes = this.read(entry, done, n);
+          if (bytes.byteLength !== n) throw Error("Truncated APK payload");
+          out.write(bytes); done += n;
+        }
+        out.flush();
+      } finally { out.close(); }
+      if (!atomicRename(part, target)) throw Error("Could not commit APK payload");
     }
 
     private dataOffset(entry: any): number {
@@ -1577,7 +1617,8 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const apk = apkPath();
     if (!apk) { log("payload: the apk was not found"); return; }
     const zip = new ZipReader(apk);
-    if (!zip) return;
+    if (!zip.valid()) return;
+    try {
     // Keep Reborn artwork out of git, but install the verified build resources
     // from the APK so a clean installation does not require an ADB asset push.
     const emojiHashes = {
@@ -1605,7 +1646,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
 
     if (obb) {
       const target = obbPath();
-      if (target && !fileExists(target)) {
+      if (target && fileSize(target) !== obb.size) {
         log(`payload: writing the streaming assets to ${target}`);
         makeDirectory(target.substring(0, target.lastIndexOf("/")));
         zip.copy(obb, target);
@@ -1655,8 +1696,8 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         for (const name of perEntry) {
           const rel = name.substring(prefix.length);
           const path = `${tgt}/${rel}`;
-          if (!fileExists(path)) {
-            const e = zip.find(name);
+          const e = zip.find(name);
+          if (fileSize(path) !== e.size) {
             makeDirectory(path.substring(0, path.lastIndexOf("/")));
             zip.copy(e, path);
             written++;
@@ -1674,6 +1715,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         zip.copy(versions, target);
       }
     }
+    } finally { zip.close(); }
   });
 
   // The path of the APK of the game, taken from the streaming assets path.
@@ -1712,6 +1754,10 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     return `${android}/obb/com.bethsoft.theelderscrollslegends/main.11009.com.bethsoft.theelderscrollslegends.obb`;
   }
 
+  function fileSize(path: string): number {
+    try { const f = new File(path, "rb"); try { f.seek(0, File.SEEK_END); return f.tell(); } finally { f.close(); } }
+    catch (_) { return -1; }
+  }
   function fileExists(path: string): boolean {
     try {
       return Boolean((Il2Cpp.corlib.class("System.IO.File").method("Exists") as any)
@@ -1764,9 +1810,28 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   function writeSavedLogin(username: string, password: string) {
     if (!username) return;
     const path = `${persistentPath()}/${LOGIN_FILE}`;
-    if (writeTextFile(path, JSON.stringify({ username, password }))) {
-      log(`remembered the login of ${username}`);
+    if (!writeTextFile(path + ".part", JSON.stringify({ username, password }))) {
+      log("login: credential write failed"); return;
     }
+    if (atomicRename(path + ".part", path)) log("login: saved username and credential state");
+    else log("login: could not commit saved credentials; previous file retained");
+  }
+
+  function prefillLoginUsername(username: string) {
+    if (!username) return;
+    for (const delay of [0, 300, 1200]) schedule(delay, () => {
+      for (const typeName of ["UnityEngine.UI.InputField", "TMPro.TMP_InputField"]) try {
+        const fields = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
+          .invoke(ucls(typeName).type.object);
+        for (let i = 0; i < fields.length; i++) {
+          const field = fields.get(i), go = call(field, "get_gameObject");
+          if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
+          const name = String(call(go, "get_name")?.content || "");
+          if (!/user[_ ]?name|account[_ ]?name|email/i.test(name)) continue;
+          if (!String(call(field, "get_text")?.content || "")) call(field, "set_text", Il2Cpp.string(username));
+        }
+      } catch (_) {}
+    });
   }
 
   section("auto login", () => {
@@ -1774,16 +1839,18 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
 
     // Hands the remembered credentials to the login callback instead of
     // showing the login window.
-    const useRemembered = (callback: any, saved: { username: string; password: string }) => {
+    const useRemembered = (callback: any, saved: { username: string; password: string }, failed: () => void) => {
+      const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
       autoLoginTried = true;
       log(`auto login as ${saved.username}`);
-      schedule(250, () => {
+      schedule(0, () => {
         try {
           const value = credentials.alloc();
           value.field<Il2Cpp.String>("username").value = Il2Cpp.string(saved.username);
           value.field<Il2Cpp.String>("password").value = Il2Cpp.string(saved.password);
-          (new Il2Cpp.Object(callback as any)).method("Invoke").invoke(value.unbox() as any);
-        } catch (e) { log(`auto login failed: ${e}`); }
+          retained.target.method("Invoke").invoke(value.unbox() as any);
+        } catch (e) { log(`auto login callback failed: ${e}`); failed(); }
+        finally { retained.free(); }
       });
     };
 
@@ -1793,20 +1860,27 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       ["pointer", "pointer", "pointer", "pointer"]);
     mobile.implementation = function (title, description, callback) {
       try {
-        const saved = autoLoginTried ? null : readSavedLogin();
+        const stored = readSavedLogin();
+        const saved = autoLoginTried || !stored?.password ? null : stored;
         if (!saved) {
           if (autoLoginTried) {
             // The server did not accept the remembered credentials.
             // A second login screen can follow a network/session failure, not a credential rejection.
             log("auto login already attempted; keeping saved credentials and showing login");
           }
-          mobileOriginal(this.handle, title as any, description as any, callback as any);
+          mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
           return;
         }
-        useRemembered(callback, saved);
+        useRemembered(callback, saved, () => {
+          mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
+        });
       } catch (e) {
         log(`auto login error: ${e}`);
-        mobileOriginal(this.handle, title as any, description as any, callback as any);
+        const stored = readSavedLogin();
+        mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
       }
     };
 
@@ -1816,19 +1890,26 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       ["pointer", "pointer", "pointer"]);
     fallback.implementation = function (title, description, callback) {
       try {
-        const saved = autoLoginTried ? null : readSavedLogin();
+        const stored = readSavedLogin();
+        const saved = autoLoginTried || !stored?.password ? null : stored;
         if (!saved) {
           if (autoLoginTried) {
             // A second login screen can follow a network/session failure, not a credential rejection.
             log("auto login already attempted; keeping saved credentials and showing login");
           }
-          fallbackOriginal(title as any, description as any, callback as any);
+          fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
           return;
         }
-        useRemembered(callback, saved);
+        useRemembered(callback, saved, () => {
+          fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
+        });
       } catch (e) {
         log(`auto login error: ${e}`);
-        fallbackOriginal(title as any, description as any, callback as any);
+        const stored = readSavedLogin();
+        fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
       }
     };
   });
@@ -1845,7 +1926,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           const list = new Il2Cpp.Object(args[0]);
           for (const [type, text] of [
             [CREDIT_GROUP, "TESL Reborn Team"],
-            [CREDIT_TITLE, "Android port · build 26 · resource transfer"],
+            [CREDIT_TITLE, "Android port · build 27 · archive installer"],
             [CREDIT_TITLE, "Project Lead"],
             [CREDIT_NAME, "Renian"],
             [CREDIT_TITLE, "Game Server Developer"],
@@ -2192,6 +2273,67 @@ function uiComponent(go, type) {
   }
 // END android-ui: ui-common
 
+
+  // BEGIN android-ui: settings-data
+  function installSettingsDataButton(self) {
+    if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
+    const root = call(self, "get_transform");
+    if (!isNull(call(root, "Find", Il2Cpp.string("RebornGameData")))) return;
+    const labels = {en_us:"Game data",de_de:"Spieldaten",es_es:"Datos del juego",es_mx:"Datos del juego",fr_fr:"Données du jeu",it_it:"Dati di gioco",pl_pl:"Dane gry",pt_br:"Dados do jogo",ru_ru:"Данные игры",tr_tr:"Oyun verileri"};
+    const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
+      ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
+    });
+    call(uiAdd(button, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+  }
+  section("settings game data", () => {
+    const classes = img.classes.filter(c => /^(?:Game)?(?:Options|Settings)(?:Win|Window|Menu|Panel|Dialog)$/.test(c.name))
+      .filter(c => Array.from(c.hierarchy()).some(base => base.type.name === "UnityEngine.Component"));
+    let hooks = 0;
+    for (const owner of classes) for (const method of owner.methods.filter(m =>
+        ["Show", "OnEnable", "Awake", "Start"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) { this.self = args[0]; },
+        onLeave() {
+          const retained = new Il2Cpp.Object(this.self).ref(false);
+          schedule(0, () => { try { installSettingsDataButton(retained.target); } catch (e) { log(`settings data: ${e}`); } finally { retained.free(); } });
+        }
+      }); hooks++;
+    }
+    // Query the settings component directly where possible. The fallback walks
+    // ancestors of active UI buttons, rather than thousands of scene objects.
+    let last = 0;
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    Interceptor.attach(update.virtualAddress, { onLeave() {
+      if (Date.now()-last < 1000) return; last = Date.now();
+      try {
+        const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+        if (classes.length) {
+          for (const owner of classes) {
+            const windows = find.invoke(owner.type.object);
+            for (let i=0; i<windows.length; i++) {
+              const window = windows.get(i);
+              if (Boolean(call(call(window,"get_gameObject"),"get_activeInHierarchy"))) installSettingsDataButton(window);
+            }
+          }
+          return;
+        }
+        const objects = find.invoke(ucls("UnityEngine.UI.Button").type.object), visited = new Set();
+        for (let i=0; i<objects.length; i++) {
+          const go=call(objects.get(i),"get_gameObject"); if (!Boolean(call(go,"get_activeInHierarchy"))) continue;
+          let node=call(go,"get_transform");
+          for (let depth=0; depth<8 && !isNull(node); depth++, node=call(node,"get_parent")) {
+            const key=node.handle.toString(); if (visited.has(key)) break; visited.add(key);
+            if (!/^(?:Win[_ -]?)?(?:Game)?(?:Options|Settings)(?:[_ -]?(?:Win|Window|Menu|Panel|Dialog|Root))?$/i.test(String(call(node,"get_name")?.content || "").replace(/\(Clone\)$/i, "").trim())) continue;
+            const root=call(node,"get_gameObject"), rect=uiRect(root), bounds=call(rect,"get_rect");
+            if (Number(bounds.field("m_Width").value)<300 || Number(bounds.field("m_Height").value)<200) continue;
+            installSettingsDataButton(root);
+          }
+        }
+      } catch (_) {}
+    }});
+    log(`settings game data: ${hooks} window hooks and prefab fallback`);
+  });
+  // END android-ui: settings-data
 
   // BEGIN android-ui: history-ui
 const historyRows = new Map(), historyTargets = new Map();
@@ -3054,13 +3196,6 @@ const chatWindows = new Map();
       const transition = pickerButton.tryMethod("set_transition", 1);
       if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
       record.pickerButton = uiRect(picker).ref(false);
-      // Available only in APKs that contain the native preparation Activity.
-      if (fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) {
-        const resources = uiLabeledButton("RebornResources", window, "Resources", -8, -40, 125, () => {
-          ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
-        });
-        call(uiAdd(resources, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-      }
       // Ignore positions from v9: the failed bounds calculation could leave one invalid.
       try {
         const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`) || "null");
@@ -3189,58 +3324,49 @@ const chatWindows = new Map();
       onLeave() { try { chatUpdate(new Il2Cpp.Object(this.self)); } catch (_) {} }
     });
   });
-  // Reuse the original debug keyboard shortcut inside the original debug poller.
-  // This does not grant debug privileges or enable any server feature flag.
-  section("mobile debug shortcut", () => {
-    let taps = [], pendingUntil = 0, polling = 0, lastFrame = -1, consumed = false;
-    const pollers = img.classes.filter(c => /debug|developer|cheat/i.test(c.name))
-      .flatMap(c => c.methods.filter(m => ["Update", "LateUpdate", "OnGUI"].includes(m.name)
-        && !m.isStatic && m.parameterCount === 0 && !m.virtualAddress.isNull()));
-    const attached = new Set();
-    for (const method of pollers) {
-      const address = method.virtualAddress.toString();
-      if (attached.has(address)) continue;
-      attached.add(address);
-      Interceptor.attach(method.virtualAddress, {
-        onEnter() { polling++; }, onLeave() {
-          polling = Math.max(0, polling - 1);
-          if (!polling && consumed) { pendingUntil = 0; consumed = false; }
-        }
-      });
-    }
-    if (!attached.size) { log("mobile debug shortcut: original debug input poller not found"); return; }
-    const input = ucls("UnityEngine.Input");
+  // BEGIN android-ui: global-shortcuts
+  section("mobile global debug shortcut", () => {
+    let taps = [], chordFrame = -1, lastFrame = -1, began = null;
+    const input = ucls("UnityEngine.Input"), time = ucls("UnityEngine.Time");
+    const frame = () => Number(time.method("get_frameCount", 0).invoke());
     for (const name of ["GetKey", "GetKeyDown"]) {
       const method = input.method(name).overload("UnityEngine.KeyCode");
       Interceptor.attach(method.virtualAddress, {
-        onEnter(args) { this.code = args[0].toInt32(); this.polling = polling > 0; },
+        onEnter(args) { this.code = args[0].toInt32(); },
         onLeave(result) {
-          if (!this.polling || Date.now() > pendingUntil) return;
-          if (name === "GetKey" && [305, 306].includes(this.code)) result.replace(ptr(1));
-          if (name === "GetKeyDown" && this.code === 100) {
-            result.replace(ptr(1)); consumed = true;
-          }
+          if (frame() !== chordFrame) return;
+          // A physical Ctrl+D chord has the same global scope. Original server
+          // permission checks and the original show/hide handler remain intact.
+          if (name === "GetKey" && [100, 305, 306].includes(this.code) || name === "GetKeyDown" && this.code === 100)
+            result.replace(ptr(1));
         }
       });
     }
-    const render = ucls("UnityEngine.Canvas").method("SendWillRenderCanvases", 0);
-    Interceptor.attach(render.virtualAddress, {
-      onLeave() {
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    Interceptor.attach(update.virtualAddress, {
+      onEnter() {
         try {
-          const frame = Number(ucls("UnityEngine.Time").method("get_frameCount", 0).invoke());
-          if (frame === lastFrame) return; lastFrame = frame;
-          if (Number(input.method("get_touchCount", 0).invoke()) !== 1) return;
-          const touch = input.method("GetTouch", 1).invoke(0);
-          if (enumVal(touch.method("get_phase", 0).invoke()) !== 3) return;
+          const current = frame(); if (current === lastFrame) return; lastFrame = current;
+          if (Number(input.method("get_touchCount", 0).invoke()) !== 1) { began = null; return; }
+          const touch = input.method("GetTouch", 1).invoke(0), phase = enumVal(touch.method("get_phase", 0).invoke());
           const point = uiXY(touch.method("get_position", 0).invoke()), screen = chatScreen();
-          if (point.x > screen.width * .20 || point.y < screen.height * .88) { taps = []; return; }
-          const now = Date.now(); taps = taps.filter(at => now - at < 900); taps.push(now);
-          if (taps.length >= 3) { taps = []; pendingUntil = now + 1000; }
+          const size = Math.max(40, Math.min(96, Math.min(screen.width, screen.height) * .08));
+          const inside = point.x >= 0 && point.x <= size && point.y >= screen.height - size && point.y <= screen.height;
+          if (phase === 0) { began = inside ? { x: point.x, y: point.y, at: Date.now() } : null; return; }
+          if (phase === 4) { began = null; taps = []; return; }
+          if (phase !== 3) return;
+          const now = Date.now();
+          if (!inside || !began || now - began.at > 400 || Math.hypot(point.x-began.x, point.y-began.y) > size * .35) {
+            began = null; taps = []; return;
+          }
+          began = null; taps = taps.filter(at => now-at < 900); taps.push(now);
+          if (taps.length >= 3) { taps = []; chordFrame = current + 1; }
         } catch (_) {}
       }
     });
-    log(`mobile debug shortcut: using ${attached.size} original input pollers`);
+    log("mobile debug gesture active in menu and battle; original Ctrl+D permissions preserved");
   });
+  // END android-ui: global-shortcuts
 // END android-ui: chat-window
 
 

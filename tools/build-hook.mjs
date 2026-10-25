@@ -12,7 +12,7 @@ const code = transformSync(source.replace(/^import "frida-il2cpp-bridge";$/m, ''
 }).code;
 const core = '// TESL-REBORN-ANDROID-CORE v1\n' + readFileSync('runtime/il2cpp-bridge.js', 'utf8') + '\n// hook.ts\n' + code;
 const old = JSON.parse(readFileSync('runtime/manifest.json', 'utf8'));
-const meta = { ...old, bytes: Buffer.byteLength(core), sha256: createHash('sha256').update(core).digest('hex') };
+const meta = { ...old, sourceSha256: createHash('sha256').update(source).digest('hex'), bytes: Buffer.byteLength(core), sha256: createHash('sha256').update(core).digest('hex') };
 writeFileSync('runtime/core.js', core);
 writeFileSync('runtime/manifest.json', JSON.stringify(meta, null, 2) + '\n');
 const glue = readFileSync('runtime/loader-glue.js', 'utf8');

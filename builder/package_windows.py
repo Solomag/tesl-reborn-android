@@ -106,7 +106,7 @@ def main():
         str(ROOT / "builder/entry.py"),
     ]
     subprocess.run(command, cwd=ROOT, check=True)
-    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-26-check-ru.md"):
+    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-27-check-ru.md"):
         shutil.copyfile(ROOT / "docs" / name, ROOT / "dist" / name)
     shutil.copytree(notices, ROOT / "dist/third-party-notices", dirs_exist_ok=True)
     print("WINDOWS_EXE_READY:", ROOT / "dist/TESL-Reborn-Builder.exe")

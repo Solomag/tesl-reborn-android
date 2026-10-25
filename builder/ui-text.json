@@ -382,5 +382,41 @@
     "pt_br": "Idioma da interface:",
     "ru_ru": "Язык интерфейса:",
     "tr_tr": "Arayüz dili:"
+  },
+  "Import data ZIP": {
+    "en_us": "Import data ZIP",
+    "de_de": "Daten-ZIP importieren",
+    "es_es": "Importar ZIP de datos",
+    "es_mx": "Importar ZIP de datos",
+    "fr_fr": "Importer le ZIP de données",
+    "it_it": "Importa ZIP dei dati",
+    "pl_pl": "Importuj ZIP z danymi",
+    "pt_br": "Importar ZIP de dados",
+    "ru_ru": "Импортировать ZIP с данными",
+    "tr_tr": "Veri ZIP dosyasını içe aktar"
+  },
+  "Small APK + data ZIP": {
+    "en_us": "Small APK + data ZIP",
+    "de_de": "Kleines APK + Daten-ZIP",
+    "es_es": "APK pequeño + ZIP de datos",
+    "es_mx": "APK pequeño + ZIP de datos",
+    "fr_fr": "Petit APK + ZIP de données",
+    "it_it": "APK piccolo + ZIP dei dati",
+    "pl_pl": "Mały APK + ZIP z danymi",
+    "pt_br": "APK pequeno + ZIP de dados",
+    "ru_ru": "Маленький APK + ZIP с данными",
+    "tr_tr": "Küçük APK + veri ZIP dosyası"
+  },
+  "Offline XAPK": {
+    "en_us": "Offline XAPK",
+    "de_de": "Offline-XAPK",
+    "es_es": "XAPK sin conexión",
+    "es_mx": "XAPK sin conexión",
+    "fr_fr": "XAPK hors ligne",
+    "it_it": "XAPK offline",
+    "pl_pl": "XAPK offline",
+    "pt_br": "XAPK offline",
+    "ru_ru": "Автономный XAPK",
+    "tr_tr": "Çevrimdışı XAPK"
   }
 }

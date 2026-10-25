@@ -13,13 +13,16 @@ by the `Build Windows Builder` Actions workflow; device validation is still requ
 
 ## What you get
 
-The final artefact `tesl-reborn.xapk` is a single ~2.2 GB package. After
-installing it, no further file pushes are needed:
+The portable Windows builder defaults to two files: a compact `tesl-reborn.apk`
+and one `tesl-reborn-data.zip` containing the original OBB, recovered PC bundles
+and selected languages. Install the APK and choose **Import data ZIP** on the
+phone, or transfer missing data through the temporary PC server and QR code.
+Game data is opened from **Settings**, and optional languages can be transferred
+later. See [Android 27 verification](docs/android-27-check-ru.md).
 
-- the original streaming assets (OBB, 1.8 GB) ship inside the XAPK;
-- the rebuilt Unity cache (~204 bundles / ~310 MB / 408 cache entries) ships
-  inside the APK and is restored by the hook on the first launch into
-  `UnityCache/Shared/<bundle>/<hash>/`.
+**Offline XAPK** remains an alternative. The legacy command-line workflow below
+builds that layout: the OBB ships in the XAPK, while recovered cache entries ship
+inside its APK. The final size depends on the chosen languages.
 
 After that first run card art, voices and translations load from local files;
 playing still requires the Reborn server. Auto-login works once a
@@ -160,3 +163,9 @@ adb push ./creds/tesl-login.json \\
   extract `classes.dex` from `base.apk`, replace the `JNIBridge$a` class with
   the committed smali and reassemble smoke-the JNI bridge into
   Android 14's default-method handling.
+
+Selected maintenance fixes in this branch adapt work from Frederlk's
+[PR #1](https://github.com/ssorgatem/tesl-reborn-android/pull/1): authentication
+result handling, log redaction, stale build checks and interrupted payload
+recovery. The Android UI, update loader and portable builder use their existing
+build pipeline; the PR's compiled hook and language index table are not copied.

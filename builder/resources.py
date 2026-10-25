@@ -159,11 +159,19 @@ def convert_bundle(source, output):
     found = [f for f in env.files.values() if isinstance(f, BundleFile)]
     if len(found) != 1:
         raise ValueError(f"Expected exactly one Unity bundle: {source}")
+    patched = 0
     for item in found[0].files.values():
         if hasattr(item, "_m_target_platform"):
+            patched += 1
             item._m_target_platform = 13
             item.target_platform = BuildTarget.Android
-    Path(output).write_bytes(found[0].save(packer="original"))
+    if not patched:
+        raise ValueError(
+            "No platform field was patched; unsupported UnityPy bundle format"
+        )
+    partial = Path(str(output) + ".part")
+    partial.write_bytes(found[0].save(packer="original"))
+    os.replace(partial, output)
 
 
 def localization_map(value):
@@ -341,7 +349,7 @@ def build_packs(
         )
         partial = output / (pack_id + ".zip.partial")
         with zipfile.ZipFile(
-            partial, "w", zipfile.ZIP_STORED, allowZip64=False
+            partial, "w", zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=False
         ) as archive:
             archive.writestr("pack.json", json.dumps(manifest, separators=(",", ":")))
             for item in files:

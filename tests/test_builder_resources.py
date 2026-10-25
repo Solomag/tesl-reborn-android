@@ -264,9 +264,12 @@ class BuilderResourcesTest(unittest.TestCase):
                     )
                     self.assertTrue((result / "resources/catalog.json").exists())
                     if fmt == "manual":
-                        self.assertTrue(
-                            (result / f"Android/obb/{PACKAGE}/{OBB}").exists()
-                        )
+                        with zipfile.ZipFile(result / "tesl-reborn-data.zip") as data:
+                            self.assertEqual(
+                                data.read("game.obb"),
+                                (result / "resources/game.obb").read_bytes(),
+                            )
+                            self.assertEqual(data.namelist()[0], "catalog.json")
                     else:
                         with zipfile.ZipFile(result / "tesl-reborn.xapk") as z:
                             self.assertEqual(

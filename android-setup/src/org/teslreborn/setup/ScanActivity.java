@@ -26,6 +26,9 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
   private HandlerThread thread;
   private Handler handler;
   private SurfaceView preview;
+  private FrameLayout container;
+  private Size previewSize;
+  private int sensorRotation;
   private volatile boolean done = false;
   private boolean opening = false;
   private long lastFrame = 0;
@@ -35,6 +38,8 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
   public void onCreate(Bundle state) {
     super.onCreate(state);
     FrameLayout box = new FrameLayout(this);
+    container = box;
+    box.setBackgroundColor(0xff000000);
     preview = new SurfaceView(this);
     box.addView(preview);
     TextView hint = new TextView(this);
@@ -65,7 +70,9 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
   }
 
   @Override
-  public void surfaceChanged(SurfaceHolder h, int f, int w, int x) {}
+  public void surfaceChanged(SurfaceHolder h, int f, int w, int x) {
+    fitPreview();
+  }
 
   @Override
   public void surfaceDestroyed(SurfaceHolder holder) {
@@ -102,18 +109,28 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
         Size[] sizes =
             info.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 .getOutputSizes(ImageFormat.YUV_420_888);
+        Size[] surfaces =
+            info.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                .getOutputSizes(SurfaceHolder.class);
         for (Size size : sizes)
-          if (size.getWidth() <= 1280
+          if (surfaces != null
+              && Arrays.asList(surfaces).contains(size)
+              && size.getWidth() <= 1280
               && size.getHeight() <= 960
               && (chosen == null
                   || size.getWidth() * size.getHeight() > chosen.getWidth() * chosen.getHeight()))
             chosen = size;
         if (chosen != null) {
           id = candidate;
+          Integer orientation = info.get(CameraCharacteristics.SENSOR_ORIENTATION);
+          sensorRotation = orientation == null ? 0 : orientation;
           break;
         }
       }
       if (id == null) throw new Exception("No supported rear camera");
+      previewSize = chosen;
+      preview.getHolder().setFixedSize(chosen.getWidth(), chosen.getHeight());
+      fitPreview();
       reader =
           ImageReader.newInstance(
               chosen.getWidth(), chosen.getHeight(), ImageFormat.YUV_420_888, 2);
@@ -177,6 +194,22 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
     } catch (Exception e) {
       failure(e.getMessage());
     }
+  }
+
+  private void fitPreview() {
+    if (previewSize == null || container.getWidth() < 1 || container.getHeight() < 1) return;
+    int displayRotation = getWindowManager().getDefaultDisplay().getRotation() * 90;
+    int rotation = (sensorRotation + displayRotation) % 360;
+    int[] fit =
+        PreviewSize.fit(
+            container.getWidth(),
+            container.getHeight(),
+            previewSize.getWidth(),
+            previewSize.getHeight(),
+            rotation);
+    FrameLayout.LayoutParams current = (FrameLayout.LayoutParams) preview.getLayoutParams();
+    if (current.width != fit[0] || current.height != fit[1])
+      preview.setLayoutParams(new FrameLayout.LayoutParams(fit[0], fit[1], Gravity.CENTER));
   }
 
   private void decode(ImageReader r) {

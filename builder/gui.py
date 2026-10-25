@@ -156,21 +156,19 @@ class BuilderWindow:
         ).pack(anchor="w")
         options = ttk.Frame(root)
         options.pack(fill="x", pady=6)
-        self.format = tk.StringVar(value="xapk")
-        self.embedded = tk.BooleanVar(value=True)
-        ttk.Radiobutton(options, text="XAPK", variable=self.format, value="xapk").pack(
-            side="left"
-        )
+        self.format = tk.StringVar(value="manual")
+        ttk.Radiobutton(
+            options, text="Offline XAPK", variable=self.format, value="xapk"
+        ).pack(side="left")
         ttk.Radiobutton(
             options,
-            text="APK + OBB (copy or transfer over Wi-Fi)",
+            text="Small APK + data ZIP",
             variable=self.format,
             value="manual",
         ).pack(side="left")
-        ttk.Checkbutton(
+        ttk.Label(
             root,
-            text="Include language packs in APK (otherwise download them from this PC)",
-            variable=self.embedded,
+            text="ZIP: import once on the phone, or download missing data from this PC.",
         ).pack(anchor="w")
         languages = ttk.LabelFrame(root, text="Game languages to prepare", padding=6)
         languages.pack(fill="x", pady=6)
@@ -306,7 +304,7 @@ class BuilderWindow:
                 xapk=source,
                 languages=selected,
                 default_language=default,
-                embedded=self.embedded.get(),
+                embedded=self.format.get() == "xapk",
                 format=self.format.get(),
                 appdir=self.appdir,
                 output_dir=destination,

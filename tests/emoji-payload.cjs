@@ -11,6 +11,7 @@ const c = { section: (_, callback) => callback(), apkPath: () => '/game.apk', pe
   File: { readAllBytes: path => { if (!disk.has(path)) throw Error('missing'); return disk.get(path); } },
   Checksum: { compute: (_, bytes) => crypto.createHash('sha256').update(bytes).digest('hex') },
   ZipReader: class {
+    valid(){return true;}close(){}
     find(path) { const name = path.split('/').at(-1); return files[name] ? { method: 0, size: files[name].length, name } : null; }
     list() { return []; }
     copy(entry, target) { copied.push(target); disk.set(target, files[entry.name]); }

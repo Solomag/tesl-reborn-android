@@ -8,20 +8,6 @@ final class UiStrings {
 
   static {
     TEXT.put(
-        "Interface language",
-        new String[] {
-          "Interface language",
-          "Oberflächensprache",
-          "Idioma de la interfaz",
-          "Idioma de la interfaz",
-          "Langue de l’interface",
-          "Lingua dell’interfaccia",
-          "Język interfejsu",
-          "Idioma da interface",
-          "Язык интерфейса",
-          "Arayüz dili"
-        });
-    TEXT.put(
         "Game data setup",
         new String[] {
           "Game data setup",
@@ -440,6 +426,76 @@ final class UiStrings {
           "Copiar conexão",
           "Скопировать подключение",
           "Bağlantı bilgilerini kopyala"
+        });
+    TEXT.put(
+        "Interface language",
+        new String[] {
+          "Interface language",
+          "Oberflächensprache",
+          "Idioma de la interfaz",
+          "Idioma de la interfaz",
+          "Langue de l’interface",
+          "Lingua dell’interfaccia",
+          "Język interfejsu",
+          "Idioma da interface",
+          "Язык интерфейса",
+          "Arayüz dili"
+        });
+    TEXT.put(
+        "Interface language:",
+        new String[] {
+          "Interface language:",
+          "Oberflächensprache:",
+          "Idioma de la interfaz:",
+          "Idioma de la interfaz:",
+          "Langue de l’interface:",
+          "Lingua dell’interfaccia:",
+          "Język interfejsu:",
+          "Idioma da interface:",
+          "Язык интерфейса:",
+          "Arayüz dili:"
+        });
+    TEXT.put(
+        "Import data ZIP",
+        new String[] {
+          "Import data ZIP",
+          "Daten-ZIP importieren",
+          "Importar ZIP de datos",
+          "Importar ZIP de datos",
+          "Importer le ZIP de données",
+          "Importa ZIP dei dati",
+          "Importuj ZIP z danymi",
+          "Importar ZIP de dados",
+          "Импортировать ZIP с данными",
+          "Veri ZIP dosyasını içe aktar"
+        });
+    TEXT.put(
+        "Small APK + data ZIP",
+        new String[] {
+          "Small APK + data ZIP",
+          "Kleines APK + Daten-ZIP",
+          "APK pequeño + ZIP de datos",
+          "APK pequeño + ZIP de datos",
+          "Petit APK + ZIP de données",
+          "APK piccolo + ZIP dei dati",
+          "Mały APK + ZIP z danymi",
+          "APK pequeno + ZIP de dados",
+          "Маленький APK + ZIP с данными",
+          "Küçük APK + veri ZIP dosyası"
+        });
+    TEXT.put(
+        "Offline XAPK",
+        new String[] {
+          "Offline XAPK",
+          "Offline-XAPK",
+          "XAPK sin conexión",
+          "XAPK sin conexión",
+          "XAPK hors ligne",
+          "XAPK offline",
+          "XAPK offline",
+          "XAPK offline",
+          "Автономный XAPK",
+          "Çevrimdışı XAPK"
         });
   }
 

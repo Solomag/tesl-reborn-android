@@ -3484,7 +3484,7 @@ try {
 }
 const tagPtr = Memory.allocUtf8String("tesl-hook");
 function redactLog(message) {
-  return String(message).replace(/("(?:password|encryptedAppTicket|token|sessionToken|access_token|refresh_token)"\s*:\s*")[^"\r\n]*("|$)/gi, "$1[REDACTED]$2").replace(/\b(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]").replace(/((?:authorization|x-session-token)\s*:\s*)[^"\r\n]*/gi, "$1[REDACTED]").replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, "[REDACTED-JWT]");
+  return String(message).replace(/("(?:password|encryptedAppTicket|token|sessionToken|access_token|refresh_token|authorization|x-session-token)"\s*:\s*")(?:[^"\\]|\\[\s\S])*(?:"|\\?$)/gi, '$1[REDACTED]"').replace(/\b(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]").replace(/((?:authorization|x-session-token)\s*:\s*)[^\r\n]*/gi, "$1[REDACTED]").replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, "[REDACTED-JWT]");
 }
 const log = (m) => {
   m = redactLog(m);
@@ -3494,6 +3494,15 @@ const log = (m) => {
   } catch (_) {
   }
 };
+let nativeRename = null;
+function atomicRename(from, to) {
+  try {
+    if (!nativeRename) nativeRename = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("rename"), "int", ["pointer", "pointer"]);
+    return nativeRename(Memory.allocUtf8String(from), Memory.allocUtf8String(to)) === 0;
+  } catch (_) {
+    return false;
+  }
+}
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 function fakeTicket(len = 32) {
   const b = [];
@@ -3508,19 +3517,32 @@ function fakeTicket(len = 32) {
   return o;
 }
 function invokeDelegateInt(del, value) {
-  const fn = new NativeFunction(del.field("method_ptr").value, "void", ["pointer", "int32", "pointer"]);
-  fn(del.field("m_target").value, value, del.field("method").value);
+  const method = del.method("Invoke"), klass = method.parameters[0].type.class;
+  if (klass.isEnum) {
+    const boxed = klass.alloc();
+    boxed.field("value__").value = value;
+    method.invoke(boxed.unbox());
+  } else method.invoke(value);
 }
 function nested(image, outer, inner) {
   const c = image.classes.find((k) => k.name === inner && k.declaringClass?.name === outer);
   if (!c) throw new Error(`class ${outer}/${inner} not found`);
   return c;
 }
+function enumVal(v) {
+  if (v == null) return -1;
+  if (typeof v === "number") return v;
+  try {
+    return Number(v.field("value__").value);
+  } catch (_) {
+    return -1;
+  }
+}
 function channelFrom(settings) {
   try {
     if (settings && !settings.handle.isNull()) {
       const names = settings.field("_channelNames").value;
-      const idx = Number(settings.field("_channel").value);
+      const idx = enumVal(settings.field("_channel").value);
       return names.get(idx).content ?? "live";
     }
   } catch (e) {
@@ -3544,7 +3566,7 @@ function bodyOf(req) {
     const n = Math.min(Number(raw.length), 1500);
     let t = "";
     for (let i = 0; i < n; i++) t += String.fromCharCode(Number(raw.get(i)));
-    return t.replace(/("(?:password|encryptedAppTicket|token|sessionToken)"\s*:\s*")[^"]*"/g, '$1***"');
+    return redactLog(t);
   } catch (e) {
     return `(unreadable: ${e})`;
   }
@@ -3586,13 +3608,14 @@ function cls(img, full) {
   return alt;
 }
 function invokeDelegatePtr(del, value) {
-  const fn = new NativeFunction(del.field("method_ptr").value, "void", ["pointer", "pointer", "pointer"]);
-  fn(del.field("m_target").value, value, del.field("method").value);
+  const method = del.method("Invoke"), handle = value?.handle ?? value;
+  const argument = method.parameters[0].type.name === "System.String" ? new Il2Cpp.String(handle) : new Il2Cpp.Object(handle);
+  method.invoke(argument);
 }
 const CREATE_ACCOUNT = false;
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-26-resources`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-27-data-archive`);
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
   const steamReq = nested(img, "AuthBase", "AuthBNETSteamRequest");
@@ -3728,12 +3751,16 @@ Il2Cpp.perform(() => {
       const raw = call(req, "get_RawData");
       if (!raw || raw.handle.isNull()) return;
       const length = Number(raw.length);
+      if (length > 65536) {
+        log("login request exceeds capture limit");
+        return;
+      }
       let text = "";
-      for (let i = 0; i < length; i++) text += String.fromCharCode(Number(raw.get(i)));
-      const body = JSON.parse(decodeURIComponent(escape(text)));
+      for (let i = 0; i < length; i++) text += "%" + Number(raw.get(i)).toString(16).padStart(2, "0");
+      const body = JSON.parse(decodeURIComponent(text));
       if (body && body.username) pendingLogin = { username: String(body.username), password: String(body.password ?? "") };
     } catch (e) {
-      log(`could not read the login: ${e}`);
+      log("could not read login credentials from request body");
     }
   }
   section("config redirect", () => {
@@ -3760,17 +3787,33 @@ Il2Cpp.perform(() => {
       onEnter(args) {
         try {
           const req = new Il2Cpp.Object(args[0]);
-          req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
+          let hasVersion = false;
+          try {
+            hasVersion = Boolean(call(req, "HasHeader", Il2Cpp.string("X-TeslRebornPlugin-Version")));
+          } catch (_) {
+          }
+          if (!hasVersion) req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
           const uri = String(call(req, "get_Uri"));
           captureLogin(req, uri);
           rewriteAuthBody(req, uri);
-          if (seen++ < 60) log(`-> ${uri} body: ${bodyOf(req)}`);
+          if (seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
         } catch (e) {
           log(`header hook error: ${e}`);
         }
       }
     });
   });
+  function loginOutcome(status, body) {
+    if (status !== 200) return "unknown";
+    try {
+      const json = JSON.parse(body), code = json?.resultCode;
+      const token = json?.data?.token ?? json?.token;
+      if (typeof token === "string" && token.length > 0 && (code === 0 || code == null)) return "success";
+      if (code === 15 || code === 17) return "rejected";
+    } catch (_) {
+    }
+    return "unknown";
+  }
   function diagnosticUri(uri) {
     return String(uri).replace(/[?#].*$/, "");
   }
@@ -3792,8 +3835,17 @@ Il2Cpp.perform(() => {
     if (ordinaryBudget || status === 0 || status >= 400 || /\/api\/account\//.test(uri))
       log(`<- ${state} ${diagnosticUri(uri)} ${info}`);
     if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
-      if (status === 200) writeSavedLogin(pendingLogin.username, pendingLogin.password);
-      else log(`login: HTTP ${status}; authentication did not complete successfully`);
+      let body = "";
+      try {
+        body = String(call(response, "get_DataAsText")?.content ?? "");
+      } catch (_) {
+      }
+      const outcome = loginOutcome(status, body);
+      if (outcome === "success") writeSavedLogin(pendingLogin.username, pendingLogin.password);
+      else if (outcome === "rejected") {
+        writeSavedLogin(pendingLogin.username, "");
+        log("login: credentials explicitly rejected; username retained");
+      } else log(`login: HTTP ${status}; saved credentials unchanged`);
       pendingLogin = null;
     }
   }
@@ -4098,15 +4150,6 @@ Il2Cpp.perform(() => {
       return true;
     } catch (e) {
       return false;
-    }
-  }
-  function enumVal(v) {
-    if (v == null) return -1;
-    if (typeof v === "number") return v;
-    try {
-      return Number(v.field("value__").value);
-    } catch (_) {
-      return -1;
     }
   }
   function freshFingerprint() {
@@ -4856,7 +4899,7 @@ Il2Cpp.perform(() => {
   }
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
-    let lastLanguage = "", loaded = false, switching = false, languageInputDepth = 0;
+    let lastLanguage = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0;
     const languageHandlers = /* @__PURE__ */ new Set();
     for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name))) {
       for (const method of owner.methods.filter((m) => /^(On.*Language.*|SelectLanguage|ChangeLanguage|LanguageChanged)$/.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
@@ -4972,6 +5015,9 @@ Il2Cpp.perform(() => {
           }
           if (!fixes) return;
           if (isNull(data)) return;
+          const fingerprint = `${resourceLanguage() || code}:${data.handle}`;
+          if (lastFixed === fingerprint) return;
+          lastFixed = fingerprint;
           let changed = 0;
           for (const key of Object.keys(fixes)) {
             data.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
@@ -5021,8 +5067,22 @@ Il2Cpp.perform(() => {
         }
       } catch (e) {
         log(`payload: the apk cannot be read: ${e}`);
+        try {
+          this.file?.close();
+        } catch (_) {
+        }
         this.file = null;
       }
+    }
+    close() {
+      try {
+        this.file?.close();
+      } finally {
+        this.file = null;
+      }
+    }
+    valid() {
+      return this.file !== null;
     }
     find(name) {
       return this.entries.get(name) ?? null;
@@ -5035,14 +5095,21 @@ Il2Cpp.perform(() => {
       return this.file.readBytes(length);
     }
     copy(entry, target) {
-      const out = new File(target, "wb");
-      let done = 0;
-      while (done < entry.size) {
-        const n = Math.min(4 * 1024 * 1024, entry.size - done);
-        out.write(this.read(entry, done, n));
-        done += n;
+      if (entry.method !== 0) throw Error("Legacy payload must be stored");
+      const part = target + ".part", out = new File(part, "wb");
+      try {
+        let done = 0;
+        while (done < entry.size) {
+          const n = Math.min(4 * 1024 * 1024, entry.size - done), bytes = this.read(entry, done, n);
+          if (bytes.byteLength !== n) throw Error("Truncated APK payload");
+          out.write(bytes);
+          done += n;
+        }
+        out.flush();
+      } finally {
+        out.close();
       }
-      out.close();
+      if (!atomicRename(part, target)) throw Error("Could not commit APK payload");
     }
     dataOffset(entry) {
       this.file.seek(entry.offset);
@@ -5057,108 +5124,112 @@ Il2Cpp.perform(() => {
       return;
     }
     const zip = new ZipReader(apk);
-    if (!zip) return;
-    const emojiHashes = {
-      "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
-      "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa"
-    };
-    for (const [name, expected] of Object.entries(emojiHashes)) {
-      const entry = zip.find(`assets/tesl-reborn/emojis/${name}`);
-      if (!entry) {
-        log(`emoji payload: missing ${name}`);
-        continue;
-      }
-      if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) throw Error("Invalid emoji APK entry");
-      const directory = `${persistentPath()}/tesl-reborn-emojis`;
-      const target = `${directory}/${name}`;
-      let current = false;
-      try {
-        current = Checksum.compute("sha256", File.readAllBytes(target)) === expected;
-      } catch (_) {
-      }
-      if (current) continue;
-      makeDirectory(directory);
-      zip.copy(entry, target);
-      if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid emoji payload: ${name}`);
-      log(`emoji payload: restored ${name}`);
-    }
-    const obb = zip.find("assets/tesl-payload/obb.bin");
-    const cache = zip.find("assets/tesl-payload/cache.bin");
-    const perFileEntries = zip.list().filter((e) => e.startsWith("assets/tesl-payload/UnityCache/Shared/"));
-    if (!obb && !cache && !perFileEntries.length) {
-      log("payload: the apk carries no payload");
-      return;
-    }
-    if (obb) {
-      const target = obbPath();
-      if (target && !fileExists(target)) {
-        log(`payload: writing the streaming assets to ${target}`);
-        makeDirectory(target.substring(0, target.lastIndexOf("/")));
-        zip.copy(obb, target);
-        log("payload: the streaming assets are ready");
-      }
-    }
-    if (cache) {
-      const target = `${persistentPath()}/UnityCache/Shared`;
-      const head = new DataView(zip.read(cache, 0, 12));
-      const count = head.getUint32(8, true);
-      let at = 12;
-      const files = [];
-      for (let i = 0; i < count; i++) {
-        const len = new DataView(zip.read(cache, at, 2)).getUint16(0, true);
-        at += 2;
-        const name = readString(zip.read(cache, at, len));
-        at += len;
-        const size = readUInt64(new DataView(zip.read(cache, at, 8)));
-        at += 8;
-        files.push({ name, size });
-      }
-      let offset = at;
-      let written = 0;
-      for (const f of files) {
-        const path = `${target}/${f.name}`;
-        if (!fileExists(path)) {
-          makeDirectory(path.substring(0, path.lastIndexOf("/")));
-          const out = new File(path, "wb");
-          let done = 0;
-          while (done < f.size) {
-            const n = Math.min(4 * 1024 * 1024, f.size - done);
-            out.write(zip.read(cache, offset + done, n));
-            done += n;
-          }
-          out.close();
-          written++;
+    if (!zip.valid()) return;
+    try {
+      const emojiHashes = {
+        "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
+        "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa"
+      };
+      for (const [name, expected] of Object.entries(emojiHashes)) {
+        const entry = zip.find(`assets/tesl-reborn/emojis/${name}`);
+        if (!entry) {
+          log(`emoji payload: missing ${name}`);
+          continue;
         }
-        offset += f.size;
+        if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) throw Error("Invalid emoji APK entry");
+        const directory = `${persistentPath()}/tesl-reborn-emojis`;
+        const target = `${directory}/${name}`;
+        let current = false;
+        try {
+          current = Checksum.compute("sha256", File.readAllBytes(target)) === expected;
+        } catch (_) {
+        }
+        if (current) continue;
+        makeDirectory(directory);
+        zip.copy(entry, target);
+        if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid emoji payload: ${name}`);
+        log(`emoji payload: restored ${name}`);
       }
-      log(`payload: ${written} of ${count} cache files written (packed)`);
-    } else {
-      const prefix = "assets/tesl-payload/UnityCache/Shared/";
-      const perEntry = zip.list().filter((e) => e.startsWith(prefix));
-      if (perEntry.length) {
-        const tgt = `${persistentPath()}/UnityCache/Shared`;
+      const obb = zip.find("assets/tesl-payload/obb.bin");
+      const cache = zip.find("assets/tesl-payload/cache.bin");
+      const perFileEntries = zip.list().filter((e) => e.startsWith("assets/tesl-payload/UnityCache/Shared/"));
+      if (!obb && !cache && !perFileEntries.length) {
+        log("payload: the apk carries no payload");
+        return;
+      }
+      if (obb) {
+        const target = obbPath();
+        if (target && fileSize(target) !== obb.size) {
+          log(`payload: writing the streaming assets to ${target}`);
+          makeDirectory(target.substring(0, target.lastIndexOf("/")));
+          zip.copy(obb, target);
+          log("payload: the streaming assets are ready");
+        }
+      }
+      if (cache) {
+        const target = `${persistentPath()}/UnityCache/Shared`;
+        const head = new DataView(zip.read(cache, 0, 12));
+        const count = head.getUint32(8, true);
+        let at = 12;
+        const files = [];
+        for (let i = 0; i < count; i++) {
+          const len = new DataView(zip.read(cache, at, 2)).getUint16(0, true);
+          at += 2;
+          const name = readString(zip.read(cache, at, len));
+          at += len;
+          const size = readUInt64(new DataView(zip.read(cache, at, 8)));
+          at += 8;
+          files.push({ name, size });
+        }
+        let offset = at;
         let written = 0;
-        for (const name of perEntry) {
-          const rel = name.substring(prefix.length);
-          const path = `${tgt}/${rel}`;
+        for (const f of files) {
+          const path = `${target}/${f.name}`;
           if (!fileExists(path)) {
-            const e = zip.find(name);
             makeDirectory(path.substring(0, path.lastIndexOf("/")));
-            zip.copy(e, path);
+            const out = new File(path, "wb");
+            let done = 0;
+            while (done < f.size) {
+              const n = Math.min(4 * 1024 * 1024, f.size - done);
+              out.write(zip.read(cache, offset + done, n));
+              done += n;
+            }
+            out.close();
             written++;
           }
+          offset += f.size;
         }
-        log(`payload: ${written} of ${perEntry.length} cache files written (per-file)`);
+        log(`payload: ${written} of ${count} cache files written (packed)`);
+      } else {
+        const prefix = "assets/tesl-payload/UnityCache/Shared/";
+        const perEntry = zip.list().filter((e) => e.startsWith(prefix));
+        if (perEntry.length) {
+          const tgt = `${persistentPath()}/UnityCache/Shared`;
+          let written = 0;
+          for (const name of perEntry) {
+            const rel = name.substring(prefix.length);
+            const path = `${tgt}/${rel}`;
+            const e = zip.find(name);
+            if (fileSize(path) !== e.size) {
+              makeDirectory(path.substring(0, path.lastIndexOf("/")));
+              zip.copy(e, path);
+              written++;
+            }
+          }
+          log(`payload: ${written} of ${perEntry.length} cache files written (per-file)`);
+        }
       }
-    }
-    const versions = zip.find("assets/tesl-payload/versions.json");
-    if (versions) {
-      const target = `${persistentPath()}/versions.json`;
-      if (!fileExists(target)) {
-        log("payload: writing versions.json");
-        makeDirectory(target.substring(0, target.lastIndexOf("/")));
-        zip.copy(versions, target);
+      const versions = zip.find("assets/tesl-payload/versions.json");
+      if (versions) {
+        const target = `${persistentPath()}/versions.json`;
+        if (!fileExists(target)) {
+          log("payload: writing versions.json");
+          makeDirectory(target.substring(0, target.lastIndexOf("/")));
+          zip.copy(versions, target);
+        }
       }
+    } finally {
+      zip.close();
     }
   });
   function apkPath() {
@@ -5199,6 +5270,19 @@ Il2Cpp.perform(() => {
     const persistent = persistentPath();
     const android = persistent.replace(/\/data\/[^/]+\/files$/, "");
     return `${android}/obb/com.bethsoft.theelderscrollslegends/main.11009.com.bethsoft.theelderscrollslegends.obb`;
+  }
+  function fileSize(path) {
+    try {
+      const f = new File(path, "rb");
+      try {
+        f.seek(0, File.SEEK_END);
+        return f.tell();
+      } finally {
+        f.close();
+      }
+    } catch (_) {
+      return -1;
+    }
   }
   function fileExists(path) {
     try {
@@ -5241,23 +5325,46 @@ Il2Cpp.perform(() => {
   function writeSavedLogin(username, password) {
     if (!username) return;
     const path = `${persistentPath()}/${LOGIN_FILE}`;
-    if (writeTextFile(path, JSON.stringify({ username, password }))) {
-      log(`remembered the login of ${username}`);
+    if (!writeTextFile(path + ".part", JSON.stringify({ username, password }))) {
+      log("login: credential write failed");
+      return;
     }
+    if (atomicRename(path + ".part", path)) log("login: saved username and credential state");
+    else log("login: could not commit saved credentials; previous file retained");
+  }
+  function prefillLoginUsername(username) {
+    if (!username) return;
+    for (const delay of [0, 300, 1200]) schedule(delay, () => {
+      for (const typeName of ["UnityEngine.UI.InputField", "TMPro.TMP_InputField"]) try {
+        const fields = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls(typeName).type.object);
+        for (let i = 0; i < fields.length; i++) {
+          const field = fields.get(i), go = call(field, "get_gameObject");
+          if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
+          const name = String(call(go, "get_name")?.content || "");
+          if (!/user[_ ]?name|account[_ ]?name|email/i.test(name)) continue;
+          if (!String(call(field, "get_text")?.content || "")) call(field, "set_text", Il2Cpp.string(username));
+        }
+      } catch (_) {
+      }
+    });
   }
   section("auto login", () => {
     const credentials = cls(img, "SparkleServices.UsernameAndPassword");
-    const useRemembered = (callback, saved) => {
+    const useRemembered = (callback, saved, failed) => {
+      const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
       autoLoginTried = true;
       log(`auto login as ${saved.username}`);
-      schedule(250, () => {
+      schedule(0, () => {
         try {
           const value = credentials.alloc();
           value.field("username").value = Il2Cpp.string(saved.username);
           value.field("password").value = Il2Cpp.string(saved.password);
-          new Il2Cpp.Object(callback).method("Invoke").invoke(value.unbox());
+          retained.target.method("Invoke").invoke(value.unbox());
         } catch (e) {
-          log(`auto login failed: ${e}`);
+          log(`auto login callback failed: ${e}`);
+          failed();
+        } finally {
+          retained.free();
         }
       });
     };
@@ -5269,18 +5376,25 @@ Il2Cpp.perform(() => {
     );
     mobile.implementation = function(title, description, callback) {
       try {
-        const saved = autoLoginTried ? null : readSavedLogin();
+        const stored = readSavedLogin();
+        const saved = autoLoginTried || !stored?.password ? null : stored;
         if (!saved) {
           if (autoLoginTried) {
             log("auto login already attempted; keeping saved credentials and showing login");
           }
-          mobileOriginal(this.handle, title, description, callback);
+          mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
           return;
         }
-        useRemembered(callback, saved);
+        useRemembered(callback, saved, () => {
+          mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
+        });
       } catch (e) {
         log(`auto login error: ${e}`);
-        mobileOriginal(this.handle, title, description, callback);
+        const stored = readSavedLogin();
+        mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+        prefillLoginUsername(stored?.username || "");
       }
     };
     const fallback = cls(img, "SparkleServices.DefaultLoginHandler").method("LoginHandler", 3);
@@ -5291,18 +5405,25 @@ Il2Cpp.perform(() => {
     );
     fallback.implementation = function(title, description, callback) {
       try {
-        const saved = autoLoginTried ? null : readSavedLogin();
+        const stored = readSavedLogin();
+        const saved = autoLoginTried || !stored?.password ? null : stored;
         if (!saved) {
           if (autoLoginTried) {
             log("auto login already attempted; keeping saved credentials and showing login");
           }
-          fallbackOriginal(title, description, callback);
+          fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
           return;
         }
-        useRemembered(callback, saved);
+        useRemembered(callback, saved, () => {
+          fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
+        });
       } catch (e) {
         log(`auto login error: ${e}`);
-        fallbackOriginal(title, description, callback);
+        const stored = readSavedLogin();
+        fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+        prefillLoginUsername(stored?.username || "");
       }
     };
   });
@@ -5315,7 +5436,7 @@ Il2Cpp.perform(() => {
           const list = new Il2Cpp.Object(args[0]);
           for (const [type, text] of [
             [CREDIT_GROUP, "TESL Reborn Team"],
-            [CREDIT_TITLE, "Android port \xB7 build 26 \xB7 resource transfer"],
+            [CREDIT_TITLE, "Android port \xB7 build 27 \xB7 archive installer"],
             [CREDIT_TITLE, "Project Lead"],
             [CREDIT_NAME, "Renian"],
             [CREDIT_TITLE, "Game Server Developer"],
@@ -5718,6 +5839,76 @@ Il2Cpp.perform(() => {
     uiButton(go, bg, action);
     return go;
   }
+  function installSettingsDataButton(self) {
+    if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
+    const root = call(self, "get_transform");
+    if (!isNull(call(root, "Find", Il2Cpp.string("RebornGameData")))) return;
+    const labels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
+    const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
+      ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
+    });
+    call(uiAdd(button, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+  }
+  section("settings game data", () => {
+    const classes = img.classes.filter((c) => /^(?:Game)?(?:Options|Settings)(?:Win|Window|Menu|Panel|Dialog)$/.test(c.name)).filter((c) => Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"));
+    let hooks = 0;
+    for (const owner of classes) for (const method of owner.methods.filter((m) => ["Show", "OnEnable", "Awake", "Start"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) {
+          this.self = args[0];
+        },
+        onLeave() {
+          const retained = new Il2Cpp.Object(this.self).ref(false);
+          schedule(0, () => {
+            try {
+              installSettingsDataButton(retained.target);
+            } catch (e) {
+              log(`settings data: ${e}`);
+            } finally {
+              retained.free();
+            }
+          });
+        }
+      });
+      hooks++;
+    }
+    let last = 0;
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    Interceptor.attach(update.virtualAddress, { onLeave() {
+      if (Date.now() - last < 1e3) return;
+      last = Date.now();
+      try {
+        const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+        if (classes.length) {
+          for (const owner of classes) {
+            const windows = find.invoke(owner.type.object);
+            for (let i = 0; i < windows.length; i++) {
+              const window = windows.get(i);
+              if (Boolean(call(call(window, "get_gameObject"), "get_activeInHierarchy"))) installSettingsDataButton(window);
+            }
+          }
+          return;
+        }
+        const objects = find.invoke(ucls("UnityEngine.UI.Button").type.object), visited = /* @__PURE__ */ new Set();
+        for (let i = 0; i < objects.length; i++) {
+          const go = call(objects.get(i), "get_gameObject");
+          if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
+          let node = call(go, "get_transform");
+          for (let depth = 0; depth < 8 && !isNull(node); depth++, node = call(node, "get_parent")) {
+            const key = node.handle.toString();
+            if (visited.has(key)) break;
+            visited.add(key);
+            if (!/^(?:Win[_ -]?)?(?:Game)?(?:Options|Settings)(?:[_ -]?(?:Win|Window|Menu|Panel|Dialog|Root))?$/i.test(String(call(node, "get_name")?.content || "").replace(/\(Clone\)$/i, "").trim())) continue;
+            const root = call(node, "get_gameObject"), rect = uiRect(root), bounds = call(rect, "get_rect");
+            if (Number(bounds.field("m_Width").value) < 300 || Number(bounds.field("m_Height").value) < 200) continue;
+            installSettingsDataButton(root);
+          }
+        }
+      } catch (_) {
+      }
+    } });
+    log(`settings game data: ${hooks} window hooks and prefab fallback`);
+  });
   const historyRows = /* @__PURE__ */ new Map(), historyTargets = /* @__PURE__ */ new Map();
   let historyUiReports = 0, historyPopup = null, historyActiveKey = null, historyLastFetch = 0;
   let historyUsingNative = false, historyNativeFailureReported = false;
@@ -6803,12 +6994,6 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       const transition = pickerButton.tryMethod("set_transition", 1);
       if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
       record.pickerButton = uiRect(picker).ref(false);
-      if (fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) {
-        const resources = uiLabeledButton("RebornResources", window, "Resources", -8, -40, 125, () => {
-          ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
-        });
-        call(uiAdd(resources, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-      }
       try {
         const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`) || "null");
         const screen = chatScreen();
@@ -6982,76 +7167,66 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       }
     });
   });
-  section("mobile debug shortcut", () => {
-    let taps = [], pendingUntil = 0, polling = 0, lastFrame = -1, consumed = false;
-    const pollers = img.classes.filter((c) => /debug|developer|cheat/i.test(c.name)).flatMap((c) => c.methods.filter((m) => ["Update", "LateUpdate", "OnGUI"].includes(m.name) && !m.isStatic && m.parameterCount === 0 && !m.virtualAddress.isNull()));
-    const attached = /* @__PURE__ */ new Set();
-    for (const method of pollers) {
-      const address = method.virtualAddress.toString();
-      if (attached.has(address)) continue;
-      attached.add(address);
-      Interceptor.attach(method.virtualAddress, {
-        onEnter() {
-          polling++;
-        },
-        onLeave() {
-          polling = Math.max(0, polling - 1);
-          if (!polling && consumed) {
-            pendingUntil = 0;
-            consumed = false;
-          }
-        }
-      });
-    }
-    if (!attached.size) {
-      log("mobile debug shortcut: original debug input poller not found");
-      return;
-    }
-    const input = ucls("UnityEngine.Input");
+  section("mobile global debug shortcut", () => {
+    let taps = [], chordFrame = -1, lastFrame = -1, began = null;
+    const input = ucls("UnityEngine.Input"), time = ucls("UnityEngine.Time");
+    const frame = () => Number(time.method("get_frameCount", 0).invoke());
     for (const name of ["GetKey", "GetKeyDown"]) {
       const method = input.method(name).overload("UnityEngine.KeyCode");
       Interceptor.attach(method.virtualAddress, {
         onEnter(args) {
           this.code = args[0].toInt32();
-          this.polling = polling > 0;
         },
         onLeave(result) {
-          if (!this.polling || Date.now() > pendingUntil) return;
-          if (name === "GetKey" && [305, 306].includes(this.code)) result.replace(ptr(1));
-          if (name === "GetKeyDown" && this.code === 100) {
+          if (frame() !== chordFrame) return;
+          if (name === "GetKey" && [100, 305, 306].includes(this.code) || name === "GetKeyDown" && this.code === 100)
             result.replace(ptr(1));
-            consumed = true;
-          }
         }
       });
     }
-    const render = ucls("UnityEngine.Canvas").method("SendWillRenderCanvases", 0);
-    Interceptor.attach(render.virtualAddress, {
-      onLeave() {
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    Interceptor.attach(update.virtualAddress, {
+      onEnter() {
         try {
-          const frame = Number(ucls("UnityEngine.Time").method("get_frameCount", 0).invoke());
-          if (frame === lastFrame) return;
-          lastFrame = frame;
-          if (Number(input.method("get_touchCount", 0).invoke()) !== 1) return;
-          const touch = input.method("GetTouch", 1).invoke(0);
-          if (enumVal(touch.method("get_phase", 0).invoke()) !== 3) return;
+          const current = frame();
+          if (current === lastFrame) return;
+          lastFrame = current;
+          if (Number(input.method("get_touchCount", 0).invoke()) !== 1) {
+            began = null;
+            return;
+          }
+          const touch = input.method("GetTouch", 1).invoke(0), phase = enumVal(touch.method("get_phase", 0).invoke());
           const point = uiXY(touch.method("get_position", 0).invoke()), screen = chatScreen();
-          if (point.x > screen.width * 0.2 || point.y < screen.height * 0.88) {
+          const size = Math.max(40, Math.min(96, Math.min(screen.width, screen.height) * 0.08));
+          const inside = point.x >= 0 && point.x <= size && point.y >= screen.height - size && point.y <= screen.height;
+          if (phase === 0) {
+            began = inside ? { x: point.x, y: point.y, at: Date.now() } : null;
+            return;
+          }
+          if (phase === 4) {
+            began = null;
             taps = [];
             return;
           }
+          if (phase !== 3) return;
           const now = Date.now();
+          if (!inside || !began || now - began.at > 400 || Math.hypot(point.x - began.x, point.y - began.y) > size * 0.35) {
+            began = null;
+            taps = [];
+            return;
+          }
+          began = null;
           taps = taps.filter((at) => now - at < 900);
           taps.push(now);
           if (taps.length >= 3) {
             taps = [];
-            pendingUntil = now + 1e3;
+            chordFrame = current + 1;
           }
         } catch (_) {
         }
       }
     });
-    log(`mobile debug shortcut: using ${attached.size} original input pollers`);
+    log("mobile debug gesture active in menu and battle; original Ctrl+D permissions preserved");
   });
   section("Reborn Android updater and diagnostics", () => {
     const uriClass = ucls("System.Uri");

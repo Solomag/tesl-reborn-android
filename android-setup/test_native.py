@@ -28,7 +28,7 @@ def pack(root, pack_id, files):
         files=entries,
     )
     path = root / (pack_id + ".zip")
-    with zipfile.ZipFile(path, "w") as z:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("pack.json", json.dumps(manifest))
         for name, data in files.items():
             z.writestr(name, data)
@@ -51,6 +51,27 @@ public class InstallerTest {
  public static void main(String[] a) throws Exception {
   File root=new File(a[0]),downloads=new File(a[1]);
   PackInstaller p=new PackInstaller(root,downloads,s->{});
+  if(a[2].equals("archive")||a[2].equals("archive-reject")) {
+    boolean reject=a[2].equals("archive-reject");
+    try {
+      DataArchive.install(new FileInputStream(a[3]),PackInstaller.json(new File(a[4])),new File(downloads,"archive"),p,
+        (in,meta)->{
+          File obb=new File(root,"game.obb");
+          try(OutputStream out=new FileOutputStream(obb)) {byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1)out.write(b,0,n);}
+          if(obb.length()!=meta.getLong("bytes")||!PackInstaller.hash(obb).equals(meta.getString("sha256")))throw new IOException("OBB hash differs");
+        },s->{});
+      if(reject)throw new AssertionError("Unsafe archive accepted");
+      p.verifyInstalled("common");p.verifyInstalled("ru_ru");
+    } catch(Exception expected) {if(!reject)throw expected;}
+    return;
+  }
+  if(a[2].equals("preview")) {
+    int[] fit=PreviewSize.fit(945,1900,1280,960,90);
+    if(fit[0]!=945||fit[1]!=1260)throw new AssertionError("Stretched portrait preview");
+    fit=PreviewSize.fit(2000,945,1280,960,180);
+    if(fit[0]!=1260||fit[1]!=945)throw new AssertionError("Stretched landscape preview");
+    return;
+  }
   if(a[2].equals("url-ok")){PackInstaller.baseUrl(a[3]);return;}
   if(a[2].equals("qr")){
     java.awt.image.BufferedImage image=javax.imageio.ImageIO.read(new File(a[3]));
@@ -124,6 +145,8 @@ def main():
                 "-d",
                 str(classes),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/PackInstaller.java"),
+                str(ROOT / "android-setup/src/org/teslreborn/setup/DataArchive.java"),
+                str(ROOT / "android-setup/src/org/teslreborn/setup/PreviewSize.java"),
                 str(source),
             ],
             check=True,
@@ -186,6 +209,46 @@ def main():
             assert server.finished_at is not None
         finally:
             server.stop()
+        from builder.archive import write_data_archive
+
+        archive = root / "data.zip"
+        write_data_archive(catalog, archive, log=lambda _: None)
+        expected_obb = root / "expected-obb.json"
+        expected_obb.write_text(json.dumps(obb_meta))
+        subprocess.run(
+            [*command, "archive", str(archive), str(expected_obb)], check=True
+        )
+        subprocess.run([*command, "preview"], check=True)
+        with zipfile.ZipFile(archive) as original:
+            items = [(n, original.read(n)) for n in original.namelist()]
+        bad_zip = root / "bad-data.zip"
+        cases = [
+            items + [("../escape", b"bad")],
+            items[:-1],
+            items + [items[1]],
+            [("other.json", b"{}")],
+        ]
+        # Same ZIP entry size and valid CRC, but wrong expected SHA-256.
+        changed = list(items)
+        name, body = changed[-1]
+        changed[-1] = (name, bytes([body[0] ^ 1]) + body[1:])
+        cases.append(changed)
+        for bad_items in cases:
+            import warnings
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(bad_zip, "w", zipfile.ZIP_DEFLATED) as z:
+                    for name, body in bad_items:
+                        z.writestr(name, body)
+            subprocess.run(
+                [*command, "archive-reject", str(bad_zip), str(expected_obb)],
+                check=True,
+            )
+            assert not (root / "escape").exists()
+        print(
+            "PASS native JVM: streaming ZIP import, all included languages, corrupt/incomplete/traversing archives rejected, preview proportions"
+        )
         for url in [
             "http://192.168.1.109:1234/",
             "http://100.89.61.30:1234/",

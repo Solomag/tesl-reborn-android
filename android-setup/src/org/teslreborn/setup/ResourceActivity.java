@@ -44,6 +44,7 @@ public final class ResourceActivity extends Activity {
   private String uiCode = "en_us";
   private File obbFile;
   private boolean initialized = false;
+  private boolean dataChanged = false;
   private boolean busy = false;
   private File root;
 
@@ -51,7 +52,6 @@ public final class ResourceActivity extends Activity {
   public void onCreate(Bundle state) {
     super.onCreate(state);
     try {
-      stopGameProcess();
       root = getExternalFilesDir(null);
       if (root == null) throw new IOException("App storage is unavailable");
       installer =
@@ -120,7 +120,7 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 26\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 27\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -177,27 +177,30 @@ public final class ResourceActivity extends Activity {
     system.setOnClickListener(v -> language.setSelection(0));
     box.addView(system);
     actions.add(system);
+    LinearLayout advanced = new LinearLayout(this);
+    advanced.setOrientation(1);
+    advanced.setVisibility(View.GONE);
     address = new EditText(this);
     address.setSingleLine(true);
     address.setHint("http://192.168.1.10:12345/");
     address.setInputType(
         android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
     address.setText(getPreferences(0).getString("address", ""));
-    box.addView(address);
+    advanced.addView(address);
     token = new EditText(this);
     token.setSingleLine(true);
     token.setHint(tr("Connection code shown on your PC"));
     token.setInputType(
         android.text.InputType.TYPE_CLASS_TEXT
             | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-    box.addView(token);
+    advanced.addView(token);
     button(
         box,
         "Scan QR code",
         () -> startActivityForResult(new Intent(this, ScanActivity.class), 10));
     download = button(box, "Download missing game data and language", () -> download());
     button(
-        box,
+        advanced,
         "Import OBB file",
         () -> {
           Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -205,19 +208,35 @@ public final class ResourceActivity extends Activity {
           intent.addCategory(Intent.CATEGORY_OPENABLE);
           startActivityForResult(intent, 11);
         });
-    embedded = button(box, "Install included language packs", () -> installEmbedded());
+    button(
+        box,
+        "Import data ZIP",
+        () -> {
+          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+          intent.setType("*/*");
+          intent.addCategory(Intent.CATEGORY_OPENABLE);
+          startActivityForResult(intent, 12);
+        });
+    embedded = button(advanced, "Install included language packs", () -> installEmbedded());
     remove =
         button(
-            box,
+            advanced,
             "Remove selected language",
             () -> {
               final String code = selected();
               new AlertDialog.Builder(this)
                   .setMessage("Remove installed language " + code + "?")
                   .setNegativeButton("Cancel", null)
-                  .setPositiveButton("Remove", (d, w) -> run(() -> installer.remove(code)))
+                  .setPositiveButton("Remove", (d, w) -> runMutation(() -> installer.remove(code)))
                   .show();
             });
+    button(
+        box,
+        "Advanced",
+        () ->
+            advanced.setVisibility(
+                advanced.getVisibility() == View.GONE ? View.VISIBLE : View.GONE));
+    box.addView(advanced);
     launch = button(box, "Launch game", () -> launchGame());
     status = new TextView(this);
     status.setTextIsSelectable(true);
@@ -406,6 +425,19 @@ public final class ResourceActivity extends Activity {
         });
   }
 
+  private void markMutation() {
+    stopGameProcess();
+    dataChanged = true;
+  }
+
+  private void runMutation(Task task) {
+    run(
+        () -> {
+          markMutation();
+          task.run();
+        });
+  }
+
   private void installEmbedded() {
     final String code = selected();
     run(
@@ -436,6 +468,7 @@ public final class ResourceActivity extends Activity {
                 }
                 out.getFD().sync();
               }
+              markMutation();
               installer.install(file, pack);
             } finally {
               file.delete();
@@ -457,7 +490,7 @@ public final class ResourceActivity extends Activity {
             JSONObject obb = catalog.optJSONObject("obb");
             if (obb == null)
               throw new IOException(
-                  "This previous build cannot transfer OBB. Rebuild with Android 26 or import the"
+                  "This previous build cannot transfer OBB. Rebuild with Android 27 or import the"
                       + " OBB file.");
             JSONObject expected = setup.optJSONObject("obb");
             if (expected != null && !expected.getString("sha256").equals(obb.getString("sha256")))
@@ -480,6 +513,7 @@ public final class ResourceActivity extends Activity {
             if (installer.installed(id)
                 && installer.installedHash(id).equals(pack.getString("sha256"))) continue;
             File file = installer.download(base, key, pack);
+            markMutation();
             installer.install(file, pack);
             file.delete();
           }
@@ -522,13 +556,19 @@ public final class ResourceActivity extends Activity {
     try {
       String code = selected();
       boolean system = CODES[language.getSelectedItemPosition()].equals("system");
+      String previousLanguage = "";
+      try {
+        previousLanguage =
+            PackInstaller.json(new File(root, "tesl-reborn-language.json")).optString("language");
+      } catch (Exception ignored) {
+      }
       PackInstaller.writeJson(
           new File(root, "tesl-reborn-language.json"),
           new JSONObject().put("language", code).put("system", system));
       getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2).apply();
       // Unity runs in the main process; the preparation screen lives in :resources.
       // Always start a clean Unity process after resources or language changes.
-      stopGameProcess();
+      if (dataChanged || !code.equals(previousLanguage)) stopGameProcess();
       Intent intent = new Intent(Intent.ACTION_MAIN);
       intent.addCategory(Intent.CATEGORY_LAUNCHER);
       intent.setClassName(getPackageName(), setup.getString("gameActivity"));
@@ -587,6 +627,7 @@ public final class ResourceActivity extends Activity {
         if (part.length() != meta.getLong("bytes")
             || !PackInstaller.hash(part).equals(meta.getString("sha256")))
           throw new IOException("Base game data is incomplete or corrupt");
+        markMutation();
         PackInstaller.atomic(part, obbFile);
         rememberObb(meta);
       } finally {
@@ -606,6 +647,17 @@ public final class ResourceActivity extends Activity {
       Intent link = new Intent(Intent.ACTION_VIEW, data.getData());
       applyLink(link);
       message("Connected. Tap Download missing game data and language.");
+    } else if (request == 12 && data.getData() != null) {
+      final Uri uri = data.getData();
+      run(
+          () ->
+              DataArchive.install(
+                  getContentResolver().openInputStream(uri),
+                  setup.optJSONObject("obb"),
+                  new File(getCacheDir(), "tesl-import"),
+                  installer,
+                  (in, meta) -> installObb(in, meta),
+                  this::message));
     } else if (request == 11 && data.getData() != null) {
       final Uri uri = data.getData();
       run(() -> installObb(getContentResolver().openInputStream(uri), setup.optJSONObject("obb")));

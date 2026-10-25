@@ -76,17 +76,21 @@ def patch_platform(src, dst):
     """Copies a bundle and sets its build target to Android."""
     env = UnityPy.load(src)
     out = None
+    patched = 0
     for name, f in env.files.items():
         if isinstance(f, BundleFile):
             for sub in f.files.values():
                 if hasattr(sub, "_m_target_platform"):
+                    patched += 1
                     sub._m_target_platform = ANDROID
                     sub.target_platform = BuildTarget(ANDROID)
             out = f.save(packer="original")
-    if out is None:
+    if out is None or patched == 0:
         raise ValueError("%s does not contain a bundle" % src)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    open(dst, "wb").write(out)
+    with open(dst + ".part", "wb") as f:
+        f.write(out)
+    os.replace(dst + ".part", dst)
     return len(out)
 
 
@@ -140,8 +144,8 @@ def main():
         total += patch_platform(src, os.path.join(entry, "__data"))
         # the time of the last use, Unity removes the entries that are older
         # than the expiration delay of the cache
-        open(os.path.join(entry, "__info"), "w").write(
-            "-1\n%d\n1\n__data\n" % now)
+        open(os.path.join(entry, "__info"), "wb").write(
+            ("-1\n%d\n1\n__data\n" % now).encode("ascii"))
     print("%d bundles, %.0f MB" % (len(wanted), total / 1e6))
 
     if args.push:

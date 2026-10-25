@@ -3,11 +3,14 @@
 streaming assets (the OBB of the package) and the asset bundles that are not
 part of the OBB.
 
-The OBB and the restored bundles are put into the APK as
+The OBB, the restored bundles and versions.json are put into the APK as
 
-    assets/tesl-payload/obb.bin     the OBB, written to the place where the
-                                    game expects it on the first start
-    assets/tesl-payload/cache.bin   the asset bundles for the cache of Unity
+    assets/tesl-payload/obb.bin                    the OBB, written to the place
+                                                   where the game expects it on
+                                                   the first start
+    assets/tesl-payload/UnityCache/Shared/<path>   the asset bundles for the cache
+                                                   of Unity, one entry per file
+    assets/tesl-payload/versions.json              the bundle inventory
 
 The hook (see hook.ts, section "payload from the apk") writes them out on the
 first start, so a single APK is enough to install the game.  The APK is
@@ -17,13 +20,12 @@ Usage:
 
     python3 build_single_apk.py [--apk tesl-reborn.apk] [--obb main.11009...obb]
                                 [--cache cache/Shared] [--output tesl-reborn-all.apk]
-                                [--no-obb] [--no-cache]
+                                [--no-obb] [--no-cache] [--no-versions]
 
 The cache is built with restore_cache.py.
 """
 
 import argparse
-import json
 import os
 import shutil
 import struct
@@ -32,42 +34,16 @@ import sys
 import zipfile
 import zlib
 
+# build_xapk.py imports these; hook.ts obbPath() repeats the OBB name and must change together with them
 PACKAGE = "com.bethsoft.theelderscrollslegends"
 VERSION_CODE = "11009"
 OBB_NAME = "main.%s.%s.obb" % (VERSION_CODE, PACKAGE)
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAYLOAD = "assets/tesl-payload"
-CACHE_MAGIC = b"TESLCACHE"
 
 
 def human(size):
     return "%.1f MB" % (size / 1e6)
-
-
-def build_cache(cache_dir, out):
-    """Packs the cache of Unity into one file.
-
-    The format is simple: the magic, the number of the files, then for every
-    file its name and its size, and at the end the data of all of them.
-    """
-    files = []
-    for root, _, names in os.walk(cache_dir):
-        for name in names:
-            path = os.path.join(root, name)
-            files.append((os.path.relpath(path, cache_dir), path))
-    files.sort()
-    header = bytearray(CACHE_MAGIC + struct.pack("<I", len(files)))
-    for name, _ in files:
-        raw = name.encode("utf-8")
-        header += struct.pack("<H", len(raw)) + raw
-    for _, path in files:
-        header += struct.pack("<Q", os.path.getsize(path))
-    with open(out, "wb") as f:
-        f.write(header)
-        for _, path in files:
-            with open(path, "rb") as src:
-                shutil.copyfileobj(src, f, 1 << 20)
-    return len(files), os.path.getsize(out)
 
 
 def append_to_apk(src, dst, extra):
@@ -87,6 +63,8 @@ def append_to_apk(src, dst, extra):
             left = zin.start_dir
             while left:
                 raw = fin.read(min(stream, left))
+                if not raw:
+                    raise IOError("APK ended before its central directory")
                 fout.write(raw)
                 left -= len(raw)
             added = []
@@ -108,6 +86,8 @@ def append_to_apk(src, dst, extra):
                 with open(path, "rb") as data:
                     while done < size:
                         raw = data.read(min(stream, size - done))
+                        if not raw:
+                            raise IOError("Payload source shrank during packing")
                         crc = zlib.crc32(raw, crc)
                         fout.write(raw)
                         done += len(raw)
@@ -157,21 +137,21 @@ def _central_entry(name, crc, comp_size, size, offset, method, date_time,
                          0, 0, 0, 0, 0, offset) + raw)
 
 
-def find_tool(name, extra=()):
-    """Looks for a program in the PATH and in the folders of the other builds."""
-    for folder in (HERE, "/tmp/opencode/apkbuild", "/tmp/opencode/buildtools/android-14"):
-        path = os.path.join(folder, name)
-        if os.path.exists(path):
-            return path
+def find_tool(name):
+    """Looks for a file in the folder of this script, then in the PATH."""
+    path = os.path.join(HERE, name)
+    if os.path.exists(path):
+        return path
     found = shutil.which(name)
     if found:
         return found
-    for folder in extra:
-        if os.path.isdir(folder):
-            for entry in os.listdir(folder):
-                if entry.startswith(name):
-                    return os.path.join(folder, entry)
     sys.exit("%s was not found" % name)
+
+
+def inside(path, folder):
+    """True when path is folder or lies below it."""
+    path, folder = os.path.realpath(path), os.path.realpath(folder)
+    return path == folder or path.startswith(folder + os.sep)
 
 
 def main():
@@ -183,56 +163,54 @@ def main():
     ap.add_argument("--output", default=os.path.join(HERE, "tesl-reborn-all.apk"))
     ap.add_argument("--no-obb", action="store_true")
     ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--no-versions", action="store_true",
+                    help="build without versions.json (the game then has no storage-mode table)")
     ap.add_argument("--work", default=os.path.join(HERE, "work-single"))
     args = ap.parse_args()
 
     if not os.path.exists(args.apk):
         sys.exit("%s is missing" % args.apk)
 
-    shutil.rmtree(args.work, ignore_errors=True)
-    os.makedirs(args.work)
+    # --work is wiped below: refuse a folder that holds the current directory, this script or an input
+    for keep in (os.getcwd(), HERE, args.apk, args.obb, args.cache, args.output):
+        if inside(keep, args.work):
+            sys.exit("--work %s would wipe %s" % (args.work, keep))
 
-    # the payload
-    payload = os.path.join(args.work, "payload")
-    os.makedirs(payload)
+    # the payload files are read in place by append_to_apk, not copied first
+    payload_files = {}
     if not args.no_obb:
         if not os.path.exists(args.obb):
             sys.exit("%s is missing" % args.obb)
-        shutil.copyfile(args.obb, os.path.join(payload, "obb.bin"))
+        payload_files["%s/obb.bin" % PAYLOAD] = args.obb
         print("payload: the OBB (%s)" % human(os.path.getsize(args.obb)))
     versions_src = os.path.join(HERE, "versions.json")
-    if os.path.isfile(versions_src):
-        shutil.copyfile(versions_src, os.path.join(payload, "versions.json"))
+    if not args.no_versions:
+        if not os.path.isfile(versions_src):
+            sys.exit("%s is missing, pass --no-versions to build without it" % versions_src)
+        payload_files["%s/versions.json" % PAYLOAD] = versions_src
         print("payload: versions.json (%s)" % human(os.path.getsize(versions_src)))
 
     if not args.no_cache:
         if not os.path.isdir(args.cache):
             sys.exit("%s is missing, run restore_cache.py first" % args.cache)
-        # include cache files as individual entries (not packed into cache.bin)
+        # the cache files are individual entries
         cache_count = 0
         cache_size = 0
         for root, _, names in os.walk(args.cache):
             for name in names:
                 path = os.path.join(root, name)
-                relpath = os.path.relpath(path, args.cache)
-                entry_name = "assets/tesl-payload/UnityCache/Shared/%s" % relpath
-                # store in payload dir for append_to_apk
-                target = os.path.join(payload, "UnityCache", "Shared", relpath)
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                shutil.copyfile(path, target)
+                relpath = os.path.relpath(path, args.cache).replace(os.sep, "/")
+                payload_files["%s/UnityCache/Shared/%s" % (PAYLOAD, relpath)] = path
                 cache_count += 1
                 cache_size += os.path.getsize(path)
         print("payload: %d cache files (%s)" % (cache_count, human(cache_size)))
 
+    shutil.rmtree(args.work, ignore_errors=True)
+    os.makedirs(args.work)
+
     # the new APK: the files of the patched APK keep their place, the payload
     # is appended, so the native libraries stay aligned
     unsigned = os.path.join(args.work, "unsigned.apk")
-    payload_files = {}
-    for root, _, names in os.walk(payload):
-        for name in names:
-            path = os.path.join(root, name)
-            relpath = os.path.relpath(path, payload)
-            payload_files["%s/%s" % (PAYLOAD, relpath)] = path
     append_to_apk(args.apk, unsigned, payload_files)
 
     # sign (the same debug key as the other builds); zipalign is skipped, it
@@ -242,7 +220,7 @@ def main():
     subprocess.check_call(["java", "-jar", signer, "-a", unsigned,
                            "--allowResign", "--skipZipAlign", "--out", args.work])
     signed = [f for f in os.listdir(args.work) if f.endswith("-debugSigned.apk")][0]
-    shutil.move(os.path.join(args.work, signed), args.output)
+    os.replace(os.path.join(args.work, signed), args.output)
 
     print("built %s (%s)" % (args.output, human(os.path.getsize(args.output))))
     with zipfile.ZipFile(args.output) as z:

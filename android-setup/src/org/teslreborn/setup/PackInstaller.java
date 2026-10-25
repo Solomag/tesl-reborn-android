@@ -163,25 +163,30 @@ public final class PackInstaller {
         value = new JSONObject(new String(read(in, 256 * 1024), "UTF-8"));
         if (value.has("obb")) validateObb(value.getJSONObject("obb"));
       }
-      if (value.getInt("schema") != 1
-          || !value.getString("format").equals("tesl-reborn-resources-v1")
-          || value.getInt("gameVersionCode") != 11009
-          || !value.getString("abi").equals("arm64-v8a"))
-        throw new IOException("Incompatible catalog");
-      JSONArray packs = value.getJSONArray("packs");
-      if (packs.length() > 11) throw new IOException("Too many packs");
-      Set<String> ids = new HashSet<>();
-      for (int i = 0; i < packs.length(); i++) {
-        JSONObject p = packs.getJSONObject(i);
-        validate(p);
-        if (!ids.add(id(p))) throw new IOException("Duplicate pack");
-      }
-      if (!ids.contains("common"))
-        throw new IOException("Common resources are missing from this build");
+      validateCatalog(value);
       return value;
     } finally {
       c.disconnect();
     }
+  }
+
+  public static void validateCatalog(JSONObject value) throws Exception {
+    if (value.has("obb")) validateObb(value.getJSONObject("obb"));
+    if (value.getInt("schema") != 1
+        || !value.getString("format").equals("tesl-reborn-resources-v1")
+        || value.getInt("gameVersionCode") != 11009
+        || !value.getString("abi").equals("arm64-v8a"))
+      throw new IOException("Incompatible catalog");
+    JSONArray packs = value.getJSONArray("packs");
+    if (packs.length() > 11) throw new IOException("Too many packs");
+    Set<String> ids = new HashSet<>();
+    for (int i = 0; i < packs.length(); i++) {
+      JSONObject p = packs.getJSONObject(i);
+      validate(p);
+      if (!ids.add(id(p))) throw new IOException("Duplicate pack");
+    }
+    if (!ids.contains("common"))
+      throw new IOException("Common resources are missing from this build");
   }
 
   public File download(URL base, String token, JSONObject pack) throws Exception {

@@ -356,8 +356,8 @@ def build(
     xapk,
     languages,
     default_language="system",
-    embedded=True,
-    format="xapk",
+    embedded=False,
+    format="manual",
     appdir=None,
     log=print,
     converter=None,
@@ -422,7 +422,7 @@ def build(
             )
             and (assets / e["BundleName"]).is_file()
         )
-        required = 2 * xapk.stat().st_size + 5 * estimated + 512 * 1024**2
+        required = 3 * xapk.stat().st_size + 5 * estimated + 512 * 1024**2
         if shutil.disk_usage(output).free < required:
             raise ValueError(
                 f"This build needs approximately {required / 1024**3:.1f} GiB of additional free space"
@@ -479,12 +479,6 @@ def build(
             )
             if format == "manual":
                 shutil.copyfile(apk, result / "tesl-reborn.apk")
-                obb_dest = result / f"Android/obb/{PACKAGE}"
-                obb_dest.mkdir(parents=True)
-                try:
-                    os.link(resources / "game.obb", obb_dest / OBB)
-                except OSError:
-                    shutil.copyfile(resources / "game.obb", obb_dest / OBB)
             else:
                 final = result / "tesl-reborn.xapk"
                 obb_path = f"Android/obb/{PACKAGE}/{OBB}"
@@ -511,6 +505,10 @@ def build(
                     archive.write(work / "inputs" / OBB, obb_path)
                     archive.writestr("icon.png", icon)
                     archive.writestr("manifest.json", json.dumps(meta))
+            if format == "manual":
+                from .archive import write_data_archive
+
+                write_data_archive(resources, result / "tesl-reborn-data.zip", log)
             (result / "build.json").write_text(
                 json.dumps(
                     dict(
@@ -518,7 +516,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=26,
+                        androidBuild=27,
                     ),
                     indent=2,
                 ),
