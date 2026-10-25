@@ -11,11 +11,48 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from tkinter import font as tkfont
 from urllib.parse import urlsplit
 
 from .build import build, application_directory
 from .resources import LANGUAGES, NAMES, find_assets, ensure_outside, source_roots
 from .server import ResourceServer
+
+
+def configure_ui_font(window):
+    # Legacy Windows bitmap fonts can render Cyrillic while dropping Latin
+    # accents. Use a Unicode outline font for controls and popup lists alike.
+    available = {family.casefold(): family for family in tkfont.families(window)}
+    preferred = (
+        ("Segoe UI", "Tahoma", "Arial")
+        if sys.platform == "win32"
+        else ("Noto Sans", "DejaVu Sans", "Liberation Sans")
+    )
+    family = next(
+        (
+            available[name.casefold()]
+            for name in preferred
+            if name.casefold() in available
+        ),
+        None,
+    )
+    if family is None:
+        return
+    for name in (
+        "TkDefaultFont",
+        "TkTextFont",
+        "TkMenuFont",
+        "TkHeadingFont",
+        "TkCaptionFont",
+        "TkIconFont",
+        "TkTooltipFont",
+    ):
+        try:
+            tkfont.nametofont(name, root=window).configure(family=family, size=10)
+        except tk.TclError:
+            pass
+    ttk.Style(window).configure(".", font="TkDefaultFont")
+    window.option_add("*TCombobox*Listbox.font", "TkTextFont")
 
 
 def steam_games():
@@ -100,6 +137,7 @@ def local_ips():
 class BuilderWindow:
     def __init__(self, window):
         self.window = window
+        configure_ui_font(window)
         self.window.title("TESL Reborn Builder")
         self.window.geometry("850x850")
         self.events = queue.Queue()
