@@ -1,4 +1,4 @@
-name: Build Windows Builder
+name: Build Desktop Builders
 on:
   workflow_dispatch:
   push:
@@ -64,8 +64,52 @@ jobs:
           path: |
             dist/TESL-Reborn-Builder.exe
             dist/self-test.json
-            dist/android-28-check-ru.md
+            dist/android-29-check-ru.md
             dist/builder-ru.md
             dist/THIRD_PARTY_BUILDER.md
             dist/third-party-notices
+          retention-days: 14
+
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk tk8.6 xvfb xauth libgl1
+          python -m pip install -r builder/requirements.txt
+          npm ci
+      - name: Prepare and validate Linux tools
+        run: |
+          python -m builder.bootstrap_tools
+          python tools/prepare_emojis.py
+          python android-setup/build.py
+          npm run build
+          npm test
+          python android-setup/test_native.py
+          python -m tests.integration_builder_apk
+      - name: Bundle Java and package Linux app
+        run: |
+          "$JAVA_HOME/bin/jlink" --add-modules java.base,java.desktop,java.logging,java.xml,java.naming,jdk.crypto.ec,jdk.unsupported,jdk.zipfs,jdk.charsets,jdk.localedata --strip-debug --no-header-files --no-man-pages --output vendor/jre
+          python -m builder.package_windows
+          xvfb-run -a dist/TESL-Reborn-Builder --self-test dist/self-test.json
+          cat dist/self-test.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TESL-Reborn-Builder-Linux-x86_64
+          path: |
+            dist/TESL-Reborn-Builder-Linux-x86_64.tar.gz
+            dist/self-test.json
           retention-days: 14

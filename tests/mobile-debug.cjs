@@ -32,3 +32,6 @@ count=2;update(0);count=1;tap();tap();update(1);assert.equal(key('GetKeyDown',10
 assert.ok(logs.some(x=>x.includes('gesture-detected')));assert.ok(logs.some(x=>x.includes('ctrl-d-forwarded')));
 assert.ok(!/Canvas|DebugWindow|Toast|set_isDebug|set_Debug/.test(code));
 console.log('PASS: corner gesture, native/inlined Unity input, string/enum overloads, anyKey guards, single-frame chord, scene independence and diagnostics');
+
+const android={...c,readTextFile:()=>JSON.stringify({debugInput:'android-key-events'}),persistentPath:()=>'/files',Interceptor:{attach:()=>{throw Error('legacy key synthesis must be disabled for Android key events')}}};
+vm.createContext(android);vm.runInContext(code,android);

@@ -3,7 +3,7 @@ const {transformSync}=require('esbuild');const src=fs.readFileSync('hook.ts','ut
 const extract=(a,b)=>transformSync(src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a))),{loader:'ts'}).code;
 const c={saved:[],pendingLogin:null,log:()=>{},isNull:x=>x==null,
  call:(o,n)=>({get_Uri:o.uri,get_State:o.state,get_Response:o.response,get_StatusCode:o?.status,get_DataAsText:{content:o?.body}}[n]),
- writeSavedLogin:(u,p)=>c.saved.push({username:u,password:p})};
+ readSavedLogin:()=>c.saved.at(-1),writeSavedLogin:(u,p)=>c.saved.push({username:u,password:p})};
 vm.createContext(c);
 vm.runInContext(extract('function redactLog(', '\nconst log ='),c);
 vm.runInContext(extract('function loginOutcome(', '  section("http trace"'),c);
@@ -18,8 +18,8 @@ response(200,JSON.stringify({resultCode:0,data:{token:'synthetic-token'}}));asse
 const before=c.saved.length;
 for(const [status,body] of [[0,''],[503,''],[200,'invalid json'],[200,'{"resultCode":50}'],[200,'{"resultCode":0}']])response(status,body);
 assert.equal(c.saved.length,before,'network or unknown result must preserve saved credentials');
-response(200,'{"resultCode":15}');assert.equal(c.saved.at(-1).username,'Alice');assert.equal(c.saved.at(-1).password,'');
-response(200,'{"resultCode":17}');assert.equal(c.saved.at(-1).password,'');
+response(200,'{"resultCode":15}');assert.equal(c.saved.at(-1).username,'Alice');assert.equal(c.saved.at(-1).password,'correct');
+response(200,'{"resultCode":17}');assert.equal(c.saved.at(-1).password,'correct');
 // Execute actual auto-login wrapper with both raw and managed callback representations.
 for(const wrapped of [false,true]) {
  let invoked=0,freed=0,shown=0,scheduled=[];const methods={};
@@ -56,3 +56,14 @@ captured.captureLogin({},'https://example.test/bnetUsernameAndPasswordLogin');
 assert.equal(vm.runInContext('pendingLogin.username',captured),'Соло');
 assert.equal(vm.runInContext('pendingLogin.password',captured),'сложный"пароль');
 console.log('PASS: UTF-8 login capture without legacy escape() global');
+
+let rewritten;
+const request=Buffer.from(JSON.stringify({componentType:'android',language:'en',password:'сложный"пароль',fingerprint:'old'}),'utf8');
+const normalizer={escape:undefined,unescape:undefined,byteClass:{},overrides:{componentType:'win'},resourceLanguage:()=>"ru_ru",shapedLanguage:()=>"ru",freshFingerprint:()=>"fresh",log:()=>{},
+ call:(_,method,value)=>method==='get_RawData'?{handle:{isNull:()=>false},length:request.length,get:i=>request[i]}:(rewritten=value),
+ Il2Cpp:{array:(_,length)=>{const bytes=new Uint8Array(length);bytes.set=(index,value)=>{bytes[index]=value};return bytes}}};
+vm.createContext(normalizer);vm.runInContext(extract('  function rewriteAuthBody(', '  // The credentials of the login'),normalizer);
+normalizer.rewriteAuthBody({},'https://tesl-reborn.com/api/account/bnetUsernameAndPasswordLogin');
+const normalized=JSON.parse(Buffer.from(rewritten).toString('utf8'));
+assert.equal(normalized.password,'сложный"пароль');assert.equal(normalized.componentType,'win');assert.equal(normalized.language,'ru');assert.equal(normalized.fingerprint,'fresh');
+console.log('PASS: Unicode auth normalization, selected game language and fresh fingerprint without deprecated JS globals');

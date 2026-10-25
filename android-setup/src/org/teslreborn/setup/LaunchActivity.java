@@ -20,13 +20,16 @@ public final class LaunchActivity extends Activity {
       }
       File root = getExternalFilesDir(null);
       if (root == null) throw new java.io.IOException("App storage is unavailable");
+      PackInstaller.writeJson(
+          new File(root, "tesl-reborn-setup.json"),
+          new JSONObject().put("api", 1).put("debugInput", "android-key-events"));
       JSONObject choice = PackInstaller.json(new File(root, "tesl-reborn-language.json"));
       String language = choice.getString("language");
       if (choice.optBoolean("system", false)
           && !language.equals(ResourceActivity.systemLanguageCode()))
         throw new java.io.IOException("System game language changed");
       PackInstaller installer =
-          new PackInstaller(root, new File(getCacheDir(), "tesl-resource-downloads"), s -> {});
+          new PackInstaller(root, new File(getFilesDir(), "tesl-resource-downloads"), s -> {});
       File obb = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       if (ResourceActivity.verifiedObb(
               obb, setup, getSharedPreferences(ResourceActivity.class.getName(), 0))

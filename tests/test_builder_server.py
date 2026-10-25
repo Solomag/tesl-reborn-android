@@ -163,6 +163,27 @@ class BuilderServerTest(unittest.TestCase):
         self.assertFalse((self.root / (PACKAGE + ".apk")).exists())
         self.assertIsNone(self.server.finished_at)
 
+    def test_head_and_if_range_are_consistent_for_browser_resume(self):
+        status, headers, body = self.request(self.path, self.auth(), method="HEAD")
+        self.assertEqual(status, 200)
+        self.assertEqual(int(headers["Content-Length"]), len(self.data))
+        self.assertEqual(body, b"")
+        self.assertEqual(headers["ETag"], '"' + self.digest + '"')
+        self.assertIn("Last-Modified", headers)
+        status, _, body = self.request(
+            self.path, self.auth(Range="bytes=80-", **{"If-Range": headers["ETag"]})
+        )
+        self.assertEqual(status, 206)
+        self.assertEqual(body, self.data[80:])
+        status, _, body = self.request(
+            self.path, self.auth(Range="bytes=80-", **{"If-Range": '"stale"'})
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, self.data)
+        self.assertEqual(
+            self.request(self.path, self.auth(Range="bytes=-10"))[2], self.data[-10:]
+        )
+
     def test_range_for_resume(self):
         status, headers, data = self.request(
             self.path, self.auth(Range="bytes=200-299")

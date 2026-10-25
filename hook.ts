@@ -172,7 +172,7 @@ Il2Cpp.perform(() => {
     body.field<Il2Cpp.String>("loginPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
     body.field<Il2Cpp.String>("bnetKeyPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
     body.field<boolean>("createAccount").value = CREATE_ACCOUNT;
-    body.field<Il2Cpp.String>("language").value = language;
+    body.field<Il2Cpp.String>("language").value = resourceLanguage() ? Il2Cpp.string(shapedLanguage(resourceLanguage(), language.content || "en")) : language;
     body.field<Il2Cpp.String>("steamId").value = Il2Cpp.string("");
     body.field<Il2Cpp.String>("encryptedAppTicket").value = Il2Cpp.string(fakeTicket());
     postLogin.invoke(body, endpoint, Il2Cpp.string("bnetSteamLogin"), NULL, cb);
@@ -182,7 +182,7 @@ Il2Cpp.perform(() => {
     fillBase(body, channelFrom(settings));
     body.field<Il2Cpp.String>("loginPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
     body.field<Il2Cpp.String>("bnetKeyPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field<Il2Cpp.String>("language").value = language;
+    body.field<Il2Cpp.String>("language").value = resourceLanguage() ? Il2Cpp.string(shapedLanguage(resourceLanguage(), language.content || "en")) : language;
     body.field<Il2Cpp.String>("steamId").value = Il2Cpp.string("");
     body.field<Il2Cpp.String>("encryptedAppTicket").value = Il2Cpp.string(fakeTicket());
     postLink.invoke(body, endpoint, Il2Cpp.string("bnetSteamLinkToSession"),
@@ -242,6 +242,24 @@ Il2Cpp.perform(() => {
   const overrides = loadOverrides();
   const byteClass = Il2Cpp.corlib.class("System.Byte");
 
+  function pinRequestLanguage(req: Il2Cpp.Object): string {
+    let uri = String(call(req, "get_Uri"));
+    const chosen = resourceLanguage(), next = localizedGameUri(uri, chosen);
+    if (next !== uri) {
+      const value = newWith(ucls("System.Uri"), Il2Cpp.string(next));
+      try { call(req, "set_Uri", value); }
+      catch (_) { req.field("<Uri>k__BackingField").value = value; }
+      uri = next;
+    }
+    return uri;
+  }
+  section("request language before send", () => {
+    const send = cls(img, "BestHTTP.HTTPRequest").tryMethod("Send", 0);
+    if (send && !send.virtualAddress.isNull()) Interceptor.attach(send.virtualAddress, {
+      onEnter(args) { try { pinRequestLanguage(new Il2Cpp.Object(args[0])); } catch (error) { log(`request language: ${error}`); } }
+    });
+  });
+
   // Rewrites the JSON body of an auth request so that the service sees a Windows client.
   function rewriteAuthBody(req: Il2Cpp.Object, uri: string): void {
     try {
@@ -251,12 +269,17 @@ Il2Cpp.perform(() => {
       const len = Number(raw.length);
       let bin = "";
       for (let i = 0; i < len; i++) bin += String.fromCharCode(Number(raw.get(i)));
-      const obj = JSON.parse(decodeURIComponent(escape(bin)));
+      const obj = JSON.parse(decodeURIComponent(Array.from(bin, ch => "%" + ch.charCodeAt(0).toString(16).padStart(2, "0")).join("")));
       if (typeof obj !== "object" || obj === null || !("componentType" in obj)) {
         log(`normalizer: ${uri.split("/").pop()} has no componentType`);
         return;
       }
       const changed: string[] = [];
+      const language = resourceLanguage();
+      if (language && typeof obj.language === "string") {
+        const selected = shapedLanguage(language, obj.language);
+        if (obj.language !== selected) { obj.language = selected; changed.push("language"); }
+      }
       for (const k of Object.keys(overrides)) {
         if (k in obj && obj[k] !== overrides[k]) { obj[k] = overrides[k]; changed.push(k); }
       }
@@ -267,7 +290,7 @@ Il2Cpp.perform(() => {
         if (changed.indexOf("fingerprint") < 0) changed.push("fingerprint");
       }
       if (changed.length === 0) { log(`normalizer: ${uri.split("/").pop()} needs no change`); return; }
-      const out = unescape(encodeURIComponent(JSON.stringify(obj)));
+      const out = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
       const arr = Il2Cpp.array<number>(byteClass, out.length);
       for (let i = 0; i < out.length; i++) arr.set(i, out.charCodeAt(i));
       call(req, "set_RawData", arr);
@@ -319,7 +342,7 @@ Il2Cpp.perform(() => {
           let hasVersion = false;
           try { hasVersion = Boolean(call(req, "HasHeader", Il2Cpp.string("X-TeslRebornPlugin-Version"))); } catch (_) {}
           if (!hasVersion) req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
-          const uri = String(call(req, "get_Uri"));
+          const uri = pinRequestLanguage(req);
           captureLogin(req, uri);
           rewriteAuthBody(req, uri);
           if (seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
@@ -363,8 +386,10 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       const outcome = loginOutcome(status, body);
       if (outcome === "success") writeSavedLogin(pendingLogin.username, pendingLogin.password);
       else if (outcome === "rejected") {
-        writeSavedLogin(pendingLogin.username, ""); // Keep the name, forget only the rejected password.
-        log("login: credentials explicitly rejected; username retained");
+        // A session refusal during restart must not erase a previously successful login.
+        const saved = readSavedLogin();
+        if (!saved?.password) writeSavedLogin(pendingLogin.username, "");
+        log("login: refused; previous successful credentials retained");
       } else log(`login: HTTP ${status}; saved credentials unchanged`);
       pendingLogin = null;
     }
@@ -1413,24 +1438,35 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   }
 
   function shortLanguage(code: string): string { return String(code).toLowerCase().replace("-", "_").split("_")[0]; }
+  function localizedGameUri(uri: string, code: string): string {
+    if (!code || !/^https?:\/\/(?:[a-z0-9-]+\.)?tesl-reborn\.com(?=[:/]|$)/i.test(uri)) return uri;
+    return uri.replace(/([?&](?:language|locale)=)([^&#]*)/gi, (_, prefix, old) => prefix + shapedLanguage(code, decodeURIComponent(old)));
+  }
+  function localizedAssetPath(path: string, code: string): string {
+    if (!code) return path;
+    return path.replace(/(\/Localization\/(?:Text|Audio)\/)(?:en|de|es|fr|it|pl|pt|ru|tr)(?:[_-][a-z]{2})?(?=\/|$)/gi,
+      (_, prefix) => prefix + code.slice(0,2) + "_" + code.slice(3).toUpperCase());
+  }
+
   function shapedLanguage(code: string, old: string): string {
     return /[_-]/.test(old) ? code.slice(0, 2) + "_" + code.slice(3).toUpperCase() : code.slice(0, 2);
   }
 
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
-    let lastLanguage = "", lastRestored = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0;
+    let lastLanguage = "", lastRestored = "", lastRestoredDictionary = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0;
+    function noteLanguageInput() {
+      try {
+        const input = ucls("UnityEngine.Input");
+        if (resourceSettingsOpen() && (Number(input.method("get_touchCount", 0).invoke()) > 0 ||
+            input.method("GetMouseButtonDown", 1).invoke(0) || input.method("GetMouseButtonUp", 1).invoke(0))) recentInputAt = Date.now();
+      } catch (_) {}
+    }
     // Settings may save a preference and load its language asynchronously, after
     // the UI callback has returned. Remember actual input, not just stack depth.
     try {
-      const input = ucls("UnityEngine.Input");
       Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-        onEnter() {
-          try {
-            if (resourceSettingsOpen() && (Number(input.method("get_touchCount", 0).invoke()) > 0 ||
-                input.method("GetMouseButtonDown", 1).invoke(0) || input.method("GetMouseButtonUp", 1).invoke(0))) recentInputAt = Date.now();
-          } catch (_) {}
-        }
+        onEnter() { noteLanguageInput(); }
       });
     } catch (error) { log(`resources: settings input trace unavailable: ${error}`); }
     // Account/bootstrap code also calls SetLanguage. Only an actual settings
@@ -1452,12 +1488,70 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       fr_fr: ["french", "fr"], it_it: ["italian", "it"], pl_pl: ["polish", "pl"],
       pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"], ru_ru: ["russian", "ru"], tr_tr: ["turkish", "tr"] };
     function requestLanguage(target: string | undefined, current: string) {
-      if (!target || target === current || !loaded || switching ||
-          (languageInputDepth <= 0 && Date.now() - recentInputAt > 3000)) return;
+      noteLanguageInput();
+      if (!target || target === current || !loaded || switching || !recentInputAt || Date.now() - recentInputAt > 3000) return;
       switching = true;
       log(`resources: in-game language change ${current} -> ${target}; applying through setup`);
       schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(
         Il2Cpp.string("teslreborn://resources?language=" + target + "&apply=1")));
+    }
+    // The Android options UI can update a profile/settings setter without
+    // calling LocalizationManager inside its callback. Capture that source too.
+    for (const owner of img.classes) for (const method of owner.methods.filter(m =>
+        /^(?:set_(?:GameLanguage|Language|LanguageCode|CurrentLanguage|SelectedLanguage|Locale|LocaleCode)|Set(?:Game|Client)?Language|(?:On|Select|Change).*Language.*)$/i.test(m.name)
+        && m.parameterCount >= 1 && !m.isStatic && owner !== localization && !m.virtualAddress.isNull())) {
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) {
+          try {
+            const type = method.parameters[0].type;
+            let requested = "";
+            if (type.name === "System.String") requested = rawStr(args[1]);
+            else if (type.class.isEnum) requested = type.class.fields.find(f => f.isStatic && enumVal(f.value) === args[1].toInt32())?.name || "";
+            const normalized = requested.toLowerCase().replace("-", "_");
+            const target = Object.keys(languageNames).find(code => code === normalized || languageNames[code].includes(normalized.replace(/[^a-z]/g, "")));
+            if (target) requestLanguage(target, resourceLanguage());
+          } catch (error) { log(`resources: settings language setter ${owner.name}.${method.name}: ${error}`); }
+        }
+      });
+    }
+    // Unity dropdowns may store a numeric index directly, without a game
+    // language setter. Read their actual option labels instead of guessing IDs.
+    function languageLabel(text: string): string | undefined {
+      const label = String(text).replace(/<[^>]*>/g, "").toLowerCase().replace(/[\s()_-]/g, "");
+      const native = { en_us:["english","englishus","английский"],de_de:["deutsch","german","немецкий"],
+        es_es:["español","spanish","испанский"],es_mx:["españollatinoamérica","latinamericanspanish","españolméxico"],
+        fr_fr:["français","french","французский"],it_it:["italiano","italian","итальянский"],
+        pl_pl:["polski","polish","польский"],pt_br:["portuguêsbrasil","brazilianportuguese","português","portuguese"],
+        ru_ru:["русский","russian"],tr_tr:["türkçe","turkish","турецкий"] };
+      return Object.keys(native).find(code => native[code].includes(label));
+    }
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+      try {
+        const dropdown = ucls(name), method = dropdown.tryMethod("OnSelectItem", 1) || dropdown.tryMethod("Set", 2) || dropdown.tryMethod("set_value", 1);
+        if (!method || method.virtualAddress.isNull()) continue;
+        Interceptor.attach(method.virtualAddress, {
+          onEnter(args) {
+            this.index = method.name === "OnSelectItem" ? null : args[1].toInt32();
+            this.active = resourceSettingsOpen() && (method.name === "OnSelectItem" || method.parameterCount < 2 || args[2].toInt32() !== 0);
+            if (this.active) this.dropdown = new Il2Cpp.Object(args[0]).ref(false);
+          },
+          onLeave() {
+            if (!this.dropdown) return;
+            const retained = this.dropdown, index = this.index;
+            schedule(0, () => {
+              try {
+                const selectedIndex = index == null ? Number(call(retained.target, "get_value")) : index;
+                const options = call(retained.target, "get_options"), count = Number(call(options, "get_Count"));
+                if (selectedIndex < 0 || selectedIndex >= count || count < 2 || count > 16) return;
+                const labels = [];
+                for (let i = 0; i < count; i++) labels.push(languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || "")));
+                if (labels.filter(Boolean).length >= 2 && labels[selectedIndex]) requestLanguage(labels[selectedIndex], resourceLanguage());
+              } catch (error) { log(`resources: language dropdown: ${error}`); }
+              finally { retained.free(); }
+            });
+          }
+        });
+      } catch (_) {}
     }
     const setLanguage = localization.method("SetLanguage", 2);
     Interceptor.attach(setLanguage.virtualAddress, {
@@ -1533,7 +1627,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           let data = manager.field<Il2Cpp.Object>("_localizedData").value;
           let entries = countOf(data);
           const selection = resourceLanguage() || code;
-          if (entries === 0 || lastLanguage !== code || lastRestored !== selection) {
+          if (entries === 0 || lastLanguage !== code || lastRestored !== selection || lastRestoredDictionary !== String(data?.handle)) {
             // The game's own text bundle could not be loaded (it is a
             // downloadable bundle and the CDN is gone), so the strings that
             // were recovered from the cached bundle are used instead.
@@ -1545,6 +1639,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
             // The restore replaced the dictionary, so it has to be read again.
             data = manager.field<Il2Cpp.Object>("_localizedData").value;
             entries = countOf(data);
+            lastRestoredDictionary = String(data?.handle);
           }
           loaded = entries > 0;
           const fixes = TRANSLATIONS[resourceLanguage()] || TRANSLATIONS[shortLanguage(resourceLanguage() || code)] || TRANSLATIONS[code];
@@ -2180,8 +2275,16 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const catalog = cls(img, "AssetCatalog");
     for (const m of catalog.methods.filter(x => x.name === "LoadAssetFromPathAsync")) {
       Interceptor.attach(m.virtualAddress, {
-        onEnter(args) { this.path = rawStr(args[1]); },
+        onEnter(args) {
+          this.path = rawStr(args[1]);
+          const selected = resourceLanguage(), next = localizedAssetPath(this.path, selected);
+          if (next !== this.path) {
+            this.replacement = Il2Cpp.string(next).object.ref(false);
+            args[1] = this.replacement.target.handle; this.path = next;
+          }
+        },
         onLeave(ret) {
+          if (this.replacement) this.replacement.free();
           const path = this.path ?? "";
           if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
           log(`LoadAssetFromPathAsync("${path}") -> ${ret.isNull() ? "NULL (not in the asset map)" : "ok"}`);
@@ -2316,7 +2419,30 @@ function uiComponent(go, type) {
   function installSettingsDataButton(self) {
     if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
     const root = call(self, "get_transform");
+    const rootName = String(call(root, "get_name")?.content || "");
+    const typeName = String(self.class?.name || "");
+    if (/menu/i.test(rootName + " " + typeName)) return;
     const window = call(root, "get_gameObject");
+    // The shortcut/pause menu and the real settings window are separate roots.
+    // Only the latter has active language/audio/options controls.
+    let controls = false;
+    for (const name of ["UnityEngine.UI.Slider", "UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown", "UnityEngine.UI.Toggle"]) {
+      try {
+        const list = window.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(name).type.object, false);
+        if (Number(list.length) > 0) { controls = true; break; }
+      } catch (_) {}
+    }
+    if (!controls) return;
+    if (resourceSettingsWindow && !resourceSettingsWindow.target.handle.equals(window.handle)) {
+      try {
+        const previous = call(resourceSettingsWindow.target, "get_transform");
+        if (Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")) && Boolean(call(previous, "IsChildOf", root))) return;
+        if (Boolean(call(root, "IsChildOf", previous))) {
+          const old = call(previous, "Find", Il2Cpp.string("RebornGameData"));
+          if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
+        }
+      } catch (_) {}
+    }
     if (!isNull(window) && (!resourceSettingsWindow || !resourceSettingsWindow.target.handle.equals(window.handle))) {
       if (resourceSettingsWindow) resourceSettingsWindow.free();
       resourceSettingsWindow = window.ref(false);
@@ -2329,7 +2455,7 @@ function uiComponent(go, type) {
     call(uiAdd(button, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
   }
   section("settings game data", () => {
-    const classes = img.classes.filter(c => /^(?:Game)?(?:Options|Settings)(?:Win|Window|Menu|Panel|Dialog)$/.test(c.name))
+    const classes = img.classes.filter(c => /^(?:Game)?(?:Options|Settings)(?:Win|Window|Panel|Dialog)$/.test(c.name))
       .filter(c => Array.from(c.hierarchy()).some(base => base.type.name === "UnityEngine.Component"));
     let hooks = 0;
     for (const owner of classes) for (const method of owner.methods.filter(m =>
@@ -2366,7 +2492,7 @@ function uiComponent(go, type) {
           let node=call(go,"get_transform");
           for (let depth=0; depth<8 && !isNull(node); depth++, node=call(node,"get_parent")) {
             const key=node.handle.toString(); if (visited.has(key)) break; visited.add(key);
-            if (!/^(?:Win[_ -]?)?(?:Game)?(?:Options|Settings)(?:[_ -]?(?:Win|Window|Menu|Panel|Dialog|Root))?$/i.test(String(call(node,"get_name")?.content || "").replace(/\(Clone\)$/i, "").trim())) continue;
+            if (!/^(?:Win[_ -]?)?(?:Game)?(?:Options|Settings)(?:[_ -]?(?:Win|Window|Panel|Dialog|Root))?$/i.test(String(call(node,"get_name")?.content || "").replace(/\(Clone\)$/i, "").trim())) continue;
             const root=call(node,"get_gameObject"), rect=uiRect(root), bounds=call(rect,"get_rect");
             if (Number(bounds.field("m_Width").value)<300 || Number(bounds.field("m_Height").value)<200) continue;
             installSettingsDataButton(root);
@@ -3369,6 +3495,10 @@ const chatWindows = new Map();
   });
   // BEGIN android-ui: global-shortcuts
   section("mobile global debug shortcut", () => {
+    try {
+      const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "null");
+      if (setup?.debugInput === "android-key-events") { log("mobile debug: Android keyboard gesture backend"); return; }
+    } catch (_) {}
     let taps = [], startFrame = -1, keyDownFrame = -1, lastFrame = -1, began = null, lastError = "";
     const input = ucls("UnityEngine.Input"), time = ucls("UnityEngine.Time");
     const frame = () => Number(time.method("get_frameCount", 0).invoke());

@@ -2,6 +2,17 @@ package org.teslreborn.setup;
 
 /** Fit the rotated camera buffer without stretching; pure Java for JVM tests. */
 public final class PreviewSize {
+  // TextureView already applies SENSOR_ORIENTATION; applying it twice turns
+  // portrait previews sideways. Only device rotation and uniform crop remain.
+  public static float[] textureCorners(int vw, int vh, int bw, int bh, int sensor, int display) {
+    if (sensor % 180 != 0) {
+      int swap = bw;
+      bw = bh;
+      bh = swap;
+    }
+    return corners(vw, vh, bw, bh, (360 - display) % 360);
+  }
+
   /** Map the TextureView's stretched corners to a uniformly rotated center crop. */
   public static float[] corners(int vw, int vh, int bw, int bh, int rotation) {
     if (vw < 1 || vh < 1 || bw < 1 || bh < 1 || rotation % 90 != 0)

@@ -27,6 +27,17 @@ public final class PackInstaller {
     mkdir(receipts);
   }
 
+  public static void migrateDownloads(File oldDirectory, File directory) throws IOException {
+    mkdir(directory);
+    File[] old = oldDirectory.listFiles();
+    if (old == null) return;
+    for (File file : old) {
+      if (!file.isFile() || !file.getName().matches("[a-f0-9]{64}\\.part")) continue;
+      File target = new File(directory, file.getName());
+      if (!target.exists() || target.length() < file.length()) atomic(file, target);
+    }
+  }
+
   static void mkdir(File f) throws IOException {
     if (!f.isDirectory() && !f.mkdirs()) throw new IOException("Cannot create storage directory");
   }
@@ -148,13 +159,30 @@ public final class PackInstaller {
     c.setRequestProperty("Cache-Control", "no-cache");
     c.setInstanceFollowRedirects(false);
     c.setConnectTimeout(15000);
-    c.setReadTimeout(30000);
+    c.setReadTimeout(90000);
     c.setRequestProperty("Accept-Encoding", "identity");
     if (!token.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + token);
     return c;
   }
 
   public JSONObject catalog(URL base, String token) throws Exception {
+    for (int attempt = 0; ; attempt++) {
+      try {
+        return catalogOnce(base, token);
+      } catch (IOException error) {
+        String message = String.valueOf(error.getMessage());
+        if (attempt >= 7
+            || Thread.currentThread().isInterrupted()
+            || message.contains("HTTP 401")
+            || message.contains("HTTP 403")
+            || message.contains("HTTP 404")) throw error;
+        progress.show("Connecting to PC again…");
+        Thread.sleep(Math.min(10000, 1000L << attempt));
+      }
+    }
+  }
+
+  private JSONObject catalogOnce(URL base, String token) throws Exception {
     HttpURLConnection c = connect(base, "catalog.json", token);
     try {
       if (c.getResponseCode() != 200) throw new IOException("Catalog: HTTP " + c.getResponseCode());
@@ -190,6 +218,45 @@ public final class PackInstaller {
   }
 
   public File download(URL base, String token, JSONObject pack) throws Exception {
+    // Retain the partial file across failures, activity restarts and server sessions.
+    int failures = 0;
+    long previous = -1;
+    while (true) {
+      try {
+        return downloadOnce(base, token, pack);
+      } catch (IOException error) {
+        if (Thread.currentThread().isInterrupted()) throw error;
+        String message = String.valueOf(error.getMessage());
+        if (message.contains("HTTP 401")
+            || message.contains("HTTP 403")
+            || message.contains("HTTP 404")
+            || message.contains("Invalid")
+            || message.contains("Unexpected response")
+            || message.contains("Not enough space")
+            || message.contains("Oversized")) throw error;
+        File part = new File(privateDownloads, pack.getString("sha256") + ".part");
+        long saved = part.length();
+        if (saved > previous) {
+          failures = 0;
+          previous = saved;
+        }
+        if (++failures > 20)
+          throw new IOException(
+              "Connection is unavailable. Downloaded progress is saved; tap Download to resume.",
+              error);
+        long delay = Math.min(15000, 1000L << Math.min(failures - 1, 4));
+        progress.show(
+            "Connection interrupted. Saved "
+                + saved / (1024 * 1024)
+                + " MB; retrying in "
+                + delay / 1000
+                + " s…");
+        Thread.sleep(delay);
+      }
+    }
+  }
+
+  private File downloadOnce(URL base, String token, JSONObject pack) throws Exception {
     if ("obb".equals(pack.optString("id"))) validateObb(pack);
     else validate(pack);
     File part = new File(privateDownloads, pack.getString("sha256") + ".part");
@@ -204,7 +271,10 @@ public final class PackInstaller {
       offset = 0;
     }
     HttpURLConnection c = connect(base, pack.getString("path"), token);
-    if (offset > 0) c.setRequestProperty("Range", "bytes=" + offset + "-");
+    if (offset > 0) {
+      c.setRequestProperty("Range", "bytes=" + offset + "-");
+      c.setRequestProperty("If-Range", "\"" + pack.getString("sha256") + "\"");
+    }
     try {
       int status = c.getResponseCode();
       if (status == 200) offset = 0;

@@ -220,12 +220,16 @@ public final class ScanActivity extends Activity implements TextureView.SurfaceT
   private void fitPreview() {
     if (previewSize == null || preview.getWidth() < 1 || preview.getHeight() < 1) return;
     int displayRotation = getWindowManager().getDefaultDisplay().getRotation() * 90;
-    int rotation = (sensorRotation - displayRotation + 360) % 360;
     int width = preview.getWidth(), height = preview.getHeight();
     float[] source = {0, 0, width, 0, 0, height};
     float[] destination =
-        PreviewSize.corners(
-            width, height, previewSize.getWidth(), previewSize.getHeight(), rotation);
+        PreviewSize.textureCorners(
+            width,
+            height,
+            previewSize.getWidth(),
+            previewSize.getHeight(),
+            sensorRotation,
+            displayRotation);
     Matrix transform = new Matrix();
     transform.setPolyToPoly(source, 0, destination, 0, 3);
     preview.setTransform(transform);

@@ -22,7 +22,7 @@ later. The same QR opens an APK installation page in the phone browser or connec
 the installed app to the PC. Downloading the APK does not acknowledge resource
 installation. Verified existing data launches straight into Unity without showing
 setup; Game data remains available in Settings.
-See [Android 28 verification](docs/android-28-check-ru.md).
+See [Android 29 verification](docs/android-29-check-ru.md).
 
 **Offline XAPK** remains an alternative. The legacy command-line workflow below
 builds that layout: the OBB ships in the XAPK, while recovered cache entries ship

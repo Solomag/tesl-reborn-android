@@ -55,11 +55,12 @@ public final class ResourceActivity extends Activity {
     try {
       root = getExternalFilesDir(null);
       if (root == null) throw new IOException("App storage is unavailable");
-      installer =
-          new PackInstaller(
-              root, new File(getCacheDir(), "tesl-resource-downloads"), this::message);
+      File downloads = new File(getFilesDir(), "tesl-resource-downloads");
+      PackInstaller.migrateDownloads(new File(getCacheDir(), "tesl-resource-downloads"), downloads);
+      installer = new PackInstaller(root, downloads, this::message);
       PackInstaller.writeJson(
-          new File(root, "tesl-reborn-setup.json"), new JSONObject().put("api", 1));
+          new File(root, "tesl-reborn-setup.json"),
+          new JSONObject().put("api", 1).put("debugInput", "android-key-events"));
       try (InputStream in = getAssets().open("tesl-reborn/setup.json")) {
         setup = new JSONObject(new String(PackInstaller.read(in, 256 * 1024), "UTF-8"));
       }
@@ -145,7 +146,7 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 28\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 29\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -491,7 +492,6 @@ public final class ResourceActivity extends Activity {
           for (int i = 0; i < packs.length(); i++) {
             JSONObject pack = packs.getJSONObject(i);
             String id = pack.getString("id");
-            if (!id.equals("common") && !id.equals(code)) continue;
             if (installer.installed(id)
                 && installer.installedHash(id).equals(pack.getString("sha256"))) continue;
             message("Installing " + id);
@@ -522,19 +522,69 @@ public final class ResourceActivity extends Activity {
   }
 
   private void download() {
-    final String url = address.getText().toString().trim(),
-        key = token.getText().toString().trim(),
-        code = selected();
+    final String url = address.getText().toString().trim(), key = token.getText().toString().trim();
     getPreferences(0).edit().putString("address", url).apply();
     run(
         () -> {
+          JSONObject catalog = installer.catalog(PackInstaller.baseUrl(url), key);
+          runOnUiThread(() -> chooseDownloads(url, key, catalog));
+        });
+  }
+
+  private void chooseDownloads(String url, String key, JSONObject catalog) {
+    if (isDestroyed()) return;
+    try {
+      List<String> ids = new ArrayList<>(), labels = new ArrayList<>();
+      JSONArray packs = catalog.getJSONArray("packs");
+      for (int i = 0; i < packs.length(); i++) {
+        String id = packs.getJSONObject(i).getString("id");
+        if (id.equals("common")) continue;
+        ids.add(id);
+        int index = Arrays.asList(CODES).indexOf(id);
+        labels.add((index > 0 ? LABELS[index] : id) + (installer.installed(id) ? " ✓" : ""));
+      }
+      if (ids.isEmpty()) throw new IOException("No languages were prepared on the PC.");
+      boolean[] checked = new boolean[ids.size()];
+      Set<String> previous =
+          getPreferences(0).getStringSet("downloadLanguages", Collections.emptySet());
+      for (int i = 0; i < checked.length; i++)
+        checked[i] = ids.get(i).equals(selected()) || previous.contains(ids.get(i));
+      new AlertDialog.Builder(this)
+          .setTitle("Choose languages to download")
+          .setMultiChoiceItems(
+              labels.toArray(new String[0]),
+              checked,
+              (d, which, enabled) -> checked[which] = enabled)
+          .setNegativeButton("Cancel", null)
+          .setNeutralButton(
+              "Download all", (d, w) -> downloadPacks(url, key, catalog, new LinkedHashSet<>(ids)))
+          .setPositiveButton(
+              "Download selected",
+              (d, w) -> {
+                Set<String> selected = new LinkedHashSet<>();
+                for (int i = 0; i < checked.length; i++) if (checked[i]) selected.add(ids.get(i));
+                if (selected.isEmpty()) {
+                  message("Select at least one language.");
+                  return;
+                }
+                downloadPacks(url, key, catalog, selected);
+              })
+          .show();
+    } catch (Exception e) {
+      message(e.getMessage());
+    }
+  }
+
+  private void downloadPacks(String url, String key, JSONObject catalog, Set<String> languages) {
+    getPreferences(0).edit().putStringSet("downloadLanguages", new HashSet<>(languages)).apply();
+    run(
+        () -> {
           URL base = PackInstaller.baseUrl(url);
-          JSONObject catalog = installer.catalog(base, key);
           if (!obbReady()) {
             JSONObject obb = catalog.optJSONObject("obb");
             if (obb == null)
               throw new IOException(
-                  "This previous build cannot transfer OBB. Rebuild with Android 28 or import the"
+                  "This previous build cannot transfer OBB. Rebuild with Android 29 or import the"
                       + " OBB file.");
             JSONObject expected = setup.optJSONObject("obb");
             if (expected != null && !expected.getString("sha256").equals(obb.getString("sha256")))
@@ -547,12 +597,10 @@ public final class ResourceActivity extends Activity {
           Map<String, JSONObject> byId = new HashMap<>();
           for (int i = 0; i < packs.length(); i++)
             byId.put(packs.getJSONObject(i).getString("id"), packs.getJSONObject(i));
-          if (!byId.containsKey(code))
-            throw new IOException(
-                "The PC has no pack for "
-                    + code
-                    + ". Select it in the PC builder and build again.");
-          for (String id : new String[] {"common", code}) {
+          Set<String> wanted = new LinkedHashSet<>();
+          wanted.add("common");
+          wanted.addAll(languages);
+          for (String id : wanted) {
             JSONObject pack = byId.get(id);
             if (installer.installed(id)
                 && installer.installedHash(id).equals(pack.getString("sha256"))) continue;
@@ -561,15 +609,14 @@ public final class ResourceActivity extends Activity {
             installer.install(file, pack);
             file.delete();
           }
+          JSONObject installed = new JSONObject();
+          if (!obbReady()) throw new IOException("Base game data is incomplete");
+          for (String id : wanted) {
+            installer.verifyInstalled(id);
+            installed.put(id, installer.installedHash(id));
+          }
           if (!key.isEmpty())
             try {
-              installer.verifyInstalled("common");
-              installer.verifyInstalled(code);
-              if (!readyFor(code)) throw new IOException("Game data is incomplete");
-              JSONObject installed =
-                  new JSONObject()
-                      .put("common", installer.installedHash("common"))
-                      .put(code, installer.installedHash(code));
               String hash = catalog.has("obb") ? PackInstaller.hash(obbFile) : "";
               installer.complete(base, key, installed, hash);
             } catch (Exception e) {

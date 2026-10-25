@@ -53,6 +53,12 @@ def main():
         java_source.write_text(
             "package bitter.jnibridge; public class JNIBridge { public static class a { public a() {} } }"
         )
+        activity_source = root / "UnityPlayerActivity.java"
+        activity_source.write_text(
+            "package "
+            + PACKAGE
+            + "; public class UnityPlayerActivity extends android.app.Activity {}"
+        )
         classes = root / "classes"
         classes.mkdir()
         subprocess.run(
@@ -64,9 +70,12 @@ def main():
                 "UTF-8",
                 "--release",
                 "8",
+                "-cp",
+                str(vendor / "android.jar"),
                 "-d",
                 str(classes),
                 str(java_source),
+                str(activity_source),
             ],
             check=True,
         )

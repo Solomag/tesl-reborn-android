@@ -76,6 +76,21 @@ public class InstallerTest {
       double vertical=Math.hypot(q[4]-q[0],q[5]-q[1])/960;
       if(Math.abs(horizontal-vertical)>.0001)throw new AssertionError("Nonuniform preview scale");
     }
+    float[] texture=PreviewSize.textureCorners(945,1900,1280,960,90,0);
+    if(texture[0]>=0 || Math.abs(texture[1])>.01 || Math.abs(texture[3])>.01 || Math.abs(texture[5]-1900)>.01)
+      throw new AssertionError("Sensor rotation applied twice to TextureView");
+    File oldDownloads=new File(downloads,"old"),newDownloads=new File(downloads,"persistent");oldDownloads.mkdirs();
+    String filename=String.join("",Collections.nCopies(64,"a"))+".part";
+    try(FileOutputStream file=new FileOutputStream(new File(oldDownloads,filename))){file.write(new byte[]{1,2,3});}
+    PackInstaller.migrateDownloads(oldDownloads,newDownloads);
+    if(new File(newDownloads,filename).length()!=3||new File(oldDownloads,filename).exists())throw new AssertionError("Partial download migration");
+    CornerTaps taps=new CornerTaps(); long at=1000;
+    for(int tap=0;tap<3;tap++) {
+      taps.touch(0,1,10,10,100,at);boolean emitted=taps.touch(1,1,10,10,100,at+40);
+      if(emitted!=(tap==2))throw new AssertionError("Android triple tap");at+=100;
+    }
+    taps.touch(0,1,10,10,100,at);taps.touch(1,1,90,90,100,at+40);
+    for(int tap=0;tap<2;tap++) {at+=100;taps.touch(0,1,10,10,100,at);if(taps.touch(1,1,10,10,100,at+40))throw new AssertionError("Swipe counted as tap");}
     String token="abcdefghijklmnopqrstuvwx01234567";
     String decoded=ConnectionLink.resourceUri("http://192.168.1.2:1234/connect/"+token);
     if(!decoded.equals("teslreborn://resources?url=http%3A%2F%2F192.168.1.2%3A1234%2F&token="+token))throw new AssertionError(decoded);
@@ -161,6 +176,7 @@ def main():
                 str(ROOT / "android-setup/src/org/teslreborn/setup/PackInstaller.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/DataArchive.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/PreviewSize.java"),
+                str(ROOT / "android-setup/src/org/teslreborn/setup/CornerTaps.java"),
                 str(
                     ROOT / "android-setup/src/org/teslreborn/setup/ConnectionLink.java"
                 ),
@@ -213,6 +229,33 @@ def main():
         server = ResourceServer(
             catalog, host="127.0.0.1", grace_seconds=100, log=lambda _: None
         ).start()
+        # Drop the first resumed pack response halfway, then require the Java
+        # downloader to reconnect at the newly saved byte offset automatically.
+        original_handler = server.http.RequestHandlerClass
+        drops, ranges = set(), []
+
+        class FlakyHandler(original_handler):
+            def do_GET(self):
+                if self.path.startswith("/packs/"):
+                    ranges.append(self.headers.get("Range"))
+                    if self.path not in drops:
+                        drops.add(self.path)
+                        file = catalog / self.path.lstrip("/")
+                        offset = 37
+                        data = file.read_bytes()
+                        self.send_response(206)
+                        self.send_header("Content-Length", str(len(data) - offset))
+                        self.send_header(
+                            "Content-Range", f"bytes {offset}-{len(data)-1}/{len(data)}"
+                        )
+                        self.end_headers()
+                        self.wfile.write(data[offset : offset + 43])
+                        self.wfile.flush()
+                        self.close_connection = True
+                        return
+                super().do_GET()
+
+        server.http.RequestHandlerClass = FlakyHandler
         try:
             subprocess.run(
                 [
@@ -224,6 +267,7 @@ def main():
                 check=True,
             )
             assert server.finished_at is not None
+            assert "bytes=80-" in ranges, ranges
         finally:
             server.stop()
         from builder.archive import write_data_archive

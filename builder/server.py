@@ -1,6 +1,8 @@
 """Temporary, capability-authenticated, allow-listed resource HTTP server."""
 
 import hmac
+import hashlib
+from email.utils import formatdate
 from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -49,6 +51,19 @@ class ResourceServer:
                 self.apk_size = archive.getinfo(self.apk_member).file_size
         if self.apk and not 0 < self.apk_size <= 4 * 1024**3:
             raise ValueError("Invalid APK size")
+        self.apk_hash = ""
+        if self.apk:
+            if self.apk_member:
+                digest = hashlib.sha256()
+                with zipfile.ZipFile(self.apk) as archive, archive.open(
+                    self.apk_member
+                ) as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        digest.update(chunk)
+                self.apk_hash = digest.hexdigest()
+            else:
+                self.apk_hash = sha256(self.apk)
+        self.etags = {"/catalog.json": sha256(self.root / "catalog.json")}
         self.packs = {}
         for pack in self.catalog["packs"]:
             if pack["id"] not in ("common", *LANGUAGES) or pack["id"] in self.packs:
@@ -70,6 +85,7 @@ class ResourceServer:
                     "Resource catalog references a missing or corrupt pack"
                 )
             self.allowed["/" + pack["path"]] = path
+            self.etags["/" + pack["path"]] = pack["sha256"]
             self.packs[pack["id"]] = pack["sha256"]
         self.obb = self.catalog.get("obb")
         if self.obb:
@@ -88,6 +104,7 @@ class ResourceServer:
             ):
                 raise ValueError("Missing or corrupt OBB in transfer folder")
             self.allowed["/game.obb"] = path
+            self.etags["/game.obb"] = self.obb["sha256"]
         self.token = secrets.token_urlsafe(24)
         self.idle_seconds, self.grace_seconds, self.log = (
             idle_seconds,
@@ -119,12 +136,21 @@ class ResourceServer:
                     return False
                 return True
 
-            def error(self, code):
+            def error(self, code, total=None):
                 self.send_response(code)
                 self.send_header("Content-Length", "0")
+                if code == 416 and total is not None:
+                    self.send_header("Content-Range", f"bytes */{total}")
                 self.send_header("Connection", "close")
                 self.end_headers()
                 self.close_connection = True
+
+            def do_HEAD(self):
+                self.head_only = True
+                try:
+                    self.do_GET()
+                finally:
+                    self.head_only = False
 
             def do_GET(self):
                 browser = self.path in (
@@ -138,6 +164,8 @@ class ResourceServer:
                     if self.path == owner.connect_path:
                         with owner.lock:
                             owner.last_activity = time.monotonic()
+                            if not getattr(self, "head_only", False):
+                                owner.finished_at = None
                         data = owner.landing_page()
                         self.send_response(200)
                         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -152,7 +180,8 @@ class ResourceServer:
                             + "'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
                         )
                         self.end_headers()
-                        self.wfile.write(data)
+                        if not getattr(self, "head_only", False):
+                            self.wfile.write(data)
                         return
                     if not owner.apk:
                         self.error(404)
@@ -168,23 +197,34 @@ class ResourceServer:
                     path = owner.allowed[self.path]
                 total = owner.apk_size if browser else path.stat().st_size
                 start, end, partial = 0, total - 1, False
+                etag = (
+                    '"' + (owner.apk_hash if browser else owner.etags[self.path]) + '"'
+                )
+                modified = formatdate(path.stat().st_mtime, usegmt=True)
                 value = self.headers.get("Range")
+                if self.headers.get("If-Range") not in (None, etag, modified):
+                    value = None
                 if value:
                     import re
 
-                    match = re.fullmatch(r"bytes=(\d+)-(\d*)", value)
-                    if not match:
-                        self.error(416)
+                    match = re.fullmatch(r"bytes=(\d*)-(\d*)", value)
+                    if not match or not (match[1] or match[2]):
+                        self.error(416, total)
                         return
-                    start = int(match[1])
-                    end = min(int(match[2]) if match[2] else end, end)
+                    if match[1]:
+                        start = int(match[1])
+                        end = min(int(match[2]) if match[2] else end, end)
+                    else:
+                        start = max(0, total - int(match[2]))
                     if start >= total or end < start:
-                        self.error(416)
+                        self.error(416, total)
                         return
                     partial = True
                 with owner.lock:
                     owner.active += 1
                     owner.last_activity = time.monotonic()
+                    if not getattr(self, "head_only", False):
+                        owner.finished_at = None
                 try:
                     self.send_response(206 if partial else 200)
                     self.send_header(
@@ -201,8 +241,13 @@ class ResourceServer:
                     )
                     self.send_header("Content-Length", str(end - start + 1))
                     self.send_header("Accept-Ranges", "bytes")
-                    self.send_header("ETag", '"' + path.stem + '"')
-                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("ETag", etag)
+                    self.send_header("Last-Modified", modified)
+                    self.send_header(
+                        "Cache-Control", "private, max-age=0, must-revalidate"
+                    )
+                    self.send_header("Connection", "close")
+                    self.close_connection = True
                     self.send_header("Referrer-Policy", "no-referrer")
                     self.send_header("X-Content-Type-Options", "nosniff")
                     if browser:
@@ -215,6 +260,8 @@ class ResourceServer:
                             "Content-Range", f"bytes {start}-{end}/{total}"
                         )
                     self.end_headers()
+                    if getattr(self, "head_only", False):
+                        return
                     with ExitStack() as stack:
                         if browser and owner.apk_member:
                             archive = stack.enter_context(zipfile.ZipFile(path))
@@ -275,7 +322,7 @@ class ResourceServer:
 
             def setup(self):
                 super().setup()
-                self.connection.settimeout(30)
+                self.connection.settimeout(120)
 
         self.http = ThreadingHTTPServer((host, port), Handler)
         self.http.daemon_threads = True

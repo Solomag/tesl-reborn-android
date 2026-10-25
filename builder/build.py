@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -197,6 +198,68 @@ def prepare_builder_emojis(work, game, assets, log):
     extract(data, work / "emojis")
 
 
+def patch_game_touch(decoded, activity):
+    """Preserve the original touch handler and add Android keyboard gesture input."""
+    files = list(Path(decoded).glob("smali*/" + activity.replace(".", "/") + ".smali"))
+    if not files and activity.startswith("android."):
+        wrapped = "org.teslreborn.setup.GameActivityBridge"
+        path = Path(decoded) / "smali" / (wrapped.replace(".", "/") + ".smali")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = "L" + activity.replace(".", "/") + ";"
+        path.write_text(
+            ".class public Lorg/teslreborn/setup/GameActivityBridge;\n.super "
+            + descriptor
+            + "\n.method public constructor <init>()V\n    .locals 0\n    invoke-direct {p0}, "
+            + descriptor
+            + "-><init>()V\n    return-void\n.end method\n"
+        )
+        manifest = Path(decoded) / "AndroidManifest.xml"
+        tree = ET.parse(manifest)
+        for component in tree.getroot().find("application"):
+            if component.get(ANDROID + "name") == activity:
+                component.set(ANDROID + "name", wrapped)
+            if component.get(ANDROID + "targetActivity") == activity:
+                component.set(ANDROID + "targetActivity", wrapped)
+        tree.write(manifest, encoding="utf-8", xml_declaration=True)
+        patch_game_touch(decoded, wrapped)
+        return wrapped
+    if len(files) != 1:
+        raise ValueError(
+            "Cannot locate the original game Activity for the debug gesture"
+        )
+    path = files[0]
+    text = path.read_text(encoding="utf-8")
+    call = "    invoke-static {p0, p1}, Lorg/teslreborn/setup/GestureBridge;->onTouch(Landroid/app/Activity;Landroid/view/MotionEvent;)V\n"
+    if "Lorg/teslreborn/setup/GestureBridge;->onTouch" in text:
+        return activity
+    method = re.search(
+        r"(?m)^\.method [^\n]* dispatchTouchEvent\(Landroid/view/MotionEvent;\)Z\s*$",
+        text,
+    )
+    if method:
+        end = text.index(".end method", method.end())
+        local = re.search(
+            r"(?m)^\s*\.(?:locals|registers) \d+[^\n]*\n", text[method.end() : end]
+        )
+        if not local:
+            raise ValueError("Cannot instrument the game touch handler")
+        pos = method.end() + local.end()
+        text = text[:pos] + call + text[pos:]
+    else:
+        parent = re.search(r"(?m)^\.super (L[^;]+;)", text)
+        if not parent:
+            raise ValueError("Game Activity superclass is missing")
+        text += (
+            "\n.method public dispatchTouchEvent(Landroid/view/MotionEvent;)Z\n    .locals 1\n"
+            + call
+            + "    invoke-super {p0, p1}, "
+            + parent[1]
+            + "->dispatchTouchEvent(Landroid/view/MotionEvent;)Z\n    move-result v0\n    return v0\n.end method\n"
+        )
+    path.write_text(text, encoding="utf-8")
+    return activity
+
+
 def native_base(base, work, vendor, setup, embedded, catalog, log):
     import lief
 
@@ -241,6 +304,8 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
         if directory.is_dir() and directory.name != "arm64-v8a":
             shutil.rmtree(directory)
     setup["gameActivity"] = patch_manifest(decoded / "AndroidManifest.xml")
+    setup["gameActivity"] = patch_game_touch(decoded, setup["gameActivity"])
+    setup["debugInput"] = "android-key-events"
     patched = work / "base-patched.apk"
     run(
         [
@@ -528,7 +593,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=28,
+                        androidBuild=29,
                     ),
                     indent=2,
                 ),

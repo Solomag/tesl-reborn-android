@@ -1,4 +1,4 @@
-"""Smoke-test the frozen Windows EXE without game data."""
+"""Smoke-test the frozen desktop builder without game data."""
 
 import hashlib
 import json
@@ -9,7 +9,7 @@ import sys
 import traceback
 
 
-def run(report_path):
+def run(report_path, gui=True):
     result = {"ok": False}
     try:
         from .build import data_root
@@ -19,24 +19,25 @@ def run(report_path):
         import PIL.ImageTk
         import tkinter
 
-        window = tkinter.Tk()
-        from .gui import BuilderWindow
+        if gui:
+            window = tkinter.Tk()
+            from .gui import BuilderWindow
 
-        form = BuilderWindow(window)
-        form.ui_locale.current(8)
-        form.translate_ui(window)
-        form.ui_locale.current(0)
-        form.translate_ui(window)
-        window.withdraw()
-        form.qr = PIL.ImageTk.PhotoImage(
-            qrcode.make("teslreborn://resources").resize((160, 160))
-        )
-        form.qr_label.configure(image=form.qr)
-        window.update_idletasks()
-        window.destroy()
+            form = BuilderWindow(window)
+            form.ui_locale.current(8)
+            form.translate_ui(window)
+            form.ui_locale.current(0)
+            form.translate_ui(window)
+            window.withdraw()
+            form.qr = PIL.ImageTk.PhotoImage(
+                qrcode.make("teslreborn://resources").resize((160, 160))
+            )
+            form.qr_label.configure(image=form.qr)
+            window.update_idletasks()
+            window.destroy()
         root = data_root()
         vendor = root / "vendor"
-        java = vendor / "jre/bin/java.exe"
+        java = vendor / "jre/bin" / ("java.exe" if sys.platform == "win32" else "java")
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         checks = [
             [str(java), "-version"],
@@ -52,7 +53,14 @@ def run(report_path):
                     "Bundled tool smoke test failed: " + Path(command[0]).name
                 )
         alignment = subprocess.run(
-            [str(vendor / "build-tools/zipalign.exe"), "-h"],
+            [
+                str(
+                    vendor
+                    / "build-tools"
+                    / ("zipalign.exe" if sys.platform == "win32" else "zipalign")
+                ),
+                "-h",
+            ],
             capture_output=True,
             creationflags=flags,
             timeout=30,
@@ -77,8 +85,9 @@ def run(report_path):
             ok=True,
             core=embedded["meta"]["version"],
             frozen=bool(getattr(sys, "frozen", False)),
+            guiTested=gui,
             checks=[
-                "Tk GUI and QR rendering",
+                "Tk GUI and QR rendering" if gui else "Tk modules only (headless)",
                 "UnityPy",
                 "LIEF",
                 "QR/Pillow",

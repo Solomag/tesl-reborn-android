@@ -66,6 +66,53 @@ def convert(src, dst):
 
 
 class BuilderResourcesTest(unittest.TestCase):
+    def test_original_game_touch_dispatch_is_preserved(self):
+        from builder.build import patch_game_touch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "smali/game/Main.smali"
+            path.parent.mkdir(parents=True)
+            header = ".class public Lgame/Main;\n.super Landroid/app/Activity;\n"
+            for body in [
+                "",
+                ".method public dispatchTouchEvent(Landroid/view/MotionEvent;)Z\n    .registers 3\n    const/4 v0, 0x1\n    return v0\n.end method\n",
+            ]:
+                path.write_text(header + body)
+                patch_game_touch(root, "game.Main")
+                value = path.read_text()
+                self.assertEqual(
+                    value.count("Lorg/teslreborn/setup/GestureBridge;->onTouch"), 1
+                )
+                if body:
+                    self.assertIn("const/4 v0, 0x1", value)
+                else:
+                    self.assertIn("invoke-super", value)
+                patch_game_touch(root, "game.Main")
+                self.assertEqual(path.read_text(), value)
+
+    def test_framework_native_activity_can_receive_the_gesture(self):
+        from builder.build import patch_game_touch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AndroidManifest.xml").write_text(
+                '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><activity android:name="android.app.NativeActivity"><meta-data android:name="android.app.lib_name" android:value="main"/></activity></application></manifest>'
+            )
+            activity = patch_game_touch(root, "android.app.NativeActivity")
+            self.assertEqual(activity, "org.teslreborn.setup.GameActivityBridge")
+            text = (
+                root / "smali/org/teslreborn/setup/GameActivityBridge.smali"
+            ).read_text()
+            self.assertIn(".super Landroid/app/NativeActivity;", text)
+            self.assertIn("GestureBridge;->onTouch", text)
+            from xml.etree import ElementTree as ET
+
+            metadata = ET.parse(root / "AndroidManifest.xml").find(
+                "application/activity/meta-data"
+            )
+            self.assertEqual(metadata.get(ANDROID + "value"), "main")
+
     def test_localization_tables_keep_language_values(self):
         from builder.resources import localization_map
 

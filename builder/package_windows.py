@@ -1,4 +1,4 @@
-"""Freeze a self-contained Windows EXE with tools and Java included."""
+"""Freeze a self-contained desktop builder with tools and Java included."""
 
 import os
 from pathlib import Path
@@ -12,10 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    if sys.platform != "win32":
-        raise SystemExit(
-            "Windows EXE must be built on Windows; use the GitHub Actions workflow"
-        )
+    if sys.platform not in ("win32", "linux"):
+        raise SystemExit("Package on Windows or Linux x86_64 using GitHub Actions")
+    windows = sys.platform == "win32"
+    binary = "TESL-Reborn-Builder" + (".exe" if windows else "")
     bundle = ROOT / "build/builder-data"
     if bundle.exists():
         shutil.rmtree(bundle)
@@ -33,12 +33,19 @@ def main():
         shutil.copytree(ROOT / "vendor" / name, vendor / name)
     tools = vendor / "build-tools"
     tools.mkdir()
-    shutil.copyfile(ROOT / "vendor/build-tools/zipalign.exe", tools / "zipalign.exe")
+    align = "zipalign.exe" if windows else "zipalign"
+    shutil.copy2(ROOT / "vendor/build-tools" / align, tools / align)
     shutil.copyfile(ROOT / "vendor/build-tools/NOTICE.txt", tools / "NOTICE.txt")
     for dll in (ROOT / "vendor/build-tools").glob("*.dll"):
         shutil.copyfile(dll, tools / dll.name)
     if (ROOT / "vendor/build-tools/lib64").exists():
-        shutil.copytree(ROOT / "vendor/build-tools/lib64", tools / "lib64")
+        if windows:
+            shutil.copytree(ROOT / "vendor/build-tools/lib64", tools / "lib64")
+        else:
+            (tools / "lib64").mkdir()
+            # zipalign needs libc++, not the SDK's unrelated LLVM/clang libraries.
+            for library in (ROOT / "vendor/build-tools/lib64").glob("libc++.so*"):
+                shutil.copy2(library, tools / "lib64" / library.name)
     (bundle / "builder").mkdir()
     shutil.copyfile(ROOT / "builder/ui-text.json", bundle / "builder/ui-text.json")
     shutil.copyfile(ROOT / "hook.js", bundle / "hook.js")
@@ -105,11 +112,31 @@ def main():
         str(bundle) + os.pathsep + ".",
         str(ROOT / "builder/entry.py"),
     ]
-    subprocess.run(command, cwd=ROOT, check=True)
-    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-28-check-ru.md"):
+    environment = os.environ.copy()
+    if not windows:
+        # Resolve Tcl/Tk shared libraries from non-system Python installations too.
+        python_lib = str(Path(sys.base_prefix) / "lib")
+        environment["LD_LIBRARY_PATH"] = (
+            python_lib + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
+        )
+    subprocess.run(command, cwd=ROOT, check=True, env=environment)
+    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-29-check-ru.md"):
         shutil.copyfile(ROOT / "docs" / name, ROOT / "dist" / name)
     shutil.copytree(notices, ROOT / "dist/third-party-notices", dirs_exist_ok=True)
-    print("WINDOWS_EXE_READY:", ROOT / "dist/TESL-Reborn-Builder.exe")
+    if not windows:
+        import tarfile
+
+        archive = ROOT / "dist/TESL-Reborn-Builder-Linux-x86_64.tar.gz"
+        with tarfile.open(archive, "w:gz") as package:
+            for name in (
+                binary,
+                "builder-ru.md",
+                "THIRD_PARTY_BUILDER.md",
+                "android-29-check-ru.md",
+                "third-party-notices",
+            ):
+                package.add(ROOT / "dist" / name, arcname="TESL-Reborn-Builder/" + name)
+    print("DESKTOP_BUILDER_READY:", ROOT / "dist" / binary)
 
 
 if __name__ == "__main__":
