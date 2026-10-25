@@ -83,7 +83,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         source = root / "InstallerTest.java"
-        source.write_text(HARNESS)
+        source.write_text(HARNESS, encoding="utf-8")
         classes = root / "classes"
         classes.mkdir()
         subprocess.run(
@@ -91,6 +91,8 @@ def main():
                 java,
                 "-m",
                 "jdk.compiler/com.sun.tools.javac.Main",
+                "-encoding",
+                "UTF-8",
                 "--release",
                 "8",
                 "-cp",

@@ -6,6 +6,8 @@ on:
     paths: ['builder/**', 'android-setup/**', '.github/workflows/build-builder.yml', 'hook.ts', 'runtime/**']
 permissions:
   contents: read
+env:
+  PYTHONUTF8: '1'
 jobs:
   windows:
     runs-on: windows-latest
@@ -25,17 +27,23 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install -r builder/requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm ci
       - name: Prepare tools and emoji resources
         run: |
           python -m builder.bootstrap_tools
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/prepare_emojis.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android-setup/build.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run build
       - name: Validate
         run: |
           npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android-setup/test_native.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m tests.integration_builder_apk
       - name: Create bundled Java runtime
         shell: pwsh

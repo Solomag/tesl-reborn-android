@@ -74,7 +74,7 @@ def repack(source, output, hook, resources=None):
             zipfile.ZIP64_LIMIT = previous_limit
         central_directory = verify_classic_zip(partial)
         print(f'ZIP32_OK: central directory offset {central_directory}', flush=True)
-        with partial.open('rb') as f:
+        with partial.open('r+b') as f:
             os.fsync(f.fileno())
         print('Verifying archive CRCs and preserved entry offsets...', flush=True)
         with zipfile.ZipFile(partial) as z:

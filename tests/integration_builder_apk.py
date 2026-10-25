@@ -60,6 +60,8 @@ def main():
                 java,
                 "-m",
                 "jdk.compiler/com.sun.tools.javac.Main",
+                "-encoding",
+                "UTF-8",
                 "--release",
                 "8",
                 "-d",
