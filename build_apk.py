@@ -1,27 +1,62 @@
 #!/usr/bin/env python3
 """Inject frida-gadget + the TESL hook script into the Android APK (arm64-v8a only).
 
-The patched classes.dex is derived at build time from base.apk and the committed
+The patched classes.dex is rebuilt at build time from base.apk and the committed
 JNIBridge_a.patched.smali (no proprietary binary blob is shipped in the repo).
+A leftover patched_classes.dex is used only with an explicit --prebuilt-dex.
+
+Usage: python3 build_apk.py [base.apk] [out.apk] [--prebuilt-dex] [--allow-stale-hook]
+                            [--ks FILE --ks-alias NAME --ks-pass PASS [--ks-key-pass PASS]]
 """
-import json, os, shutil, subprocess, sys, zipfile, lief
+import argparse, json, os, shutil, subprocess, sys, zipfile, lief
 
 HERE     = os.path.dirname(os.path.abspath(__file__))
-BASE     = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "base.apk")
-OUT_NAME = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "tesl-reborn.apk")
 GADGET   = os.path.join(HERE, "gadget.so")
 HOOK_JS  = os.path.join(HERE, "hook.js")
+HOOK_TS  = os.path.join(HERE, "hook.ts")
+SIGNER   = os.path.join(HERE, "uber-apk-signer.jar")
 ABI      = "lib/arm64-v8a"
 WORK     = os.path.join(HERE, "work")
+
+ap = argparse.ArgumentParser()
+ap.add_argument("base", nargs="?", default=os.path.join(HERE, "base.apk"))
+ap.add_argument("out", nargs="?", default=os.path.join(HERE, "tesl-reborn.apk"))
+ap.add_argument("--prebuilt-dex", action="store_true",
+                help="use patched_classes.dex next to the script instead of rebuilding it from the smali")
+ap.add_argument("--allow-stale-hook", action="store_true",
+                help="build even when hook.ts is newer than hook.js")
+ap.add_argument("--ks", help="keystore for signing (default: the public debug key of uber-apk-signer)")
+ap.add_argument("--ks-alias")
+ap.add_argument("--ks-pass")
+ap.add_argument("--ks-key-pass")
+args = ap.parse_args()
+BASE, OUT_NAME = args.base, args.out
+
+# fail before the long extract and repack, not at the end with a traceback
+local_dex = os.path.join(HERE, "patched_classes.dex")
+needed = [BASE, GADGET, HOOK_JS, SIGNER]
+if args.prebuilt_dex:
+    needed.append(local_dex)
+missing = [p for p in needed if not os.path.isfile(p)]
+if missing:
+    sys.exit("missing: " + ", ".join(missing))
+tools = ["zipalign", "java"] + ([] if args.prebuilt_dex else ["baksmali", "smali"])
+absent = [t for t in tools if not shutil.which(t)]
+if absent:
+    sys.exit("not on PATH: " + ", ".join(absent))
+if (os.path.isfile(HOOK_TS) and os.path.getmtime(HOOK_TS) > os.path.getmtime(HOOK_JS)
+        and not args.allow_stale_hook):
+    sys.exit("hook.ts is newer than hook.js: run rebuild_hook.sh (or pass --allow-stale-hook)")
+if args.ks and not (args.ks_alias and args.ks_pass):
+    sys.exit("--ks needs --ks-alias and --ks-pass")
 
 lief.logging.disable()
 shutil.rmtree(WORK, ignore_errors=True); os.makedirs(WORK)
 
 # Rebuild patched_classes.dex from the committed smali source + the game's base dex.
 PATCHED_DEX = os.path.join(WORK, "patched_classes.dex")
-local_dex = os.path.join(HERE, "patched_classes.dex")
-if os.path.isfile(local_dex):
-    print("using prebuilt patched_classes.dex from the working directory")
+if args.prebuilt_dex:
+    print("using prebuilt patched_classes.dex from the script directory")
     shutil.copyfile(local_dex, PATCHED_DEX)
 else:
     print("building patched_classes.dex from base.apk + JNIBridge_a.patched.smali")
@@ -53,7 +88,8 @@ print("DT_NEEDED now:", [getattr(l, "name", l) for l in lief.parse(libmain).libr
 
 # 2) gadget config: run our script, never wait for a debugger
 cfg = {"interaction": {"type": "script", "path": "libhook.js.so", "on_change": "ignore"}}
-open(os.path.join(WORK, "libgadget.config.so"), "w").write(json.dumps(cfg))
+with open(os.path.join(WORK, "libgadget.config.so"), "w") as f:
+    f.write(json.dumps(cfg))
 
 # 3) repack: drop old signature, replace libmain, add gadget + config + script
 unsigned = os.path.join(WORK, "unsigned.apk")
@@ -75,11 +111,14 @@ with zipfile.ZipFile(BASE) as zin, zipfile.ZipFile(unsigned, "w", zipfile.ZIP_DE
     for name, path in extra.items():
         zout.write(path, name, compress_type=zipfile.ZIP_DEFLATED)
 
-# 4) align + sign (debug key, generated on first run)
+# 4) align + sign: without --ks uber-apk-signer uses its one fixed, public debug keystore, so every build from every user carries the same key
 aligned = os.path.join(WORK, "aligned.apk")
 subprocess.check_call(["zipalign", "-f", "-p", "4", unsigned, aligned])
-subprocess.check_call(["java", "-jar", os.path.join(HERE, "uber-apk-signer.jar"), "-a", aligned,
-                       "--allowResign", "--out", WORK])
-signed = [f for f in os.listdir(WORK) if f.endswith("-aligned-debugSigned.apk")][0]
-shutil.move(os.path.join(WORK, signed), os.path.abspath(OUT_NAME))
+sign = ["java", "-jar", SIGNER, "-a", aligned, "--allowResign", "--out", WORK]
+if args.ks:
+    sign += ["--ks", args.ks, "--ksAlias", args.ks_alias, "--ksPass", args.ks_pass,
+             "--ksKeyPass", args.ks_key_pass or args.ks_pass]
+subprocess.check_call(sign)
+signed = [f for f in os.listdir(WORK) if f.endswith(("-debugSigned.apk", "-signed.apk"))][0]
+os.replace(os.path.join(WORK, signed), os.path.abspath(OUT_NAME))
 print("built", OUT_NAME, os.path.getsize(OUT_NAME) // 1024, "KB")

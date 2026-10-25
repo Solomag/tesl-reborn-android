@@ -1,0 +1,13 @@
+{
+  "name": "tesl-reborn-android-hook",
+  "private": true,
+  "description": "Toolchain that compiles hook.ts to hook.js (see rebuild_hook.sh). The frida version must match gadget.so.",
+  "dependencies": {
+    "frida": "17.24.3",
+    "frida-compile": "19.1.0",
+    "frida-il2cpp-bridge": "0.14.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["frida"]
+  }
+}
