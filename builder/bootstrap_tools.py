@@ -73,6 +73,16 @@ def main():
         vendor / "apktool.jar",
         "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423",
     )
+    download(
+        "https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar",
+        vendor / "zxing-core.jar",
+        "8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82",
+    )
+    download(
+        "https://raw.githubusercontent.com/zxing/zxing/zxing-3.5.3/LICENSE",
+        vendor / "LICENSE-zxing",
+        "3f62881f0566227a24b12e5a754cc79f39aaa94883038e95c94812e1f50af42f",
+    )
     # Also inventory the pinned signer in each distribution.
     lock = vendor / "download-lock.json"
     pins = json.loads(lock.read_text()) if lock.exists() else {}

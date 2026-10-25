@@ -83,6 +83,31 @@ class BuilderServerTest(unittest.TestCase):
             self.request(self.path, self.auth(Range="bytes=1-2,4-5"))[0], 416
         )
 
+    def test_obb_transfer_and_completion_requires_obb(self):
+        self.server.stop()
+        obb = b"base game fixture" * 100
+        digest = hashlib.sha256(obb).hexdigest()
+        (self.root / "game.obb").write_bytes(obb)
+        path = self.root / "catalog.json"
+        value = json.loads(path.read_text())
+        value["obb"] = dict(id="obb", path="game.obb", sha256=digest, bytes=len(obb))
+        path.write_text(json.dumps(value))
+        self.server = ResourceServer(
+            self.root, host="127.0.0.1", log=self.logs.append
+        ).start()
+        status, headers, data = self.request("/game.obb", self.auth(Range="bytes=12-"))
+        self.assertEqual(status, 206)
+        self.assertEqual(data, obb[12:])
+        body = dict(installed={"common": self.digest, "ru_ru": self.digest})
+        self.assertEqual(
+            self.request("/complete", self.auth(), "POST", json.dumps(body))[0], 400
+        )
+        self.assertIsNone(self.server.finished_at)
+        body["obb"] = digest
+        self.assertEqual(
+            self.request("/complete", self.auth(), "POST", json.dumps(body))[0], 204
+        )
+
     def test_acknowledgement_and_idle_shutdown(self):
         bad = json.dumps({"installed": {"common": "bad", "ru_ru": self.digest}})
         self.assertEqual(

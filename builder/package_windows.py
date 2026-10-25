@@ -26,6 +26,7 @@ def main():
         "uber-apk-signer.jar",
         "gadget.so",
         "download-lock.json",
+        "LICENSE-zxing",
     ):
         shutil.copyfile(ROOT / "vendor" / name, vendor / name)
     for name in ("setup", "jre"):
@@ -38,6 +39,8 @@ def main():
         shutil.copyfile(dll, tools / dll.name)
     if (ROOT / "vendor/build-tools/lib64").exists():
         shutil.copytree(ROOT / "vendor/build-tools/lib64", tools / "lib64")
+    (bundle / "builder").mkdir()
+    shutil.copyfile(ROOT / "builder/ui-text.json", bundle / "builder/ui-text.json")
     shutil.copyfile(ROOT / "hook.js", bundle / "hook.js")
     shutil.copyfile(
         ROOT / "JNIBridge_a.patched.smali", bundle / "JNIBridge_a.patched.smali"
@@ -62,8 +65,8 @@ def main():
             target = notices / distribution.metadata["Name"] / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
-    for jar_name in ("apktool.jar", "uber-apk-signer.jar"):
-        with zipfile.ZipFile(vendor / jar_name) as archive:
+    for jar_name in ("apktool.jar", "uber-apk-signer.jar", "zxing-core.jar"):
+        with zipfile.ZipFile(ROOT / "vendor" / jar_name) as archive:
             for name in archive.namelist():
                 if name.endswith("/") or not any(
                     word in name.rsplit("/", 1)[-1].lower()
@@ -75,6 +78,7 @@ def main():
                 target.write_bytes(archive.read(name))
     for file in (ROOT / "vendor").glob("*-frida"):
         shutil.copyfile(file, notices / file.name)
+    shutil.copyfile(vendor / "LICENSE-zxing", notices / "LICENSE-zxing")
     shutil.copyfile(tools / "NOTICE.txt", notices / "ANDROID-SDK-NOTICE.txt")
     shutil.copytree(vendor / "jre/legal", notices / "java-legal")
     command = [
@@ -102,7 +106,7 @@ def main():
         str(ROOT / "builder/entry.py"),
     ]
     subprocess.run(command, cwd=ROOT, check=True)
-    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md"):
+    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-26-check-ru.md"):
         shutil.copyfile(ROOT / "docs" / name, ROOT / "dist" / name)
     shutil.copytree(notices, ROOT / "dist/third-party-notices", dirs_exist_ok=True)
     print("WINDOWS_EXE_READY:", ROOT / "dist/TESL-Reborn-Builder.exe")

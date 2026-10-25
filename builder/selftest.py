@@ -23,6 +23,10 @@ def run(report_path):
         from .gui import BuilderWindow
 
         form = BuilderWindow(window)
+        form.ui_locale.current(8)
+        form.translate_ui(window)
+        form.ui_locale.current(0)
+        form.translate_ui(window)
         window.withdraw()
         form.qr = PIL.ImageTk.PhotoImage(
             qrcode.make("teslreborn://resources").resize((160, 160))

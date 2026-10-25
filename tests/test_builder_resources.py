@@ -66,6 +66,24 @@ def convert(src, dst):
 
 
 class BuilderResourcesTest(unittest.TestCase):
+    def test_localization_tables_keep_language_values(self):
+        from builder.resources import localization_map
+
+        self.assertEqual(
+            localization_map('{"menu.play":"Play","card.title":"Guard"}'),
+            {"menu.play": "Play", "card.title": "Guard"},
+        )
+        self.assertEqual(
+            localization_map(
+                {"_localizedData": [{"Key": "menu.play", "Value": "Играть"}]}
+            ),
+            {"menu.play": "Играть"},
+        )
+        self.assertEqual(
+            localization_map({"_keys": ["x"], "_values": ["y"]}), {"x": "y"}
+        )
+        self.assertEqual(localization_map({"not-a-table": 15}), {})
+
     def test_appended_payload_data_is_aligned(self):
         from build_single_apk import append_to_apk
         import struct
@@ -144,7 +162,7 @@ class BuilderResourcesTest(unittest.TestCase):
             root = Path(tmp)
             game, assets, versions = fixture(root)
             (assets / "appbase/ru_ru").unlink()
-            with self.assertRaisesRegex(ValueError, "Не хватает"):
+            with self.assertRaisesRegex(ValueError, "Missing PC resource"):
                 build_packs(
                     assets,
                     versions,
@@ -187,11 +205,19 @@ class BuilderResourcesTest(unittest.TestCase):
             tree = E.parse(path)
             self.assertEqual(tree.find("uses-sdk").get(ANDROID + "minSdkVersion"), "26")
             activities = tree.findall("application/activity")
-            self.assertEqual(activities[-1].get(ANDROID + "name"), SETUP_ACTIVITY)
+            setup_activity = next(
+                a for a in activities if a.get(ANDROID + "name") == SETUP_ACTIVITY
+            )
+            self.assertEqual(setup_activity.get(ANDROID + "process"), ":resources")
+            scanner = next(
+                a
+                for a in activities
+                if a.get(ANDROID + "name").endswith("ScanActivity")
+            )
+            self.assertEqual(scanner.get(ANDROID + "exported"), "false")
             self.assertEqual(len(activities[0].findall("intent-filter")), 0)
             self.assertEqual(
-                activities[-1]
-                .findall("intent-filter")[1]
+                setup_activity.findall("intent-filter")[1]
                 .find("data")
                 .get(ANDROID + "scheme"),
                 "teslreborn",

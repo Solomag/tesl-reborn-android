@@ -51,6 +51,14 @@ public class InstallerTest {
  public static void main(String[] a) throws Exception {
   File root=new File(a[0]),downloads=new File(a[1]);
   PackInstaller p=new PackInstaller(root,downloads,s->{});
+  if(a[2].equals("url-ok")){PackInstaller.baseUrl(a[3]);return;}
+  if(a[2].equals("qr")){
+    java.awt.image.BufferedImage image=javax.imageio.ImageIO.read(new File(a[3]));
+    int w=image.getWidth(),h=image.getHeight();int[] rgb=image.getRGB(0,0,w,h,null,0,w);
+    String value=new com.google.zxing.qrcode.QRCodeReader().decode(new com.google.zxing.BinaryBitmap(
+      new com.google.zxing.common.HybridBinarizer(new com.google.zxing.RGBLuminanceSource(w,h,rgb)))).getText();
+    if(!value.equals(a[4]))throw new AssertionError("QR value differs");return;
+  }
   if(a[2].equals("url")) {try{PackInstaller.baseUrl(a[3]);throw new AssertionError("Unsafe URL accepted");}catch(IOException good){}return;}
   if(a[2].equals("reject")){JSONObject pack=PackInstaller.json(new File(a[4]));try{p.install(new File(a[3]),pack);throw new AssertionError("Bad pack accepted");}catch(IOException good){}return;}
   URL base=PackInstaller.baseUrl(a[2]);JSONObject catalog=p.catalog(base,a[3]);
@@ -63,7 +71,23 @@ public class InstallerTest {
    File zip=p.download(base,a[3],meta);p.install(zip,meta);
    if(!p.installed(id))throw new AssertionError("Missing installed receipt");
   }
-  p.complete(base,a[3],"ru_ru");p.remove("ru_ru");
+  if(catalog.has("obb")) {
+    JSONObject obb=catalog.getJSONObject("obb");File file=p.download(base,a[3],obb);
+    if(!PackInstaller.hash(file).equals(obb.getString("sha256")))throw new AssertionError("OBB hash");
+    p.complete(base,a[3],new JSONObject().put("common",p.installedHash("common")).put("ru_ru",p.installedHash("ru_ru")),obb.getString("sha256"));
+  } else p.complete(base,a[3],"ru_ru");
+  p.verifyInstalled("ru_ru");
+  File ruData=new File(root,"UnityCache/Shared/voice/"+String.join("",Collections.nCopies(32,"a"))+"/__data");
+  // Verify corruption of the same size is detected, not just missing files.
+  JSONObject receipt=PackInstaller.json(new File(root,".tesl-resources/ru_ru.json"));
+  JSONArray entries=receipt.getJSONArray("files");
+  for(int i=0;i<entries.length();i++)if(entries.getJSONObject(i).getString("path").endsWith("/__data"))
+    ruData=new File(root,entries.getJSONObject(i).getString("path"));
+  try(RandomAccessFile out=new RandomAccessFile(ruData,"rw")){out.write(0);}
+  try{p.verifyInstalled("ru_ru");throw new AssertionError("Corrupt cache accepted");}catch(IOException good){}
+  if(p.installed("ru_ru"))throw new AssertionError("Corrupt receipt retained");
+  p.install(p.download(base,a[3],byId.get("ru_ru")),byId.get("ru_ru"));
+  p.verifyInstalled("ru_ru");p.remove("ru_ru");
   if(p.installed("ru_ru")||!p.installed("common"))throw new AssertionError("Shared resources were removed");
   System.out.println("PASS native JVM: resumed streaming download, hashes, extraction, receipt, ACK and language removal");
  }
@@ -96,7 +120,7 @@ def main():
                 "--release",
                 "8",
                 "-cp",
-                str(jar),
+                str(jar) + __import__("os").pathsep + str(vendor / "zxing-core.jar"),
                 "-d",
                 str(classes),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/PackInstaller.java"),
@@ -109,7 +133,7 @@ def main():
         command = [
             java,
             "-cp",
-            os.pathsep.join(map(str, [classes, jar])),
+            os.pathsep.join(map(str, [classes, jar, vendor / "zxing-core.jar"])),
             "org.teslreborn.setup.InstallerTest",
             str(root / "phone"),
             str(root / "downloads"),
@@ -126,6 +150,14 @@ def main():
                 + "/__data": b"converted audio fixture"
             },
         )
+        obb_data = b"base game transfer fixture" * 100
+        (catalog / "game.obb").write_bytes(obb_data)
+        obb_meta = dict(
+            id="obb",
+            path="game.obb",
+            bytes=len(obb_data),
+            sha256=hashlib.sha256(obb_data).hexdigest(),
+        )
         (catalog / "catalog.json").write_text(
             json.dumps(
                 dict(
@@ -134,6 +166,7 @@ def main():
                     gameVersionCode=11009,
                     abi="arm64-v8a",
                     packs=[common, ru],
+                    obb=obb_meta,
                 )
             )
         )
@@ -153,9 +186,24 @@ def main():
             assert server.finished_at is not None
         finally:
             server.stop()
+        for url in [
+            "http://192.168.1.109:1234/",
+            "http://100.89.61.30:1234/",
+            "http://100.64.0.1/",
+            "http://100.127.255.254/",
+        ]:
+            subprocess.run([*command, "url-ok", url], check=True)
+        import qrcode
+
+        qr_url = "teslreborn://resources?url=http%3A%2F%2F100.89.61.30%3A1234%2F&token=test-code"
+        qr = root / "qr.png"
+        qrcode.make(qr_url).save(qr)
+        subprocess.run([*command, "qr", str(qr), qr_url], check=True)
         for bad in [
             "http://example.com/",
             "http://8.8.8.8/",
+            "http://100.63.255.255/",
+            "http://100.128.0.1/",
             "file:///tmp/",
             "https://example.com/?token=secret",
         ]:

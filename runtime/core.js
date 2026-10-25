@@ -3592,7 +3592,7 @@ function invokeDelegatePtr(del, value) {
 const CREATE_ACCOUNT = false;
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-25-resources`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-26-resources`);
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
   const steamReq = nested(img, "AuthBase", "AuthBNETSteamRequest");
@@ -4818,7 +4818,9 @@ Il2Cpp.perform(() => {
   function restoreLocalization(manager, code) {
     try {
       let text = "";
-      for (const name of [code, code === "en" ? "en_US" : code]) {
+      const selected = resourceLanguage() || code;
+      const regional = selected.includes("_") ? selected.slice(0, 2) + "_" + selected.slice(3).toUpperCase() : selected;
+      for (const name of [selected, regional, shortLanguage(selected)]) {
         text = readTextFile(`${persistentPath()}/tesl-localization-${name}.json`);
         if (text) break;
       }
@@ -4838,54 +4840,115 @@ Il2Cpp.perform(() => {
       return 0;
     }
   }
+  function resourceLanguage() {
+    try {
+      const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
+      if (choice && /^(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)$/.test(choice.language)) return choice.language;
+    } catch (_) {
+    }
+    return "";
+  }
+  function shortLanguage(code) {
+    return String(code).toLowerCase().replace("-", "_").split("_")[0];
+  }
+  function shapedLanguage(code, old) {
+    return /[_-]/.test(old) ? code.slice(0, 2) + "_" + code.slice(3).toUpperCase() : code.slice(0, 2);
+  }
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
-    let lastLanguage = "";
-    let languageApplied = false;
+    let lastLanguage = "", loaded = false, switching = false, languageInputDepth = 0;
+    const languageHandlers = /* @__PURE__ */ new Set();
+    for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name))) {
+      for (const method of owner.methods.filter((m) => /^(On.*Language.*|SelectLanguage|ChangeLanguage|LanguageChanged)$/.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+        const key = method.virtualAddress.toString();
+        if (languageHandlers.has(key)) continue;
+        languageHandlers.add(key);
+        Interceptor.attach(method.virtualAddress, {
+          onEnter() {
+            languageInputDepth++;
+          },
+          onLeave() {
+            languageInputDepth = Math.max(0, languageInputDepth - 1);
+          }
+        });
+      }
+    }
+    const languageNames = {
+      en_us: ["english", "en"],
+      de_de: ["german", "de"],
+      es_es: ["spanish", "es"],
+      es_mx: ["mexicanspanish", "spanishmexican", "latinamericanspanish", "spanishlatinamerica"],
+      fr_fr: ["french", "fr"],
+      it_it: ["italian", "it"],
+      pl_pl: ["polish", "pl"],
+      pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"],
+      ru_ru: ["russian", "ru"],
+      tr_tr: ["turkish", "tr"]
+    };
+    function requestLanguage(target, current) {
+      if (!target || target === current || !loaded || languageInputDepth <= 0 || switching) return;
+      switching = true;
+      schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(
+        Il2Cpp.string("teslreborn://resources?language=" + target)
+      ));
+    }
     const setLanguage = localization.method("SetLanguage", 2);
     Interceptor.attach(setLanguage.virtualAddress, {
       onEnter(args) {
-        log(`LocalizationManager.SetLanguage called`);
-        if (languageApplied) return;
         try {
-          const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
-          if (!choice || !/^(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)$/.test(choice.language)) return;
+          const choice = resourceLanguage();
+          if (!choice) return;
           const index = setLanguage.isStatic ? 0 : 1, type = setLanguage.parameters[0].type;
           if (type.name === "System.String") {
             const old = rawStr(args[index]);
-            const code = /[_-]/.test(old) ? choice.language.slice(0, 2) + "_" + choice.language.slice(3).toUpperCase() : choice.language.slice(0, 2);
-            this.languageString = Il2Cpp.string(code).object.ref(false);
+            const normalized = old.toLowerCase().replace("-", "_");
+            requestLanguage(Object.keys(languageNames).includes(normalized) ? normalized : Object.keys(languageNames).find((c) => shortLanguage(c) === shortLanguage(old)), choice);
+            this.languageString = Il2Cpp.string(shapedLanguage(choice, old)).object.ref(false);
             args[index] = this.languageString.target.handle;
-            languageApplied = true;
           } else if (type.class.isEnum) {
-            const names = {
-              en_us: ["english", "en"],
-              de_de: ["german", "de"],
-              es_es: ["spanish", "es"],
-              es_mx: ["mexicanspanish", "spanishmexican", "latinamericanspanish", "spanishlatinamerica"],
-              fr_fr: ["french", "fr"],
-              it_it: ["italian", "it"],
-              pl_pl: ["polish", "pl"],
-              pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"],
-              ru_ru: ["russian", "ru"],
-              tr_tr: ["turkish", "tr"]
-            };
-            const field = type.class.fields.find((f) => f.isStatic && names[choice.language].includes(f.name.toLowerCase().replace(/[^a-z]/g, "")));
+            const requested = type.class.fields.find((f) => f.isStatic && enumVal(f.value) === args[index].toInt32());
+            if (requested) requestLanguage(Object.keys(languageNames).find((c) => languageNames[c].includes(requested.name.toLowerCase().replace(/[^a-z]/g, ""))), choice);
+            const field = type.class.fields.find((f) => f.isStatic && languageNames[choice].includes(f.name.toLowerCase().replace(/[^a-z]/g, "")));
             if (field) {
               const value = enumVal(field.value);
-              if (value >= 0) {
-                args[index] = ptr(value);
-                languageApplied = true;
-              }
+              if (value >= 0) args[index] = ptr(value);
             }
           }
-          log(`resources: default language ${choice.language}; managed override=${languageApplied}, parameter=${type.name}`);
+          log(`resources: language ${choice}; SetLanguage parameter=${type.name}`);
         } catch (error) {
           log(`resources: language override unavailable: ${error}`);
         }
       },
       onLeave() {
         if (this.languageString) this.languageString.free();
+      }
+    });
+    const pinnedStrings = /* @__PURE__ */ new Map();
+    const prefs = ucls("UnityEngine.PlayerPrefs");
+    for (const method of prefs.methods.filter((m) => m.name === "GetString" && m.parameterCount >= 1)) {
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) {
+          this.key = rawStr(args[0]);
+        },
+        onLeave(result) {
+          if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(this.key || "")) return;
+          const choice = resourceLanguage();
+          if (!choice) return;
+          const old = rawStr(result), value = shapedLanguage(choice, old);
+          if (!pinnedStrings.has(value)) pinnedStrings.set(value, Il2Cpp.string(value).object.ref(false));
+          result.replace(pinnedStrings.get(value).target.handle);
+          log(`resources: language preference ${this.key}=${value}`);
+        }
+      });
+    }
+    const systemLanguage = ucls("UnityEngine.Application").tryMethod("get_systemLanguage", 0);
+    if (systemLanguage) Interceptor.attach(systemLanguage.virtualAddress, {
+      onLeave(result) {
+        const choice = resourceLanguage();
+        if (!choice) return;
+        const names = choice === "es_mx" ? ["spanish"] : languageNames[choice];
+        const field = systemLanguage.returnType.class.fields.find((f) => f.isStatic && names.includes(f.name.toLowerCase()));
+        if (field) result.replace(ptr(enumVal(field.value)));
       }
     });
     Interceptor.attach(localization.method("UpdateObjects").virtualAddress, {
@@ -4895,13 +4958,14 @@ Il2Cpp.perform(() => {
           const code = String(call(manager, "get_CurrentLanguageCode")?.content ?? "en");
           let data = manager.field("_localizedData").value;
           let entries = countOf(data);
-          if (entries === 0) {
+          if (entries === 0 || lastLanguage !== code) {
             const restored = restoreLocalization(manager, code);
             if (restored > 0) log(`localization: restored ${restored} strings from ${code}`);
             data = manager.field("_localizedData").value;
             entries = countOf(data);
           }
-          const fixes = TRANSLATIONS[code];
+          loaded = entries > 0;
+          const fixes = TRANSLATIONS[resourceLanguage()] || TRANSLATIONS[shortLanguage(resourceLanguage() || code)] || TRANSLATIONS[code];
           if (lastLanguage !== code) {
             lastLanguage = code;
             log(`localization: language ${code}, ${entries} strings${fixes ? "" : ", no fixes for it"}`);
@@ -5181,12 +5245,6 @@ Il2Cpp.perform(() => {
       log(`remembered the login of ${username}`);
     }
   }
-  function clearSavedLogin() {
-    try {
-      Il2Cpp.corlib.class("System.IO.File").method("Delete").invoke(Il2Cpp.string(`${persistentPath()}/${LOGIN_FILE}`));
-    } catch (_) {
-    }
-  }
   section("auto login", () => {
     const credentials = cls(img, "SparkleServices.UsernameAndPassword");
     const useRemembered = (callback, saved) => {
@@ -5214,9 +5272,7 @@ Il2Cpp.perform(() => {
         const saved = autoLoginTried ? null : readSavedLogin();
         if (!saved) {
           if (autoLoginTried) {
-            autoLoginTried = false;
-            clearSavedLogin();
-            log("auto login was rejected, showing the login window");
+            log("auto login already attempted; keeping saved credentials and showing login");
           }
           mobileOriginal(this.handle, title, description, callback);
           return;
@@ -5238,9 +5294,7 @@ Il2Cpp.perform(() => {
         const saved = autoLoginTried ? null : readSavedLogin();
         if (!saved) {
           if (autoLoginTried) {
-            autoLoginTried = false;
-            clearSavedLogin();
-            log("auto login was rejected, showing the login window");
+            log("auto login already attempted; keeping saved credentials and showing login");
           }
           fallbackOriginal(title, description, callback);
           return;
@@ -5261,7 +5315,7 @@ Il2Cpp.perform(() => {
           const list = new Il2Cpp.Object(args[0]);
           for (const [type, text] of [
             [CREDIT_GROUP, "TESL Reborn Team"],
-            [CREDIT_TITLE, "Android port \xB7 build 25 \xB7 resource manager"],
+            [CREDIT_TITLE, "Android port \xB7 build 26 \xB7 resource transfer"],
             [CREDIT_TITLE, "Project Lead"],
             [CREDIT_NAME, "Renian"],
             [CREDIT_TITLE, "Game Server Developer"],
@@ -6927,6 +6981,77 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         }
       }
     });
+  });
+  section("mobile debug shortcut", () => {
+    let taps = [], pendingUntil = 0, polling = 0, lastFrame = -1, consumed = false;
+    const pollers = img.classes.filter((c) => /debug|developer|cheat/i.test(c.name)).flatMap((c) => c.methods.filter((m) => ["Update", "LateUpdate", "OnGUI"].includes(m.name) && !m.isStatic && m.parameterCount === 0 && !m.virtualAddress.isNull()));
+    const attached = /* @__PURE__ */ new Set();
+    for (const method of pollers) {
+      const address = method.virtualAddress.toString();
+      if (attached.has(address)) continue;
+      attached.add(address);
+      Interceptor.attach(method.virtualAddress, {
+        onEnter() {
+          polling++;
+        },
+        onLeave() {
+          polling = Math.max(0, polling - 1);
+          if (!polling && consumed) {
+            pendingUntil = 0;
+            consumed = false;
+          }
+        }
+      });
+    }
+    if (!attached.size) {
+      log("mobile debug shortcut: original debug input poller not found");
+      return;
+    }
+    const input = ucls("UnityEngine.Input");
+    for (const name of ["GetKey", "GetKeyDown"]) {
+      const method = input.method(name).overload("UnityEngine.KeyCode");
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) {
+          this.code = args[0].toInt32();
+          this.polling = polling > 0;
+        },
+        onLeave(result) {
+          if (!this.polling || Date.now() > pendingUntil) return;
+          if (name === "GetKey" && [305, 306].includes(this.code)) result.replace(ptr(1));
+          if (name === "GetKeyDown" && this.code === 100) {
+            result.replace(ptr(1));
+            consumed = true;
+          }
+        }
+      });
+    }
+    const render = ucls("UnityEngine.Canvas").method("SendWillRenderCanvases", 0);
+    Interceptor.attach(render.virtualAddress, {
+      onLeave() {
+        try {
+          const frame = Number(ucls("UnityEngine.Time").method("get_frameCount", 0).invoke());
+          if (frame === lastFrame) return;
+          lastFrame = frame;
+          if (Number(input.method("get_touchCount", 0).invoke()) !== 1) return;
+          const touch = input.method("GetTouch", 1).invoke(0);
+          if (enumVal(touch.method("get_phase", 0).invoke()) !== 3) return;
+          const point = uiXY(touch.method("get_position", 0).invoke()), screen = chatScreen();
+          if (point.x > screen.width * 0.2 || point.y < screen.height * 0.88) {
+            taps = [];
+            return;
+          }
+          const now = Date.now();
+          taps = taps.filter((at) => now - at < 900);
+          taps.push(now);
+          if (taps.length >= 3) {
+            taps = [];
+            pendingUntil = now + 1e3;
+          }
+        } catch (_) {
+        }
+      }
+    });
+    log(`mobile debug shortcut: using ${attached.size} original input pollers`);
   });
   section("Reborn Android updater and diagnostics", () => {
     const uriClass = ucls("System.Uri");

@@ -1,6 +1,7 @@
 """Desktop UI. Launch with python -m builder.gui or the frozen Windows EXE."""
 
 import json
+import ipaddress
 import os
 from pathlib import Path
 import queue
@@ -68,10 +69,12 @@ def steam_games():
 
 def local_ips():
     found = set()
+    preferred = None
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect(("192.0.2.1", 9))
-            found.add(sock.getsockname()[0])
+            preferred = sock.getsockname()[0]
+            found.add(preferred)
     except OSError:
         pass
     try:
@@ -81,7 +84,18 @@ def local_ips():
         )
     except OSError:
         pass
-    return sorted(ip for ip in found if not ip.startswith("127.")) or ["127.0.0.1"]
+
+    def priority(value):
+        ip = ipaddress.ip_address(value)
+        private = any(
+            ip in ipaddress.ip_network(net)
+            for net in ("192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12")
+        )
+        return (0 if private and value == preferred else 1 if private else 2, value)
+
+    return sorted((ip for ip in found if not ip.startswith("127.")), key=priority) or [
+        "127.0.0.1"
+    ]
 
 
 class BuilderWindow:
@@ -103,29 +117,42 @@ class BuilderWindow:
         root = ttk.Frame(window, padding=12)
         root.pack(fill="both", expand=True)
         ttk.Label(
-            root, text="TESL Reborn · Сборка Android", font=("", 19, "bold")
+            root, text="TESL Reborn · Android builder", font=("", 19, "bold")
         ).pack(anchor="w")
-        ttk.Label(
-            root, text="Исходная ПК-игра и XAPK используются только для чтения."
-        ).pack(anchor="w")
+        ttk.Label(root, text="Your PC game and original XAPK are read-only.").pack(
+            anchor="w"
+        )
+        uirow = ttk.Frame(root)
+        uirow.pack(fill="x", pady=4)
+        ttk.Label(uirow, text="Interface language:").pack(side="left")
+        self.ui_locale = ttk.Combobox(
+            uirow, values=list(NAMES.values()), state="readonly"
+        )
+        self.ui_locale.current(0)
+        self.ui_locale.pack(side="left", padx=8)
+        self.ui_locale.bind(
+            "<<ComboboxSelected>>", lambda event: self.translate_ui(root)
+        )
+        self.translated_widgets = {}
         self.game = tk.StringVar()
         games = steam_games()
         row = ttk.Frame(root)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text="ПК-игра", width=16).pack(side="left")
+        ttk.Label(row, text="PC game", width=16).pack(side="left")
         self.game_picker = ttk.Combobox(
             row, textvariable=self.game, values=[str(p) for p in games]
         )
         self.game_picker.pack(side="left", fill="x", expand=True)
-        ttk.Button(row, text="Выбрать…", command=self.choose_game).pack(side="left")
+        ttk.Button(row, text="Browse…", command=self.choose_game).pack(side="left")
         if games:
             self.game.set(str(games[0]))
         self.xapk = tk.StringVar()
-        self.path_row(root, "Оригинальный XAPK", self.xapk, False)
-        self.destination = tk.StringVar(value=str(self.appdir))
-        self.path_row(root, "Рабочая папка", self.destination, True)
+        self.path_row(root, "Original XAPK", self.xapk, False)
+        self.destination = tk.StringVar(value=str(self.appdir / "output"))
+        self.path_row(root, "Output folder", self.destination, True)
         ttk.Label(
-            root, text="Результаты: выбранная рабочая папка / output / build-…"
+            root,
+            text="Each build gets its own folder. Temporary files are removed automatically.",
         ).pack(anchor="w")
         options = ttk.Frame(root)
         options.pack(fill="x", pady=6)
@@ -136,56 +163,57 @@ class BuilderWindow:
         )
         ttk.Radiobutton(
             options,
-            text="APK + OBB (ручное копирование)",
+            text="APK + OBB (copy or transfer over Wi-Fi)",
             variable=self.format,
             value="manual",
         ).pack(side="left")
         ttk.Checkbutton(
             root,
-            text="Включить языковые пакеты в APK; иначе подготовить отдельную передачу",
+            text="Include language packs in APK (otherwise download them from this PC)",
             variable=self.embedded,
         ).pack(anchor="w")
-        languages = ttk.LabelFrame(
-            root, text="Языки для сборки или передачи", padding=6
-        )
+        languages = ttk.LabelFrame(root, text="Game languages to prepare", padding=6)
         languages.pack(fill="x", pady=6)
         self.languages = {}
         for i, code in enumerate(LANGUAGES):
-            value = tk.BooleanVar(value=code in ("en_us", "ru_ru"))
+            value = tk.BooleanVar(value=code == "en_us")
             self.languages[code] = value
             ttk.Checkbutton(languages, text=NAMES[code], variable=value).grid(
                 row=i // 5, column=i % 5, sticky="w", padx=6
             )
         row = ttk.Frame(root)
         row.pack(fill="x")
-        ttk.Label(row, text="Язык по умолчанию:").pack(side="left")
+        ttk.Label(row, text="Default game language:").pack(side="left")
         self.default = ttk.Combobox(
-            row, values=["По системе телефона", *NAMES.values()], state="readonly"
+            row, values=["Phone system language", *NAMES.values()], state="readonly"
         )
-        self.default.current(0)
+        self.default.current(1)
         self.default.pack(side="left", padx=8)
-        self.build_button = ttk.Button(root, text="Собрать", command=self.start_build)
+        self.build_button = ttk.Button(root, text="Build", command=self.start_build)
         self.build_button.pack(fill="x", pady=8)
-        transfer = ttk.LabelFrame(root, text="Передача ресурсов на телефон", padding=6)
+        transfer = ttk.LabelFrame(root, text="Transfer game data to phone", padding=6)
         transfer.pack(fill="x")
         row = ttk.Frame(transfer)
         row.pack(fill="x")
         ttk.Button(
-            row, text="Выбрать готовый каталог…", command=self.choose_catalog
+            row, text="Open a previous build…", command=self.choose_catalog
         ).pack(side="left")
-        ttk.Label(row, text="Адрес ПК:").pack(side="left", padx=8)
-        self.ip = ttk.Combobox(row, values=local_ips(), width=18)
+
+        self.ip_var = tk.StringVar()
+        self.ip = ttk.Combobox(
+            row, textvariable=self.ip_var, values=local_ips(), width=18
+        )
         self.ip.current(0)
-        self.ip.pack(side="left")
-        ttk.Button(row, text="Начать передачу", command=self.start_server).pack(
+
+        ttk.Button(row, text="Start transfer", command=self.start_server).pack(
             side="left", padx=8
         )
-        ttk.Button(row, text="Остановить", command=self.stop_server).pack(side="left")
+        ttk.Button(row, text="Stop", command=self.stop_server).pack(side="left")
         ttk.Button(
-            transfer, text="HTTPS / интернет…", command=self.network_options
+            transfer, text="Advanced connection…", command=self.network_options
         ).pack(anchor="w", pady=3)
         self.connection = tk.StringVar(
-            value="После сборки включите передачу. На телефоне откройте экран подготовки ресурсов."
+            value="Build first, then start transfer. On the phone tap Scan QR code. Use the same Wi-Fi or Tailscale on both devices."
         )
         ttk.Label(transfer, textvariable=self.connection, wraplength=790).pack(
             anchor="w", pady=6
@@ -193,17 +221,34 @@ class BuilderWindow:
         self.qr_label = ttk.Label(transfer)
         self.qr_label.pack(side="right")
         self.copy_button = ttk.Button(
-            transfer, text="Скопировать подключение", command=self.copy_connection
+            transfer, text="Copy connection details", command=self.copy_connection
         )
         self.copy_button.pack(anchor="w")
         ttk.Label(
             transfer,
-            text="Сервер остановится через минуту после подтверждения установки\nили после 15 минут бездействия. Активная передача не прерывается.",
+            text="Transfer stops 60 seconds after the phone is ready, or after 15 minutes idle.",
         ).pack(anchor="w")
         self.text = tk.Text(root, height=12, wrap="word", state="disabled")
         self.text.pack(fill="both", expand=True, pady=8)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.after(100, self.poll)
+
+    def translate_ui(self, parent):
+        translations = json.loads(
+            (Path(__file__).with_name("ui-text.json")).read_text(encoding="utf-8")
+        )
+        code = list(NAMES)[self.ui_locale.current()]
+
+        def visit(widget):
+            if "text" in widget.keys():
+                key = self.translated_widgets.setdefault(
+                    str(widget), str(widget["text"])
+                )
+                widget["text"] = translations.get(key, {}).get(code, key)
+            for child in widget.winfo_children():
+                visit(child)
+
+        visit(parent)
 
     def path_row(self, parent, label, variable, directory, filetypes=None):
         row = ttk.Frame(parent)
@@ -216,17 +261,17 @@ class BuilderWindow:
                 filedialog.askdirectory()
                 if directory
                 else filedialog.askopenfilename(
-                    filetypes=filetypes or [("XAPK", "*.xapk"), ("Все файлы", "*.*")]
+                    filetypes=filetypes or [("XAPK", "*.xapk"), ("All files", "*.*")]
                 )
             )
             if path:
                 variable.set(path)
 
-        ttk.Button(row, text="Выбрать…", command=choose).pack(side="left")
+        ttk.Button(row, text="Browse…", command=choose).pack(side="left")
 
     def choose_game(self):
         path = filedialog.askdirectory(
-            title="Выберите папку ПК-игры или StreamingAssets"
+            title="Select the PC game folder or StreamingAssets"
         )
         if path:
             self.game.set(path)
@@ -242,20 +287,20 @@ class BuilderWindow:
             source = Path(self.xapk.get()).resolve()
             destination = Path(self.destination.get()).resolve()
             if not self.game.get() or not self.xapk.get() or not source.is_file():
-                raise ValueError("Выберите ПК-игру и оригинальный XAPK")
+                raise ValueError("Select the PC game and original XAPK")
             assets = find_assets(game)
-            ensure_outside(destination / "output", source_roots(game, assets))
-            ensure_outside(destination / "work", source_roots(game, assets))
+            ensure_outside(destination, source_roots(game, assets))
+            ensure_outside(destination / ".work", source_roots(game, assets))
             selected = [c for c, v in self.languages.items() if v.get()]
             if not selected:
-                raise ValueError("Выберите языки")
+                raise ValueError("Select at least one language")
             default = (
                 "system"
                 if self.default.current() == 0
                 else list(LANGUAGES)[self.default.current() - 1]
             )
             if default != "system" and default not in selected:
-                raise ValueError("Выберите пакет языка по умолчанию")
+                raise ValueError("Select the default language pack")
             args = dict(
                 game=game,
                 xapk=source,
@@ -263,11 +308,12 @@ class BuilderWindow:
                 default_language=default,
                 embedded=self.embedded.get(),
                 format=self.format.get(),
-                appdir=destination,
+                appdir=self.appdir,
+                output_dir=destination,
                 log=self.log,
             )
         except Exception as error:
-            messagebox.showerror("Проверка исходников", str(error))
+            messagebox.showerror("Input files", str(error))
             return
         self.running = True
         self.build_button.state(["disabled"])
@@ -281,13 +327,20 @@ class BuilderWindow:
         threading.Thread(target=work, daemon=True).start()
 
     def choose_catalog(self):
-        path = filedialog.askopenfilename(
-            title="Выберите catalog.json",
-            filetypes=[("Каталог ресурсов", "catalog.json")],
-        )
+        path = filedialog.askdirectory(title="Select a previous build folder")
         if path:
-            self.result = Path(path).parent
-            self.log("Выбран каталог: " + str(self.result))
+            folder = Path(path)
+            if (
+                not (folder / "resources/catalog.json").is_file()
+                and not (folder / "catalog.json").is_file()
+            ):
+                messagebox.showerror(
+                    "Previous build",
+                    "Select the build folder containing resources, not the PC game folder.",
+                )
+                return
+            self.result = folder
+            self.log("Opened previous build: " + str(self.result))
 
     def start_server(self):
         if self.server_starting:
@@ -301,7 +354,8 @@ class BuilderWindow:
         )
         if not root:
             messagebox.showinfo(
-                "Передача", "Сначала соберите пакеты или выберите готовый catalog.json"
+                "Transfer",
+                "Build first, or open resources/catalog.json from a previous build.",
             )
             return
         try:
@@ -310,9 +364,9 @@ class BuilderWindow:
             key = self.key.get().strip() or None
             public = self.public_url.get().strip()
             if not 0 <= port <= 65535:
-                raise ValueError("Некорректный порт")
+                raise ValueError("Invalid port")
             if bool(cert) != bool(key):
-                raise ValueError("Нужны и сертификат, и приватный ключ")
+                raise ValueError("Both certificate and private key are required")
             if public:
                 parsed = urlsplit(public)
                 if (
@@ -324,16 +378,16 @@ class BuilderWindow:
                     or parsed.fragment
                 ):
                     raise ValueError(
-                        "Для внешнего адреса нужен HTTPS URL без пароля и query"
+                        "Public internet requires an HTTPS URL without credentials or query"
                     )
             if cert and not public:
-                raise ValueError("Укажите HTTPS-адрес, соответствующий сертификату")
+                raise ValueError("Enter the HTTPS address matching your certificate")
         except ValueError as error:
-            messagebox.showerror("Сеть", str(error))
+            messagebox.showerror("Connection", str(error))
             return
 
         self.server_starting = True
-        self.connection.set("Проверка пакетов и запуск сервера…")
+        self.connection.set("Checking files and starting transfer…")
 
         def start():
             try:
@@ -355,41 +409,47 @@ class BuilderWindow:
 
     def network_options(self):
         dialog = tk.Toplevel(self.window)
-        dialog.title("HTTPS / интернет")
+        dialog.title("Advanced connection")
         dialog.geometry("700x280")
         ttk.Label(
             dialog,
-            text="Внешний адрес и доступность настраиваются отдельно. Сертификат должен быть\nдоверенным на телефоне. Пустые поля — обычная передача в локальной сети.",
+            text="Wi-Fi and Tailscale need no certificate. These optional settings are only for an existing public HTTPS server.",
         ).pack(anchor="w", padx=8, pady=8)
-        self.path_row(
-            dialog,
-            "Сертификат PEM",
-            self.cert,
-            False,
-            [("PEM certificate", "*.pem *.crt"), ("Все файлы", "*.*")],
+        row = ttk.Frame(dialog)
+        row.pack(fill="x", padx=8)
+        ttk.Label(row, text="PC address (Wi-Fi / Tailscale)").pack(side="left")
+        ttk.Combobox(row, textvariable=self.ip_var, values=local_ips()).pack(
+            side="left"
         )
         self.path_row(
             dialog,
-            "Приватный ключ PEM",
+            "Certificate PEM",
+            self.cert,
+            False,
+            [("PEM certificate", "*.pem *.crt"), ("All files", "*.*")],
+        )
+        self.path_row(
+            dialog,
+            "Private key PEM",
             self.key,
             False,
-            [("PEM key", "*.pem *.key"), ("Все файлы", "*.*")],
+            [("PEM key", "*.pem *.key"), ("All files", "*.*")],
         )
         row = ttk.Frame(dialog)
         row.pack(fill="x", padx=8, pady=5)
-        ttk.Label(row, text="Внешний HTTPS URL", width=20).pack(side="left")
+        ttk.Label(row, text="Public HTTPS URL", width=20).pack(side="left")
         ttk.Entry(row, textvariable=self.public_url).pack(
             side="left", fill="x", expand=True
         )
         row = ttk.Frame(dialog)
         row.pack(fill="x", padx=8, pady=5)
-        ttk.Label(row, text="Порт сервера (0 = авто)", width=25).pack(side="left")
+        ttk.Label(row, text="Server port (0 = auto)", width=25).pack(side="left")
         ttk.Entry(row, textvariable=self.port, width=10).pack(side="left")
         ttk.Label(
             dialog,
-            text="При TLS на внешнем reverse proxy сертификат и ключ здесь не нужны.",
+            text="Leave these fields empty for Wi-Fi or Tailscale.",
         ).pack(anchor="w", padx=8)
-        ttk.Button(dialog, text="Готово", command=dialog.destroy).pack(pady=8)
+        ttk.Button(dialog, text="Done", command=dialog.destroy).pack(pady=8)
 
     def stop_server(self):
         if self.server:
@@ -415,13 +475,11 @@ class BuilderWindow:
                     self.build_button.state(["!disabled"])
                     if kind == "built":
                         self.result = value
-                        self.log("Результат: " + str(value))
-                        messagebox.showinfo(
-                            "Готово", "Сборка завершена.\n" + str(value)
-                        )
+                        self.log("Output: " + str(value))
+                        messagebox.showinfo("Done", "Build complete.\n" + str(value))
                     else:
-                        self.log("ОШИБКА: " + value)
-                        messagebox.showerror("Сборка остановлена", value)
+                        self.log("ERROR: " + value)
+                        messagebox.showerror("Build failed", value)
                 elif kind == "server":
                     self.server_starting = False
                     self.server, public = value
@@ -431,7 +489,7 @@ class BuilderWindow:
                         else f"http://{self.ip.get()}:{self.server.port}/"
                     )
                     self.connection.set(
-                        f"Адрес: {url}\nКод доступа: {self.server.token}"
+                        f"Address: {url}\nConnection code: {self.server.token}"
                     )
                     try:
                         import qrcode
@@ -443,20 +501,45 @@ class BuilderWindow:
                         ).resize((160, 160))
                         self.qr = ImageTk.PhotoImage(image)
                         self.qr_label.configure(image=self.qr)
+                        popup = tk.Toplevel(self.window)
+                        popup.title("Connect your phone")
+                        ttk.Label(
+                            popup, text="On the phone, tap Scan QR code.", padding=12
+                        ).pack()
+                        large = ImageTk.PhotoImage(
+                            qrcode.make(
+                                "teslreborn://resources?"
+                                + urlencode({"url": url, "token": self.server.token})
+                            ).resize((360, 360))
+                        )
+                        label = ttk.Label(popup, image=large)
+                        label.image = large
+                        label.pack(padx=12)
+                        ttk.Label(
+                            popup, text=f"{url}\nCode: {self.server.token}", padding=12
+                        ).pack()
+                        ttk.Label(
+                            popup,
+                            text="Keep this builder open until the phone is ready.",
+                            padding=12,
+                        ).pack()
+                        ttk.Button(popup, text="Close", command=popup.destroy).pack(
+                            pady=8
+                        )
                     except ImportError:
-                        self.log("QR недоступен; используйте адрес и код вручную.")
+                        self.log("QR unavailable; enter the address and code manually.")
                 elif kind == "server-error":
                     self.server_starting = False
-                    messagebox.showerror("Сервер", value)
+                    messagebox.showerror("Transfer", value)
         except queue.Empty:
             pass
         if (
             self.server
             and not self.server_starting
             and self.server.stopped.is_set()
-            and self.connection.get() != "Сервер остановлен."
+            and self.connection.get() != "Transfer stopped."
         ):
-            self.connection.set("Сервер остановлен.")
+            self.connection.set("Transfer stopped.")
             self.qr_label.configure(image="")
             self.qr = None
         self.window.after(100, self.poll)
@@ -464,8 +547,8 @@ class BuilderWindow:
     def close(self):
         if self.running:
             messagebox.showinfo(
-                "Сборка",
-                "Дождитесь завершения сборки. Закрытие сейчас оставит неполный результат.",
+                "Build",
+                "Wait for the build to finish. Closing now would leave an incomplete result.",
             )
             return
         self.stop_server()

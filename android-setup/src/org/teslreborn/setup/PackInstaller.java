@@ -109,18 +109,35 @@ public final class PackInstaller {
   public static URL baseUrl(String text) throws Exception {
     URL url = new URL(text.endsWith("/") ? text : text + "/");
     if (url.getUserInfo() != null || url.getQuery() != null || url.getRef() != null)
-      throw new IOException("Адрес не должен содержать пароль, query или fragment");
+      throw new IOException("The address must not include credentials, query or fragment");
     if (url.getProtocol().equals("http")) {
       // Only numeric private IPv4 HTTP endpoints: no DNS rebinding or public plaintext bearer
       // tokens.
       if (!url.getHost().matches("[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+"))
-        throw new IOException("Для HTTP нужен локальный IPv4-адрес ПК");
+        throw new IOException(
+            "For Wi-Fi or Tailscale, use the numeric address shown by the PC builder");
       InetAddress ip = InetAddress.getByName(url.getHost());
-      if (!ip.isSiteLocalAddress() && !ip.isLoopbackAddress())
-        throw new IOException("Для интернета требуется HTTPS");
+      if (!ip.isSiteLocalAddress() && !ip.isLoopbackAddress() && !tailscale(ip))
+        throw new IOException(
+            "This is not a Wi-Fi or Tailscale address. Select your Wi-Fi address in the PC builder,"
+                + " or use Tailscale on both devices.");
     } else if (!url.getProtocol().equals("https"))
-      throw new IOException("Поддерживаются локальный HTTP и HTTPS");
+      throw new IOException("Use a Wi-Fi/Tailscale HTTP address or an HTTPS address");
     return url;
+  }
+
+  private static boolean tailscale(InetAddress ip) {
+    byte[] b = ip.getAddress();
+    return b.length == 4 && (b[0] & 255) == 100 && (b[1] & 255) >= 64 && (b[1] & 255) <= 127;
+  }
+
+  static void validateObb(JSONObject obb) throws Exception {
+    if (!"obb".equals(obb.getString("id"))
+        || !"game.obb".equals(obb.getString("path"))
+        || !obb.getString("sha256").matches("[a-f0-9]{64}")
+        || obb.getLong("bytes") < 1
+        || obb.getLong("bytes") > 4L * 1024 * 1024 * 1024)
+      throw new IOException("Invalid base game data");
   }
 
   private static HttpURLConnection connect(URL base, String path, String token) throws Exception {
@@ -140,16 +157,17 @@ public final class PackInstaller {
   public JSONObject catalog(URL base, String token) throws Exception {
     HttpURLConnection c = connect(base, "catalog.json", token);
     try {
-      if (c.getResponseCode() != 200) throw new IOException("Каталог: HTTP " + c.getResponseCode());
+      if (c.getResponseCode() != 200) throw new IOException("Catalog: HTTP " + c.getResponseCode());
       JSONObject value;
       try (InputStream in = c.getInputStream()) {
         value = new JSONObject(new String(read(in, 256 * 1024), "UTF-8"));
+        if (value.has("obb")) validateObb(value.getJSONObject("obb"));
       }
       if (value.getInt("schema") != 1
           || !value.getString("format").equals("tesl-reborn-resources-v1")
           || value.getInt("gameVersionCode") != 11009
           || !value.getString("abi").equals("arm64-v8a"))
-        throw new IOException("Несовместимый каталог");
+        throw new IOException("Incompatible catalog");
       JSONArray packs = value.getJSONArray("packs");
       if (packs.length() > 11) throw new IOException("Too many packs");
       Set<String> ids = new HashSet<>();
@@ -158,7 +176,8 @@ public final class PackInstaller {
         validate(p);
         if (!ids.add(id(p))) throw new IOException("Duplicate pack");
       }
-      if (!ids.contains("common")) throw new IOException("В каталоге нет общих ресурсов");
+      if (!ids.contains("common"))
+        throw new IOException("Common resources are missing from this build");
       return value;
     } finally {
       c.disconnect();
@@ -166,7 +185,8 @@ public final class PackInstaller {
   }
 
   public File download(URL base, String token, JSONObject pack) throws Exception {
-    validate(pack);
+    if ("obb".equals(pack.optString("id"))) validateObb(pack);
+    else validate(pack);
     File part = new File(privateDownloads, pack.getString("sha256") + ".part");
     long expected = pack.getLong("bytes"), offset = part.isFile() ? part.length() : 0;
     if (offset > expected) {
@@ -187,11 +207,11 @@ public final class PackInstaller {
         String range = c.getHeaderField("Content-Range");
         if (!("bytes " + offset + "-" + (expected - 1) + "/" + expected).equals(range))
           throw new IOException("Invalid resumed range");
-      } else throw new IOException("Пакет: HTTP " + status);
+      } else throw new IOException("Download: HTTP " + status);
       long size = c.getContentLengthLong();
       if (size >= 0 && size != expected - offset) throw new IOException("Unexpected response size");
       if (privateDownloads.getUsableSpace() < expected - offset + 32L * 1024 * 1024)
-        throw new IOException("Недостаточно места для загрузки");
+        throw new IOException("Not enough space for the download");
       try (InputStream in = c.getInputStream();
           FileOutputStream out = new FileOutputStream(part, offset > 0)) {
         byte[] buffer = new byte[256 * 1024];
@@ -204,25 +224,28 @@ public final class PackInstaller {
           out.write(buffer, 0, n);
           long now = System.currentTimeMillis();
           if (now - last > 300) {
-            progress.show("Скачивание " + id(pack) + ": " + (total * 100 / expected) + "%");
+            progress.show(
+                "Downloading " + pack.getString("id") + ": " + (total * 100 / expected) + "%");
             last = now;
           }
         }
         out.getFD().sync();
-        if (total != expected) throw new IOException("Загрузка прервана; повторите для докачки");
+        if (total != expected) throw new IOException("Download interrupted; retry to resume");
       }
     } finally {
       c.disconnect();
     }
     if (!hash(part).equals(pack.getString("sha256"))) {
       part.delete();
-      throw new IOException("SHA-256 пакета не совпал");
+      throw new IOException("The downloaded file failed SHA-256 verification");
     }
     return part;
   }
 
   private File target(File directory, String path) throws Exception {
     if (!path.equals("versions.json")
+        && !path.matches(
+            "tesl-localization-(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)\\.json")
         && !path.matches("UnityCache/Shared/[A-Za-z0-9_.-]+/[a-fA-F0-9]{1,32}/__(data|info)"))
       throw new IOException("Unsafe cache entry");
     File file = new File(directory, path);
@@ -248,6 +271,20 @@ public final class PackInstaller {
     }
   }
 
+  public void verifyInstalled(String packId) throws Exception {
+    if (!installed(packId)) throw new IOException("Missing resources for " + packId);
+    JSONArray files = json(new File(receipts, packId + ".json")).getJSONArray("files");
+    for (int i = 0; i < files.length(); i++) {
+      JSONObject e = files.getJSONObject(i);
+      if (e.getString("path").endsWith("/__info")) continue; // Unity updates access metadata.
+      if (!hash(target(root, e.getString("path"))).equals(e.getString("sha256"))) {
+        new File(receipts, packId + ".json").delete();
+        throw new IOException(
+            "Resource verification failed for " + packId + ". Install or download it again.");
+      }
+    }
+  }
+
   public String installedHash(String packId) throws Exception {
     return json(new File(receipts, packId + ".json")).getString("packSha256");
   }
@@ -257,7 +294,7 @@ public final class PackInstaller {
     String packId = id(pack);
     if (installed(packId) && installedHash(packId).equals(pack.getString("sha256"))) return;
     if (file.length() != pack.getLong("bytes") || !hash(file).equals(pack.getString("sha256")))
-      throw new IOException("Пакет повреждён");
+      throw new IOException("The pack is corrupt");
     File stage = new File(receipts, "staging/" + pack.getString("sha256"));
     deleteTree(stage);
     mkdir(stage);
@@ -272,7 +309,7 @@ public final class PackInstaller {
       if (manifest.getInt("schema") != 1
           || !manifest.getString("format").equals("tesl-reborn-pack-v1")
           || manifest.getInt("gameVersionCode") != 11009
-          || !id(manifest).equals(packId)) throw new IOException("Несовместимый пакет");
+          || !id(manifest).equals(packId)) throw new IOException("Incompatible pack");
       JSONArray files = manifest.getJSONArray("files");
       if (files.length() < 1 || files.length() > 20000) throw new IOException("Invalid file count");
       Set<String> names = new HashSet<>();
@@ -289,6 +326,9 @@ public final class PackInstaller {
           throw new IOException("Invalid file metadata");
         if (path.equals("versions.json") && !packId.equals("common"))
           throw new IOException("Language pack overrides inventory");
+        if (path.startsWith("tesl-localization-")
+            && !path.equals("tesl-localization-" + packId + ".json"))
+          throw new IOException("Localization belongs to another language");
         bytes += entry.getLong("bytes");
         if (bytes > pack.getLong("unpackedBytes"))
           throw new IOException("Unpacked size exceeds limit");
@@ -303,7 +343,7 @@ public final class PackInstaller {
           throw new IOException("Unexpected or duplicate ZIP entry");
       }
       if (root.getUsableSpace() < bytes + 32L * 1024 * 1024)
-        throw new IOException("Недостаточно места для установки");
+        throw new IOException("Not enough space to install the pack");
       for (int i = 0; i < files.length(); i++) {
         JSONObject entry = files.getJSONObject(i);
         String path = entry.getString("path");
@@ -328,8 +368,8 @@ public final class PackInstaller {
         }
         if (written != entry.getLong("bytes")
             || !hex(digest.digest()).equals(entry.getString("sha256")))
-          throw new IOException("Повреждён файл кеша");
-        if (i % 25 == 0) progress.show("Проверка " + packId + ": " + i + "/" + files.length());
+          throw new IOException("A resource file is corrupt");
+        if (i % 25 == 0) progress.show("Checking " + packId + ": " + i + "/" + files.length());
       }
       File receipt = new File(receipts, packId + ".json");
       if (receipt.exists() && !receipt.delete())
@@ -346,7 +386,7 @@ public final class PackInstaller {
   }
 
   public void remove(String packId) throws Exception {
-    if (packId.equals("common")) throw new IOException("Общие ресурсы обязательны");
+    if (packId.equals("common")) throw new IOException("Common resources cannot be removed");
     File receipt = new File(receipts, packId + ".json");
     JSONObject current = json(receipt);
     Set<String> retained = new HashSet<>();
@@ -374,7 +414,17 @@ public final class PackInstaller {
         new JSONObject()
             .put("common", installedHash("common"))
             .put(language, installedHash(language));
-    byte[] body = new JSONObject().put("installed", installed).toString().getBytes("UTF-8");
+    complete(base, token, installed, "");
+  }
+
+  public void complete(URL base, String token, JSONObject installed, String obbHash)
+      throws Exception {
+    byte[] body =
+        new JSONObject()
+            .put("installed", installed)
+            .put("obb", obbHash)
+            .toString()
+            .getBytes("UTF-8");
     HttpURLConnection c = connect(base, "complete", token);
     try {
       c.setRequestMethod("POST");
@@ -384,7 +434,7 @@ public final class PackInstaller {
       try (OutputStream out = c.getOutputStream()) {
         out.write(body);
       }
-      if (c.getResponseCode() != 204) throw new IOException("Сервер не подтвердил завершение");
+      if (c.getResponseCode() != 204) throw new IOException("The PC did not confirm completion");
     } finally {
       c.disconnect();
     }

@@ -173,6 +173,8 @@ def main():
                     settings = json.loads(z.read("assets/tesl-reborn/setup.json"))
                     assert settings["gameActivity"] == PACKAGE + ".UnityPlayerActivity"
                     assert settings["defaultLanguage"] == "ru_ru"
+                    assert settings["obb"]["path"] == "game.obb"
+                    assert (result / "resources/game.obb").is_file()
                     assert bool(settings["embeddedPacks"]) == embedded
                     assert "classes2.dex" in z.namelist()
                     assert (
@@ -207,6 +209,8 @@ def main():
                 )
                 text = (decoded / "AndroidManifest.xml").read_text()
                 assert "org.teslreborn.setup.ResourceActivity" in text
+                assert "org.teslreborn.setup.ScanActivity" in text
+                assert 'android:process=":resources"' in text
         after = {
             p.relative_to(game): p.read_bytes() for p in game.rglob("*") if p.is_file()
         }

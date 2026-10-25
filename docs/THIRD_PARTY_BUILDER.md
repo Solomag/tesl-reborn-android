@@ -31,3 +31,8 @@ build-time tools and are not included in the runtime EXE.
 Emoji resources are obtained from the pinned official Reborn plugin distribution
 at user build time (or read from an installed matching plugin). Their inclusion
 does not imply a new license grant; this project does not upload them to git.
+
+ZXing Core 3.5.3 (https://github.com/zxing/zxing/tree/zxing-3.5.3), Apache-2.0,
+is compiled into the Android setup DEX for local QR decoding. Its LICENSE is
+included in the generated APK and the Windows distribution. Camera frames are
+not saved or sent to the network.

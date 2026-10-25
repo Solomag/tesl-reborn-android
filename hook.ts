@@ -137,7 +137,7 @@ const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-25-resources`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-26-resources`);
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -1343,7 +1343,9 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       let text = "";
       // The file is named after the language ("en"), but the game also uses
       // the full language name ("en_US") for the text bundles.
-      for (const name of [code, code === "en" ? "en_US" : code]) {
+      const selected = resourceLanguage() || code;
+      const regional = selected.includes("_") ? selected.slice(0, 2) + "_" + selected.slice(3).toUpperCase() : selected;
+      for (const name of [selected, regional, shortLanguage(selected)]) {
         text = readTextFile(`${persistentPath()}/tesl-localization-${name}.json`);
         if (text) break;
       }
@@ -1366,39 +1368,98 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // LocalizationManagerPatch: the plugin ships translation fixes for the
   // strings the original client got wrong.
   // ---------------------------------------------------------------------
+  function resourceLanguage(): string {
+    try {
+      const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
+      if (choice && /^(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)$/.test(choice.language)) return choice.language;
+    } catch (_) {}
+    return "";
+  }
+
+  function shortLanguage(code: string): string { return String(code).toLowerCase().replace("-", "_").split("_")[0]; }
+  function shapedLanguage(code: string, old: string): string {
+    return /[_-]/.test(old) ? code.slice(0, 2) + "_" + code.slice(3).toUpperCase() : code.slice(0, 2);
+  }
+
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
-    let lastLanguage = "";
-    let languageApplied = false;
+    let lastLanguage = "", loaded = false, switching = false, languageInputDepth = 0;
+    // Account/bootstrap code also calls SetLanguage. Only an actual settings
+    // handler may open setup; background locale changes must not restart login.
+    const languageHandlers = new Set();
+    for (const owner of img.classes.filter(c => /settings|options|language/i.test(c.name))) {
+      for (const method of owner.methods.filter(m => /^(On.*Language.*|SelectLanguage|ChangeLanguage|LanguageChanged)$/.test(m.name)
+          && !m.isStatic && !m.virtualAddress.isNull())) {
+        const key = method.virtualAddress.toString(); if (languageHandlers.has(key)) continue;
+        languageHandlers.add(key);
+        Interceptor.attach(method.virtualAddress, {
+          onEnter() { languageInputDepth++; },
+          onLeave() { languageInputDepth = Math.max(0, languageInputDepth - 1); }
+        });
+      }
+    }
+    const languageNames = { en_us: ["english", "en"], de_de: ["german", "de"], es_es: ["spanish", "es"],
+      es_mx: ["mexicanspanish", "spanishmexican", "latinamericanspanish", "spanishlatinamerica"],
+      fr_fr: ["french", "fr"], it_it: ["italian", "it"], pl_pl: ["polish", "pl"],
+      pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"], ru_ru: ["russian", "ru"], tr_tr: ["turkish", "tr"] };
+    function requestLanguage(target: string | undefined, current: string) {
+      if (!target || target === current || !loaded || languageInputDepth <= 0 || switching) return;
+      switching = true;
+      schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(
+        Il2Cpp.string("teslreborn://resources?language=" + target)));
+    }
     const setLanguage = localization.method("SetLanguage", 2);
-    // Trace the localization load: the English text lives in the appbase/en_us
-    // bundle, and if that one is not resolved the whole UI shows raw keys.
     Interceptor.attach(setLanguage.virtualAddress, {
       onEnter(args) {
-        log(`LocalizationManager.SetLanguage called`);
-        if (languageApplied) return;
         try {
-          const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
-          if (!choice || !/^(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)$/.test(choice.language)) return;
+          const choice = resourceLanguage();
+          if (!choice) return;
           const index = setLanguage.isStatic ? 0 : 1, type = setLanguage.parameters[0].type;
           if (type.name === "System.String") {
             const old = rawStr(args[index]);
-            const code = /[_-]/.test(old) ? choice.language.slice(0, 2) + "_" + choice.language.slice(3).toUpperCase() : choice.language.slice(0, 2);
-            this.languageString = Il2Cpp.string(code).object.ref(false);
+            const normalized = old.toLowerCase().replace("-", "_");
+            requestLanguage(Object.keys(languageNames).includes(normalized) ? normalized :
+              Object.keys(languageNames).find(c => shortLanguage(c) === shortLanguage(old)), choice);
+            // Keep the entire initialization consistent, not just its first SetLanguage call.
+            this.languageString = Il2Cpp.string(shapedLanguage(choice, old)).object.ref(false);
             args[index] = this.languageString.target.handle;
-            languageApplied = true;
           } else if (type.class.isEnum) {
-            const names = { en_us: ["english", "en"], de_de: ["german", "de"], es_es: ["spanish", "es"],
-              es_mx: ["mexicanspanish", "spanishmexican", "latinamericanspanish", "spanishlatinamerica"],
-              fr_fr: ["french", "fr"], it_it: ["italian", "it"], pl_pl: ["polish", "pl"],
-              pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"], ru_ru: ["russian", "ru"], tr_tr: ["turkish", "tr"] };
-            const field = type.class.fields.find(f => f.isStatic && names[choice.language].includes(f.name.toLowerCase().replace(/[^a-z]/g, "")));
-            if (field) { const value = enumVal(field.value); if (value >= 0) { args[index] = ptr(value); languageApplied = true; } }
+            const requested = type.class.fields.find(f => f.isStatic && enumVal(f.value) === args[index].toInt32());
+            if (requested) requestLanguage(Object.keys(languageNames).find(c =>
+              languageNames[c].includes(requested.name.toLowerCase().replace(/[^a-z]/g, ""))), choice);
+            const field = type.class.fields.find(f => f.isStatic && languageNames[choice].includes(f.name.toLowerCase().replace(/[^a-z]/g, "")));
+            if (field) { const value = enumVal(field.value); if (value >= 0) args[index] = ptr(value); }
           }
-          log(`resources: default language ${choice.language}; managed override=${languageApplied}, parameter=${type.name}`);
+          log(`resources: language ${choice}; SetLanguage parameter=${type.name}`);
         } catch (error) { log(`resources: language override unavailable: ${error}`); }
       },
       onLeave() { if (this.languageString) this.languageString.free(); },
+    });
+    // The game's bootstrap also reads the system locale and its saved preference.
+    // Return the same selection there so callers and LocalizationManager agree.
+    const pinnedStrings = new Map();
+    const prefs = ucls("UnityEngine.PlayerPrefs");
+    for (const method of prefs.methods.filter(m => m.name === "GetString" && m.parameterCount >= 1)) {
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) { this.key = rawStr(args[0]); },
+        onLeave(result) {
+          if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(this.key || "")) return;
+          const choice = resourceLanguage(); if (!choice) return;
+          const old = rawStr(result), value = shapedLanguage(choice, old);
+          if (!pinnedStrings.has(value)) pinnedStrings.set(value, Il2Cpp.string(value).object.ref(false));
+          result.replace(pinnedStrings.get(value).target.handle);
+          log(`resources: language preference ${this.key}=${value}`);
+        }
+      });
+    }
+    const systemLanguage = ucls("UnityEngine.Application").tryMethod("get_systemLanguage", 0);
+    if (systemLanguage) Interceptor.attach(systemLanguage.virtualAddress, {
+      onLeave(result) {
+        const choice = resourceLanguage(); if (!choice) return;
+        const names = choice === "es_mx" ? ["spanish"] : languageNames[choice];
+        const field = systemLanguage.returnType.class.fields.find(f => f.isStatic && names.includes(f.name.toLowerCase()));
+        if (field) result.replace(ptr(enumVal(field.value)));
+      }
     });
     Interceptor.attach(localization.method("UpdateObjects").virtualAddress, {
       onEnter(args) {
@@ -1407,7 +1468,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           const code = String(call(manager, "get_CurrentLanguageCode")?.content ?? "en");
           let data = manager.field<Il2Cpp.Object>("_localizedData").value;
           let entries = countOf(data);
-          if (entries === 0) {
+          if (entries === 0 || lastLanguage !== code) {
             // The game's own text bundle could not be loaded (it is a
             // downloadable bundle and the CDN is gone), so the strings that
             // were recovered from the cached bundle are used instead.
@@ -1417,7 +1478,8 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
             data = manager.field<Il2Cpp.Object>("_localizedData").value;
             entries = countOf(data);
           }
-          const fixes = TRANSLATIONS[code];
+          loaded = entries > 0;
+          const fixes = TRANSLATIONS[resourceLanguage()] || TRANSLATIONS[shortLanguage(resourceLanguage() || code)] || TRANSLATIONS[code];
           if (lastLanguage !== code) {
             lastLanguage = code;
             log(`localization: language ${code}, ${entries} strings${fixes ? "" : ", no fixes for it"}`);
@@ -1683,8 +1745,8 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // the last successful sign-in (SparkleServices.LoginCredentials) so the
   // login window does not have to be filled in on every start. The same is
   // done here: the credentials are kept in a small file in the app's data
-  // directory and used on the next start. They are dropped again when the
-  // server does not accept them any more.
+  // directory and used on the next start. A repeated login screen is not
+  // sufficient evidence to delete these credentials.
   // ---------------------------------------------------------------------
   const LOGIN_FILE = "tesl-login.json";
   let autoLoginTried = false;
@@ -1705,13 +1767,6 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     if (writeTextFile(path, JSON.stringify({ username, password }))) {
       log(`remembered the login of ${username}`);
     }
-  }
-
-  function clearSavedLogin() {
-    try {
-      (Il2Cpp.corlib.class("System.IO.File").method("Delete") as any)
-        .invoke(Il2Cpp.string(`${persistentPath()}/${LOGIN_FILE}`));
-    } catch (_) {}
   }
 
   section("auto login", () => {
@@ -1742,9 +1797,8 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         if (!saved) {
           if (autoLoginTried) {
             // The server did not accept the remembered credentials.
-            autoLoginTried = false;
-            clearSavedLogin();
-            log("auto login was rejected, showing the login window");
+            // A second login screen can follow a network/session failure, not a credential rejection.
+            log("auto login already attempted; keeping saved credentials and showing login");
           }
           mobileOriginal(this.handle, title as any, description as any, callback as any);
           return;
@@ -1765,9 +1819,8 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         const saved = autoLoginTried ? null : readSavedLogin();
         if (!saved) {
           if (autoLoginTried) {
-            autoLoginTried = false;
-            clearSavedLogin();
-            log("auto login was rejected, showing the login window");
+            // A second login screen can follow a network/session failure, not a credential rejection.
+            log("auto login already attempted; keeping saved credentials and showing login");
           }
           fallbackOriginal(title as any, description as any, callback as any);
           return;
@@ -1792,7 +1845,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           const list = new Il2Cpp.Object(args[0]);
           for (const [type, text] of [
             [CREDIT_GROUP, "TESL Reborn Team"],
-            [CREDIT_TITLE, "Android port · build 25 · resource manager"],
+            [CREDIT_TITLE, "Android port · build 26 · resource transfer"],
             [CREDIT_TITLE, "Project Lead"],
             [CREDIT_NAME, "Renian"],
             [CREDIT_TITLE, "Game Server Developer"],
@@ -3135,6 +3188,58 @@ const chatWindows = new Map();
       onEnter(args) { this.self = args[0]; },
       onLeave() { try { chatUpdate(new Il2Cpp.Object(this.self)); } catch (_) {} }
     });
+  });
+  // Reuse the original debug keyboard shortcut inside the original debug poller.
+  // This does not grant debug privileges or enable any server feature flag.
+  section("mobile debug shortcut", () => {
+    let taps = [], pendingUntil = 0, polling = 0, lastFrame = -1, consumed = false;
+    const pollers = img.classes.filter(c => /debug|developer|cheat/i.test(c.name))
+      .flatMap(c => c.methods.filter(m => ["Update", "LateUpdate", "OnGUI"].includes(m.name)
+        && !m.isStatic && m.parameterCount === 0 && !m.virtualAddress.isNull()));
+    const attached = new Set();
+    for (const method of pollers) {
+      const address = method.virtualAddress.toString();
+      if (attached.has(address)) continue;
+      attached.add(address);
+      Interceptor.attach(method.virtualAddress, {
+        onEnter() { polling++; }, onLeave() {
+          polling = Math.max(0, polling - 1);
+          if (!polling && consumed) { pendingUntil = 0; consumed = false; }
+        }
+      });
+    }
+    if (!attached.size) { log("mobile debug shortcut: original debug input poller not found"); return; }
+    const input = ucls("UnityEngine.Input");
+    for (const name of ["GetKey", "GetKeyDown"]) {
+      const method = input.method(name).overload("UnityEngine.KeyCode");
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) { this.code = args[0].toInt32(); this.polling = polling > 0; },
+        onLeave(result) {
+          if (!this.polling || Date.now() > pendingUntil) return;
+          if (name === "GetKey" && [305, 306].includes(this.code)) result.replace(ptr(1));
+          if (name === "GetKeyDown" && this.code === 100) {
+            result.replace(ptr(1)); consumed = true;
+          }
+        }
+      });
+    }
+    const render = ucls("UnityEngine.Canvas").method("SendWillRenderCanvases", 0);
+    Interceptor.attach(render.virtualAddress, {
+      onLeave() {
+        try {
+          const frame = Number(ucls("UnityEngine.Time").method("get_frameCount", 0).invoke());
+          if (frame === lastFrame) return; lastFrame = frame;
+          if (Number(input.method("get_touchCount", 0).invoke()) !== 1) return;
+          const touch = input.method("GetTouch", 1).invoke(0);
+          if (enumVal(touch.method("get_phase", 0).invoke()) !== 3) return;
+          const point = uiXY(touch.method("get_position", 0).invoke()), screen = chatScreen();
+          if (point.x > screen.width * .20 || point.y < screen.height * .88) { taps = []; return; }
+          const now = Date.now(); taps = taps.filter(at => now - at < 900); taps.push(now);
+          if (taps.length >= 3) { taps = []; pendingUntil = now + 1000; }
+        } catch (_) {}
+      }
+    });
+    log(`mobile debug shortcut: using ${attached.size} original input pollers`);
   });
 // END android-ui: chat-window
 

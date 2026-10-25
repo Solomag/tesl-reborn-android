@@ -121,6 +121,25 @@ def patch_manifest(path):
     ET.SubElement(
         link, "data", {ANDROID + "scheme": "teslreborn", ANDROID + "host": "resources"}
     )
+    ET.SubElement(
+        manifest, "uses-permission", {ANDROID + "name": "android.permission.CAMERA"}
+    )
+    ET.SubElement(
+        manifest,
+        "uses-feature",
+        {ANDROID + "name": "android.hardware.camera", ANDROID + "required": "false"},
+    )
+    activity.set(ANDROID + "process", ":resources")
+    ET.SubElement(
+        application,
+        "activity",
+        {
+            ANDROID + "name": "org.teslreborn.setup.ScanActivity",
+            ANDROID + "exported": "false",
+            ANDROID + "process": ":resources",
+            ANDROID + "theme": "@android:style/Theme.Material.Light.NoActionBar",
+        },
+    )
     tree.write(path, encoding="utf-8", xml_declaration=True)
     return original
 
@@ -139,7 +158,7 @@ def invoke(command, log, cwd=None):
         for line in process.stdout:
             log(line.rstrip())
         if process.wait():
-            raise RuntimeError("Ошибка инструмента: " + Path(str(command[0])).name)
+            raise RuntimeError("Tool failed: " + Path(str(command[0])).name)
 
 
 def prepare_builder_emojis(work, game, assets, log):
@@ -156,13 +175,13 @@ def prepare_builder_emojis(work, game, assets, log):
             for name in FILES:
                 shutil.copyfile(directory / name, work / "emojis" / name)
             return
-    log("Загрузка проверенных ресурсов эмодзи из официального архива Reborn…")
+    log("Downloading verified emoji resources from the official Reborn archive…")
     import urllib.request
 
     with urllib.request.urlopen(URL, timeout=60) as response:
         data = response.read(16 * 1024**2 + 1)
     if len(data) > 16 * 1024**2:
-        raise ValueError("Архив эмодзи превышает лимит")
+        raise ValueError("Emoji archive exceeds the size limit")
     extract(data, work / "emojis")
 
 
@@ -174,7 +193,7 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
         # Source development only; distributed EXE always includes its runtime.
         found = shutil.which("java")
         if not found:
-            raise ValueError("В комплекте сборщика отсутствует Java runtime")
+            raise ValueError("The builder is missing its Java runtime")
         java = Path(found)
     java_temp = work / "java-temp"
     java_temp.mkdir()
@@ -204,7 +223,7 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
     )
     smali = list(decoded.glob("smali*/bitter/jnibridge/JNIBridge$a.smali"))
     if len(smali) != 1:
-        raise ValueError("Не найден единственный оригинальный JNIBridge$a")
+        raise ValueError("Could not find a unique original JNIBridge$a")
     shutil.copyfile(data_root() / "JNIBridge_a.patched.smali", smali[0])
     for directory in (decoded / "lib").iterdir():
         if directory.is_dir() and directory.name != "arm64-v8a":
@@ -258,13 +277,14 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
     settings = work / "setup.json"
     settings.write_text(json.dumps(setup, ensure_ascii=False), encoding="utf-8")
     extra["assets/tesl-reborn/setup.json"] = settings
+    extra["assets/tesl-reborn/notices/LICENSE-zxing"] = vendor / "LICENSE-zxing"
     from tools.prepare_emojis import FILES
     from .resources import sha256
 
     for name, expected in FILES.items():
         path = work / "emojis" / name
         if sha256(path) != expected:
-            raise ValueError("Ресурсы эмодзи повреждены")
+            raise ValueError("Emoji resources failed verification")
         extra["assets/tesl-reborn/emojis/" + name] = path
     small = work / "small-unsigned.apk"
     with zipfile.ZipFile(patched) as source, zipfile.ZipFile(small, "w") as dest:
@@ -301,7 +321,7 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
             >= (1 << 32) - 1
         ):
             raise ValueError(
-                "APK превысит ZIP32 4 GiB; выберите отдельную передачу ресурсов"
+                "APK would exceed the ZIP32 4 GiB limit; use separate resource transfer"
             )
         append_to_apk(
             str(aligned), str(unsigned), {k: str(v) for k, v in packs.items()}
@@ -327,7 +347,7 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
     )
     files = list(signed.glob("*-debugSigned.apk"))
     if len(files) != 1:
-        raise ValueError("Не найден подписанный APK")
+        raise ValueError("Signed APK was not produced")
     return files[0]
 
 
@@ -341,20 +361,21 @@ def build(
     appdir=None,
     log=print,
     converter=None,
+    output_dir=None,
 ):
     appdir = Path(appdir or application_directory()).resolve()
     game = Path(game).resolve()
     xapk = Path(xapk).resolve()
     assets = find_assets(game)
-    output = appdir / "output"
-    scratch = appdir / "work"
+    output = Path(output_dir).resolve() if output_dir else appdir / "output"
+    scratch = output / ".work"
     # If the EXE was placed in the game folder, refuse rather than write there.
     ensure_outside(output, source_roots(game, assets))
     ensure_outside(scratch, source_roots(game, assets))
     if default_language not in ("system", *LANGUAGES):
-        raise ValueError("Неизвестный язык по умолчанию")
+        raise ValueError("Unknown default language")
     if default_language != "system" and default_language not in languages:
-        raise ValueError("Язык по умолчанию должен быть выбран для подготовки")
+        raise ValueError("Include the default language in the languages to prepare")
     if format not in ("xapk", "manual"):
         raise ValueError("Unknown output format")
     vendor = data_root() / "vendor"
@@ -365,13 +386,11 @@ def build(
         "setup/classes.dex",
     ]:
         if not (vendor / name).is_file():
-            raise ValueError("Неполный комплект сборщика: " + name)
+            raise ValueError("The builder is missing: " + name)
     output.mkdir(parents=True, exist_ok=True)
     scratch.mkdir(parents=True, exist_ok=True)
-    if shutil.disk_usage(appdir).free < 2 * xapk.stat().st_size + 1024**3:
-        raise ValueError(
-            "Недостаточно места: нужны временная копия исходников и место для результата"
-        )
+    if shutil.disk_usage(output).free < 2 * xapk.stat().st_size + 1024**3:
+        raise ValueError("Not enough space for temporary input files and the result")
     with tempfile.TemporaryDirectory(prefix="run-", dir=scratch) as temp:
         work = Path(temp)
         meta, icon, versions = unpack_xapk(xapk, work / "inputs")
@@ -404,9 +423,9 @@ def build(
             and (assets / e["BundleName"]).is_file()
         )
         required = 2 * xapk.stat().st_size + 5 * estimated + 512 * 1024**2
-        if shutil.disk_usage(appdir).free < required:
+        if shutil.disk_usage(output).free < required:
             raise ValueError(
-                f"Для этой сборки требуется примерно {required / 1024**3:.1f} GiB дополнительного свободного места"
+                f"This build needs approximately {required / 1024**3:.1f} GiB of additional free space"
             )
         kwargs = {"converter": converter} if converter else {}
         try:
@@ -421,7 +440,7 @@ def build(
             )
         except BaseException:
             (result / "BUILD_FAILED.txt").write_text(
-                "Подготовка ресурсов не завершена. Не используйте частичные файлы.",
+                "Resource preparation failed. Do not use partial files.",
                 encoding="utf-8",
             )
             raise
@@ -432,8 +451,23 @@ def build(
                 for p in catalog["packs"]
             ],
         }
+        obb_source = work / "inputs" / OBB
+        from .resources import sha256
+
+        obb_meta = dict(
+            id="obb",
+            path="game.obb",
+            bytes=obb_source.stat().st_size,
+            sha256=sha256(obb_source),
+        )
+        shutil.copyfile(obb_source, resources / "game.obb")
+        public["obb"] = obb_meta
+        (resources / "catalog.json").write_text(
+            json.dumps(public, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         setup = dict(
             schema=1,
+            obb=obb_meta,
             defaultLanguage=default_language,
             hookFeed=FEED,
             embeddedPacks=public["packs"] if embedded else [],
@@ -447,7 +481,10 @@ def build(
                 shutil.copyfile(apk, result / "tesl-reborn.apk")
                 obb_dest = result / f"Android/obb/{PACKAGE}"
                 obb_dest.mkdir(parents=True)
-                shutil.copyfile(work / "inputs" / OBB, obb_dest / OBB)
+                try:
+                    os.link(resources / "game.obb", obb_dest / OBB)
+                except OSError:
+                    shutil.copyfile(resources / "game.obb", obb_dest / OBB)
             else:
                 final = result / "tesl-reborn.xapk"
                 obb_path = f"Android/obb/{PACKAGE}/{OBB}"
@@ -481,7 +518,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=25,
+                        androidBuild=26,
                     ),
                     indent=2,
                 ),
@@ -489,9 +526,9 @@ def build(
             )
         except BaseException:
             (result / "BUILD_FAILED.txt").write_text(
-                "Сборка не завершена. Не устанавливайте частичные файлы. См. журнал сборщика.",
+                "Build failed. Do not install partial files. See build.log.",
                 encoding="utf-8",
             )
             raise
-    log("Готово: " + str(result))
+    log("Output ready: " + str(result))
     return result

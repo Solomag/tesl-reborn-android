@@ -35,6 +35,8 @@ def main():
             *compiler,
             "-encoding",
             "UTF-8",
+            "-classpath",
+            str(vendor / "zxing-core.jar"),
             "-source",
             "8",
             "-target",
@@ -66,6 +68,7 @@ def main():
             "--output",
             str(dex),
             str(jar),
+            str(vendor / "zxing-core.jar"),
         ],
         check=True,
     )

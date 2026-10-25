@@ -2,7 +2,6 @@ package org.teslreborn.setup;
 
 import android.app.*;
 import android.content.*;
-import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.*;
 import android.view.*;
@@ -11,6 +10,7 @@ import java.io.*;
 import java.net.URL;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.zip.ZipFile;
 import org.json.*;
 
 /** Runs before Unity: resources can be installed without a game login or ADB. */
@@ -20,7 +20,7 @@ public final class ResourceActivity extends Activity {
     "tr_tr"
   };
   private static final String[] LABELS = {
-    "По системе телефона",
+    "Phone system language",
     "English",
     "Deutsch",
     "Español",
@@ -39,6 +39,11 @@ public final class ResourceActivity extends Activity {
   private TextView status;
   private Spinner language;
   private Button launch, download, embedded, remove;
+  private final List<Button> actions = new ArrayList<>();
+  private Spinner uiLanguage;
+  private String uiCode = "en_us";
+  private File obbFile;
+  private boolean initialized = false;
   private boolean busy = false;
   private File root;
 
@@ -46,8 +51,9 @@ public final class ResourceActivity extends Activity {
   public void onCreate(Bundle state) {
     super.onCreate(state);
     try {
+      stopGameProcess();
       root = getExternalFilesDir(null);
-      if (root == null) throw new IOException("Хранилище приложения недоступно");
+      if (root == null) throw new IOException("App storage is unavailable");
       installer =
           new PackInstaller(
               root, new File(getCacheDir(), "tesl-resource-downloads"), this::message);
@@ -65,11 +71,11 @@ public final class ResourceActivity extends Activity {
                 .put("feedUrl", setup.optString("hookFeed", ""))
                 .put("allowLocalUpdates", false)
                 .put("safeMode", false));
+      obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
+      uiCode = getPreferences(0).getString("uiLanguage", "en_us");
       buildUi();
       applyLink(getIntent());
-      String saved =
-          getPreferences(0).getString("language", setup.optString("defaultLanguage", "system"));
-      for (int i = 0; i < CODES.length; i++) if (CODES[i].equals(saved)) language.setSelection(i);
+      initialized = true;
       refresh();
       if (setup.getJSONArray("embeddedPacks").length() > 0 && !ready()) installEmbedded();
       else if (ready()
@@ -77,9 +83,9 @@ public final class ResourceActivity extends Activity {
           && getIntent().getData() == null) launchGame();
     } catch (Exception e) {
       new AlertDialog.Builder(this)
-          .setTitle("Подготовка ресурсов")
+          .setTitle("Game data setup")
           .setMessage(e.toString())
-          .setPositiveButton("Закрыть", (d, w) -> finish())
+          .setPositiveButton("Close", (d, w) -> finish())
           .show();
     }
   }
@@ -99,10 +105,14 @@ public final class ResourceActivity extends Activity {
       String url = data.getQueryParameter("url"), key = data.getQueryParameter("token");
       if (url != null) address.setText(url);
       if (key != null) token.setText(key);
+      String code = data.getQueryParameter("language");
+      if (code != null)
+        for (int i = 0; i < CODES.length; i++) if (CODES[i].equals(code)) language.setSelection(i);
     }
   }
 
   private void buildUi() {
+    actions.clear();
     ScrollView scroll = new ScrollView(this);
     LinearLayout box = new LinearLayout(this);
     box.setOrientation(1);
@@ -110,24 +120,63 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 25\nПодготовка ресурсов");
+    heading.setText("TESL Reborn · Android 26\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
     hint.setText(
-        "Выберите язык. Встроенные пакеты устанавливаются с телефона. Для отдельных пакетов"
-            + " запустите передачу в сборщике на ПК и введите адрес и код. Для внешнего сервера"
-            + " используйте HTTPS. Для смены языка уже запущенной игры потребуется полный"
-            + " перезапуск приложения.");
+        tr(
+            "Choose a game language. To download from your PC, start transfer in the builder and"
+                + " scan its QR code. Wi-Fi and Tailscale need no certificate."));
     box.addView(hint);
+    TextView interfaceLabel = new TextView(this);
+    interfaceLabel.setText(tr("Interface language"));
+    box.addView(interfaceLabel);
+    uiLanguage = new Spinner(this);
+    uiLanguage.setAdapter(
+        new ArrayAdapter<String>(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            Arrays.copyOfRange(LABELS, 1, LABELS.length)));
+    for (int i = 1; i < CODES.length; i++)
+      if (CODES[i].equals(uiCode)) uiLanguage.setSelection(i - 1);
+    box.addView(uiLanguage);
+    uiLanguage.setOnItemSelectedListener(
+        new AdapterView.OnItemSelectedListener() {
+          public void onNothingSelected(AdapterView<?> p) {}
+
+          public void onItemSelected(AdapterView<?> p, View v, int i, long id) {
+            if (!CODES[i + 1].equals(uiCode)) {
+              uiCode = CODES[i + 1];
+              getPreferences(0).edit().putString("uiLanguage", uiCode).commit();
+              if (!busy) {
+                String previousAddress = address.getText().toString();
+                String previousToken = token.getText().toString();
+                buildUi();
+                address.setText(previousAddress);
+                token.setText(previousToken);
+                refresh();
+              }
+            }
+          }
+        });
+    TextView gameLabel = new TextView(this);
+    gameLabel.setText(tr("Game language"));
+    box.addView(gameLabel);
     language = new Spinner(this);
     language.setAdapter(
         new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, LABELS));
     box.addView(language);
+    String saved =
+        getPreferences(0).getInt("setupVersion", 0) >= 2
+            ? getPreferences(0).getString("language", setup.optString("defaultLanguage", "en_us"))
+            : setup.optString("defaultLanguage", "en_us");
+    for (int i = 0; i < CODES.length; i++) if (CODES[i].equals(saved)) language.setSelection(i);
     Button system = new Button(this);
-    system.setText("Вернуть язык системы");
+    system.setText(tr("Use phone language"));
     system.setOnClickListener(v -> language.setSelection(0));
     box.addView(system);
+    actions.add(system);
     address = new EditText(this);
     address.setSingleLine(true);
     address.setHint("http://192.168.1.10:12345/");
@@ -137,26 +186,39 @@ public final class ResourceActivity extends Activity {
     box.addView(address);
     token = new EditText(this);
     token.setSingleLine(true);
-    token.setHint("Временный код доступа (для сервера сборщика)");
+    token.setHint(tr("Connection code shown on your PC"));
     token.setInputType(
         android.text.InputType.TYPE_CLASS_TEXT
             | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
     box.addView(token);
-    download = button(box, "Скачать общие ресурсы и выбранный язык", () -> download());
-    embedded = button(box, "Установить встроенные пакеты", () -> installEmbedded());
+    button(
+        box,
+        "Scan QR code",
+        () -> startActivityForResult(new Intent(this, ScanActivity.class), 10));
+    download = button(box, "Download missing game data and language", () -> download());
+    button(
+        box,
+        "Import OBB file",
+        () -> {
+          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+          intent.setType("*/*");
+          intent.addCategory(Intent.CATEGORY_OPENABLE);
+          startActivityForResult(intent, 11);
+        });
+    embedded = button(box, "Install included language packs", () -> installEmbedded());
     remove =
         button(
             box,
-            "Удалить выбранный языковой пакет",
+            "Remove selected language",
             () -> {
               final String code = selected();
               new AlertDialog.Builder(this)
-                  .setMessage("Удалить установленный пакет " + code + "?")
-                  .setNegativeButton("Отмена", null)
-                  .setPositiveButton("Удалить", (d, w) -> run(() -> installer.remove(code)))
+                  .setMessage("Remove installed language " + code + "?")
+                  .setNegativeButton("Cancel", null)
+                  .setPositiveButton("Remove", (d, w) -> run(() -> installer.remove(code)))
                   .show();
             });
-    launch = button(box, "Запустить игру", () -> launchGame());
+    launch = button(box, "Launch game", () -> launchGame());
     status = new TextView(this);
     status.setTextIsSelectable(true);
     box.addView(status);
@@ -166,15 +228,31 @@ public final class ResourceActivity extends Activity {
 
           public void onItemSelected(
               android.widget.AdapterView<?> parent, View view, int position, long id) {
-            getPreferences(0).edit().putString("language", CODES[position]).apply();
+            if (initialized)
+              getPreferences(0)
+                  .edit()
+                  .putString("language", CODES[position])
+                  .putInt("setupVersion", 2)
+                  .apply();
             refresh();
+            if (initialized && !busy && !installer.installed(selected())) {
+              JSONArray included = setup.optJSONArray("embeddedPacks");
+              for (int i = 0; i < included.length(); i++) {
+                JSONObject pack = included.optJSONObject(i);
+                if (pack != null && selected().equals(pack.optString("id"))) {
+                  installEmbedded();
+                  break;
+                }
+              }
+            }
           }
         });
   }
 
   private Button button(LinearLayout box, String text, Runnable action) {
     Button b = new Button(this);
-    b.setText(text);
+    actions.add(b);
+    b.setText(tr(text));
     b.setOnClickListener(v -> action.run());
     box.addView(b);
     return b;
@@ -195,7 +273,60 @@ public final class ResourceActivity extends Activity {
   }
 
   private boolean obbReady() {
-    return new File(getObbDir(), "main.11009." + getPackageName() + ".obb").isFile();
+    try {
+      if (obbFile == null || !obbFile.isFile()) return false;
+      JSONObject expected = setup.optJSONObject("obb");
+      if (expected != null && obbFile.length() != expected.getLong("bytes")) return false;
+      try (ZipFile zip = new ZipFile(obbFile)) {
+        return zip.getEntry("assets/versions.json") != null
+            && (expected == null
+                || getPreferences(0).getLong("obbSize", -1) == obbFile.length()
+                    && getPreferences(0).getLong("obbModified", -1) == obbFile.lastModified()
+                    && expected
+                        .getString("sha256")
+                        .equals(getPreferences(0).getString("obbHash", "")));
+      }
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  @Override
+  protected void onResume() {
+    super.onResume();
+    if (installer != null && setup != null && language != null) {
+      refresh();
+      if (!busy && obbFile != null && obbFile.isFile() && !obbReady())
+        run(
+            () -> {
+              JSONObject expected = setup.optJSONObject("obb");
+              if (expected != null) {
+                message("Checking base game data…");
+                if (obbFile.length() != expected.getLong("bytes")
+                    || !PackInstaller.hash(obbFile).equals(expected.getString("sha256")))
+                  throw new IOException(
+                      "Base game data is incomplete or corrupt. Import it again or download it from"
+                          + " your PC.");
+                rememberObb(expected);
+              }
+            });
+    }
+  }
+
+  private void stopGameProcess() {
+    ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+    java.util.List<ActivityManager.RunningAppProcessInfo> processes =
+        manager.getRunningAppProcesses();
+    if (processes != null)
+      for (ActivityManager.RunningAppProcessInfo process : processes)
+        if (getPackageName().equals(process.processName)
+            && process.uid == android.os.Process.myUid()
+            && process.pid != android.os.Process.myPid())
+          android.os.Process.killProcess(process.pid);
+  }
+
+  private String tr(String value) {
+    return UiStrings.text(uiCode, value);
   }
 
   private boolean ready() {
@@ -205,29 +336,41 @@ public final class ResourceActivity extends Activity {
   private void refresh() {
     if (status == null) return;
     boolean ready = ready();
+    for (Button action : actions) action.setEnabled(!busy);
     launch.setEnabled(!busy && ready);
     download.setEnabled(!busy);
     embedded.setEnabled(!busy && setup.optJSONArray("embeddedPacks").length() > 0);
     remove.setEnabled(!busy && installer.installed(selected()));
     language.setEnabled(!busy);
+    uiLanguage.setEnabled(!busy);
     status.setText(
-        "Язык: "
+        tr("Game language")
+            + ": "
             + selected()
-            + "\nOBB: "
-            + (obbReady()
-                ? "найден"
-                : "скопируйте main.11009." + getPackageName() + ".obb в " + getObbDir())
-            + "\nОбщие ресурсы: "
-            + (installer.installed("common") ? "установлены" : "нужны")
-            + "\nПакет языка: "
-            + (installer.installed(selected()) ? "установлен" : "нужен")
-            + "\nУстановщик ресурсов v1 · APK 25");
+            + "\n"
+            + tr("Base game data (OBB)")
+            + ": "
+            + tr(obbReady() ? "Installed" : "Missing")
+            + "\n"
+            + tr("Common resources")
+            + ": "
+            + tr(installer.installed("common") ? "Installed" : "Missing")
+            + "\n"
+            + tr("Language pack")
+            + ": "
+            + tr(installer.installed(selected()) ? "Installed" : "Missing")
+            + "\n"
+            + (ready()
+                ? tr("Ready to launch")
+                : tr(
+                    "Install the missing items above. APK alone does not include the base game"
+                        + " data.")));
   }
 
   private void message(String text) {
     runOnUiThread(
         () -> {
-          if (status != null) status.setText(text);
+          if (status != null && !isDestroyed()) status.setText(tr(text));
         });
   }
 
@@ -250,11 +393,12 @@ public final class ResourceActivity extends Activity {
           final String error = failure;
           runOnUiThread(
               () -> {
+                if (isDestroyed()) return;
                 busy = false;
                 refresh();
                 if (error != null)
                   new AlertDialog.Builder(this)
-                      .setTitle("Передача не завершена")
+                      .setTitle(tr("Transfer incomplete"))
                       .setMessage(error)
                       .setPositiveButton("OK", null)
                       .show();
@@ -266,6 +410,7 @@ public final class ResourceActivity extends Activity {
     final String code = selected();
     run(
         () -> {
+          if (obbFile.isFile() && !obbReady()) verifyExistingObb();
           JSONArray packs = setup.getJSONArray("embeddedPacks");
           for (int i = 0; i < packs.length(); i++) {
             JSONObject pack = packs.getJSONObject(i);
@@ -273,10 +418,10 @@ public final class ResourceActivity extends Activity {
             if (!id.equals("common") && !id.equals(code)) continue;
             if (installer.installed(id)
                 && installer.installedHash(id).equals(pack.getString("sha256"))) continue;
-            message("Извлечение встроенного пакета " + id);
+            message("Installing " + id);
             File file = new File(getCacheDir(), pack.getString("sha256") + ".embedded");
             if (getCacheDir().getUsableSpace() < pack.getLong("bytes") + 32L * 1024 * 1024)
-              throw new IOException("Недостаточно места для извлечения пакета");
+              throw new IOException("Not enough space to install the included pack");
             try {
               try (InputStream in = getAssets().open("tesl-reborn/" + pack.getString("path"));
                   FileOutputStream out = new FileOutputStream(file)) {
@@ -308,13 +453,28 @@ public final class ResourceActivity extends Activity {
         () -> {
           URL base = PackInstaller.baseUrl(url);
           JSONObject catalog = installer.catalog(base, key);
+          if (!obbReady()) {
+            JSONObject obb = catalog.optJSONObject("obb");
+            if (obb == null)
+              throw new IOException(
+                  "This previous build cannot transfer OBB. Rebuild with Android 26 or import the"
+                      + " OBB file.");
+            JSONObject expected = setup.optJSONObject("obb");
+            if (expected != null && !expected.getString("sha256").equals(obb.getString("sha256")))
+              throw new IOException("Base game data does not match this APK");
+            File file = installer.download(base, key, obb);
+            installObb(new FileInputStream(file), obb);
+            file.delete();
+          }
           JSONArray packs = catalog.getJSONArray("packs");
           Map<String, JSONObject> byId = new HashMap<>();
           for (int i = 0; i < packs.length(); i++)
             byId.put(packs.getJSONObject(i).getString("id"), packs.getJSONObject(i));
           if (!byId.containsKey(code))
             throw new IOException(
-                "На сервере нет пакета " + code + ". Подготовьте его в сборщике ПК.");
+                "The PC has no pack for "
+                    + code
+                    + ". Select it in the PC builder and build again.");
           for (String id : new String[] {"common", code}) {
             JSONObject pack = byId.get(id);
             if (installer.installed(id)
@@ -325,32 +485,50 @@ public final class ResourceActivity extends Activity {
           }
           if (!key.isEmpty())
             try {
-              installer.complete(base, key, code);
+              installer.verifyInstalled("common");
+              installer.verifyInstalled(code);
+              if (!readyFor(code)) throw new IOException("Game data is incomplete");
+              JSONObject installed =
+                  new JSONObject()
+                      .put("common", installer.installedHash("common"))
+                      .put(code, installer.installedHash(code));
+              String hash = catalog.has("obb") ? PackInstaller.hash(obbFile) : "";
+              installer.complete(base, key, installed, hash);
             } catch (Exception e) {
               message(
-                  "Ресурсы установлены; подтверждение серверу не доставлено. Сервер выключится по"
-                      + " таймеру.");
+                  "Resources installed; the PC did not receive confirmation. Transfer will stop"
+                      + " after the idle timeout.");
             }
         });
   }
 
   private void launchGame() {
-    if (!ready()) return;
+    if (!ready()) {
+      refresh();
+      return;
+    }
+    final String code = selected();
+    run(
+        () -> {
+          message("Checking installed resources…");
+          installer.verifyInstalled("common");
+          installer.verifyInstalled(code);
+          runOnUiThread(() -> startGame());
+        });
+  }
+
+  private void startGame() {
+    if (isDestroyed()) return;
     try {
       String code = selected();
       boolean system = CODES[language.getSelectedItemPosition()].equals("system");
       PackInstaller.writeJson(
           new File(root, "tesl-reborn-language.json"),
           new JSONObject().put("language", code).put("system", system));
-      getPreferences(0).edit().putBoolean("setupComplete", true).apply();
-      Locale locale =
-          system
-              ? systemLocale()
-              : new Locale(code.substring(0, 2), code.substring(3).toUpperCase(Locale.ROOT));
-      Locale.setDefault(locale);
-      Configuration config = new Configuration(getResources().getConfiguration());
-      config.setLocale(locale);
-      getResources().updateConfiguration(config, getResources().getDisplayMetrics());
+      getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2).apply();
+      // Unity runs in the main process; the preparation screen lives in :resources.
+      // Always start a clean Unity process after resources or language changes.
+      stopGameProcess();
       Intent intent = new Intent(Intent.ACTION_MAIN);
       intent.addCategory(Intent.CATEGORY_LAUNCHER);
       intent.setClassName(getPackageName(), setup.getString("gameActivity"));
@@ -362,10 +540,82 @@ public final class ResourceActivity extends Activity {
     }
   }
 
+  private boolean readyFor(String code) {
+    return obbReady() && installer.installed("common") && installer.installed(code);
+  }
+
+  private void verifyExistingObb() throws Exception {
+    JSONObject expected = setup.optJSONObject("obb");
+    if (expected == null) return;
+    message("Checking base game data…");
+    if (obbFile.length() != expected.getLong("bytes")
+        || !PackInstaller.hash(obbFile).equals(expected.getString("sha256")))
+      throw new IOException(
+          "Base game data is incomplete or corrupt. Import or download it again.");
+    rememberObb(expected);
+  }
+
+  private void rememberObb(JSONObject meta) throws Exception {
+    getPreferences(0)
+        .edit()
+        .putLong("obbSize", obbFile.length())
+        .putLong("obbModified", obbFile.lastModified())
+        .putString("obbHash", meta.getString("sha256"))
+        .commit();
+  }
+
+  private void installObb(InputStream source, JSONObject meta) throws Exception {
+    File part = new File(getObbDir(), obbFile.getName() + ".part");
+    try (InputStream in = source) {
+      if (meta == null) throw new IOException("Missing OBB metadata; rebuild this APK");
+      PackInstaller.mkdir(getObbDir());
+      if (part.exists() && !part.delete()) throw new IOException("Cannot replace partial OBB");
+      if (getObbDir().getUsableSpace() < meta.getLong("bytes") + 32L * 1024 * 1024)
+        throw new IOException("Not enough space for base game data");
+      try {
+        try (FileOutputStream out = new FileOutputStream(part)) {
+          byte[] b = new byte[1024 * 1024];
+          int n;
+          long size = 0;
+          while ((n = in.read(b)) != -1) {
+            size += n;
+            if (size > meta.getLong("bytes")) throw new IOException("Oversized OBB");
+            out.write(b, 0, n);
+          }
+          out.getFD().sync();
+        }
+        if (part.length() != meta.getLong("bytes")
+            || !PackInstaller.hash(part).equals(meta.getString("sha256")))
+          throw new IOException("Base game data is incomplete or corrupt");
+        PackInstaller.atomic(part, obbFile);
+        rememberObb(meta);
+      } finally {
+        part.delete();
+      }
+    }
+  }
+
+  @Override
+  protected void onActivityResult(int request, int result, Intent data) {
+    super.onActivityResult(request, result, data);
+    if (result != RESULT_OK || data == null) {
+      refresh();
+      return;
+    }
+    if (request == 10) {
+      Intent link = new Intent(Intent.ACTION_VIEW, data.getData());
+      applyLink(link);
+      message("Connected. Tap Download missing game data and language.");
+    } else if (request == 11 && data.getData() != null) {
+      final Uri uri = data.getData();
+      run(() -> installObb(getContentResolver().openInputStream(uri), setup.optJSONObject("obb")));
+    }
+  }
+
   @Override
   public void onBackPressed() {
     if (busy) {
-      message("Дождитесь завершения передачи или закройте приложение через настройки Android.");
+      message("Wait for the transfer to finish or close the app through Android settings.");
       return;
     }
     super.onBackPressed();

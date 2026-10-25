@@ -78,7 +78,7 @@ def find_assets(path):
             for p in candidate.iterdir()
         ):
             return candidate
-    raise ValueError("Не найдена папка StreamingAssets в выбранной игре")
+    raise ValueError("StreamingAssets was not found in the selected PC game")
 
 
 def ensure_outside(path, sources):
@@ -87,7 +87,7 @@ def ensure_outside(path, sources):
         source = Path(source).resolve()
         if target == source or target.is_relative_to(source):
             raise ValueError(
-                "Папка результатов/работы должна находиться вне папки исходной игры"
+                "The output folder must be outside the original PC game folder"
             )
 
 
@@ -116,7 +116,7 @@ def unpack_xapk(source, work):
             or str(meta.get("version_code")) != "11009"
         ):
             raise ValueError(
-                "Нужен оригинальный XAPK com.bethsoft.theelderscrollslegends, versionCode 11009"
+                "Choose the original com.bethsoft.theelderscrollslegends XAPK, versionCode 11009"
             )
         apk_names = [n for n in archive.namelist() if n.endswith(".apk")]
         if len(apk_names) != 1:
@@ -166,6 +166,81 @@ def convert_bundle(source, output):
     Path(output).write_bytes(found[0].save(packer="original"))
 
 
+def localization_map(value):
+    """Recognize string dictionaries without guessing a language from their contents."""
+    if isinstance(value, str):
+        try:
+            return localization_map(json.loads(value))
+        except (ValueError, TypeError):
+            return {}
+    if isinstance(value, dict):
+        if value and all(
+            isinstance(k, str) and isinstance(v, str) for k, v in value.items()
+        ):
+            return value
+        for k, v in (("keys", "values"), ("_keys", "_values"), ("m_Keys", "m_Values")):
+            if (
+                isinstance(value.get(k), list)
+                and isinstance(value.get(v), list)
+                and len(value[k]) == len(value[v])
+            ):
+                result = dict(zip(value[k], value[v]))
+                if result and all(
+                    isinstance(x, str) for pair in result.items() for x in pair
+                ):
+                    return result
+        for key in (
+            "_localizedData",
+            "localizedData",
+            "translations",
+            "strings",
+            "entries",
+            "_entries",
+            "data",
+        ):
+            result = localization_map(value.get(key))
+            if result:
+                return result
+    if isinstance(value, list):
+        result = {}
+        for row in value:
+            if not isinstance(row, dict):
+                return {}
+            key = row.get("key", row.get("Key"))
+            text = row.get("value", row.get("Value"))
+            if not isinstance(key, str) or not isinstance(text, str):
+                return {}
+            result[key] = text
+        return result
+    return {}
+
+
+def extract_localization(source):
+    import UnityPy
+
+    result = {}
+    for obj in UnityPy.load(str(source)).objects:
+        data = {}
+        if obj.type.name == "TextAsset":
+            try:
+                text = obj.read().m_Script
+                if isinstance(text, bytes):
+                    text = text.decode("utf-8-sig")
+                if isinstance(text, str):
+                    data = localization_map(text.lstrip("\ufeff"))
+            except Exception:
+                pass  # Optional recovery; the verified original Unity bundle is retained.
+        elif obj.type.name == "MonoBehaviour":
+            try:
+                data = localization_map(obj.read_typetree())
+            except Exception:
+                pass
+        # A title, a language-name lookup, etc. is not the localization table.
+        if len(data) >= 100 and len(data) > len(result):
+            result = data
+    return result
+
+
 def build_packs(
     assets, versions, languages, output, scratch, log=print, converter=convert_bundle
 ):
@@ -174,7 +249,7 @@ def build_packs(
     ensure_outside(scratch, source_roots(assets, assets))
     entries = read_manifest(versions)
     if not languages or any(lang not in LANGUAGES for lang in languages):
-        raise ValueError("Выбери хотя бы один язык")
+        raise ValueError("Select at least one language")
     selected = {LANGUAGES[lang] for lang in languages}
     common = [
         e
@@ -193,7 +268,9 @@ def build_packs(
         for lang in languages
     }
     if any(not group for group in local.values()):
-        raise ValueError("В манифесте нет пакетов для одного из выбранных языков")
+        raise ValueError(
+            "The original inventory has no packs for one of the selected languages"
+        )
     wanted = common + [e for group in local.values() for e in group]
     missing = []
     for entry in wanted:
@@ -201,7 +278,7 @@ def build_packs(
         if not path.is_relative_to(assets) or not path.is_file():
             missing.append(entry["BundleName"])
     if missing:
-        raise ValueError("Не хватает исходных ресурсов:\n" + "\n".join(missing[:25]))
+        raise ValueError("Missing PC resource files:\n" + "\n".join(missing[:25]))
     output.mkdir(parents=True, exist_ok=True)
     scratch.mkdir(parents=True, exist_ok=True)
     catalog = dict(
@@ -240,6 +317,21 @@ def build_packs(
             )
             for name in ("__data", "__info"):
                 record(target / name, relative + "/" + name)
+        if pack_id in LANGUAGES and converter is convert_bundle:
+            source = assets / "appbase" / pack_id
+            if source.is_file():
+                strings = extract_localization(source)
+                if strings:
+                    text = staging / ("tesl-localization-" + pack_id + ".json")
+                    text.write_text(
+                        json.dumps(strings, ensure_ascii=False), encoding="utf-8"
+                    )
+                    record(text, text.name)
+                    log(f"{pack_id}: recovered {len(strings)} localization strings")
+                else:
+                    log(
+                        f"{pack_id}: no standalone localization table; using the original Unity text bundle"
+                    )
         manifest = dict(
             schema=1,
             format="tesl-reborn-pack-v1",
@@ -256,9 +348,7 @@ def build_packs(
                 archive.write(staging / item["path"], item["path"])
         digest = sha256(partial)
         if partial.stat().st_size > 1024**3:
-            raise ValueError(
-                "Пакет превышает поддерживаемый клиентом размер 1 GiB: " + pack_id
-            )
+            raise ValueError("Pack exceeds the supported 1 GiB limit: " + pack_id)
         directory = output / "packs"
         directory.mkdir(exist_ok=True)
         final = directory / (digest + ".zip")
@@ -266,7 +356,7 @@ def build_packs(
         catalog["packs"].append(
             dict(
                 id=pack_id,
-                name=NAMES.get(pack_id, "Общие ресурсы"),
+                name=NAMES.get(pack_id, "Common resources"),
                 path="packs/" + final.name,
                 bytes=final.stat().st_size,
                 sha256=digest,

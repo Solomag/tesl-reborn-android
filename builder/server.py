@@ -52,6 +52,23 @@ class ResourceServer:
                 )
             self.allowed["/" + pack["path"]] = path
             self.packs[pack["id"]] = pack["sha256"]
+        self.obb = self.catalog.get("obb")
+        if self.obb:
+            path = self.root / "game.obb"
+            import re
+
+            if (
+                self.obb.get("id") != "obb"
+                or self.obb.get("path") != "game.obb"
+                or not re.fullmatch("[a-f0-9]{64}", self.obb.get("sha256", ""))
+                or not path.resolve().is_relative_to(self.root)
+                or not path.is_file()
+                or not 0 < self.obb["bytes"] <= 4 * 1024**3
+                or path.stat().st_size != self.obb["bytes"]
+                or sha256(path) != self.obb["sha256"]
+            ):
+                raise ValueError("Missing or corrupt OBB in transfer folder")
+            self.allowed["/game.obb"] = path
         self.token = secrets.token_urlsafe(24)
         self.idle_seconds, self.grace_seconds, self.log = (
             idle_seconds,
@@ -168,6 +185,8 @@ class ResourceServer:
                         not isinstance(packs, dict)
                         or "common" not in packs
                         or len(packs) < 2
+                        or owner.obb
+                        and payload.get("obb") != owner.obb["sha256"]
                         or any(
                             owner.packs.get(name) != digest
                             for name, digest in packs.items()
@@ -181,7 +200,7 @@ class ResourceServer:
                     owner.finished_at = time.monotonic()
                     owner.last_activity = owner.finished_at
                 owner.log(
-                    "Телефон подтвердил установку. Сервер завершится автоматически."
+                    "Phone confirmed resources and base game data. Transfer will stop automatically."
                 )
                 self.send_response(204)
                 self.send_header("Content-Length", "0")
@@ -239,4 +258,4 @@ class ResourceServer:
         self.stopped.set()
         self.http.shutdown()
         self.http.server_close()
-        self.log("Сервер остановлен.")
+        self.log("Transfer stopped.")
