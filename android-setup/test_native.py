@@ -70,6 +70,20 @@ public class InstallerTest {
     if(fit[0]!=945||fit[1]!=1260)throw new AssertionError("Stretched portrait preview");
     fit=PreviewSize.fit(2000,945,1280,960,180);
     if(fit[0]!=1260||fit[1]!=945)throw new AssertionError("Stretched landscape preview");
+    for(int rotation:new int[]{0,90,180,270}) {
+      float[] q=PreviewSize.corners(945,1900,1280,960,rotation);
+      double horizontal=Math.hypot(q[2]-q[0],q[3]-q[1])/1280;
+      double vertical=Math.hypot(q[4]-q[0],q[5]-q[1])/960;
+      if(Math.abs(horizontal-vertical)>.0001)throw new AssertionError("Nonuniform preview scale");
+    }
+    String token="abcdefghijklmnopqrstuvwx01234567";
+    String decoded=ConnectionLink.resourceUri("http://192.168.1.2:1234/connect/"+token);
+    if(!decoded.equals("teslreborn://resources?url=http%3A%2F%2F192.168.1.2%3A1234%2F&token="+token))throw new AssertionError(decoded);
+    if(!ConnectionLink.resourceUri(decoded).equals(decoded))throw new AssertionError("Legacy QR differs");
+    if(!ConnectionLink.resourceUri("https://example.com/prefix/connect/"+token).contains("%2Fprefix%2F"))throw new AssertionError("Lost proxy prefix");
+    for(String bad:new String[]{"http://8.8.8.8/connect/"+token,"http://192.168.1.2/connect/short","http://192.168.1.2/connect/"+token+"/../catalog.json","http://user@192.168.1.2/connect/"+token,"https://example.com/connect/"+token+"?extra=1"}) {
+      try{ConnectionLink.resourceUri(bad);throw new AssertionError("Unsafe QR accepted");}catch(Exception expected){}
+    }
     return;
   }
   if(a[2].equals("url-ok")){PackInstaller.baseUrl(a[3]);return;}
@@ -147,6 +161,9 @@ def main():
                 str(ROOT / "android-setup/src/org/teslreborn/setup/PackInstaller.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/DataArchive.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/PreviewSize.java"),
+                str(
+                    ROOT / "android-setup/src/org/teslreborn/setup/ConnectionLink.java"
+                ),
                 str(source),
             ],
             check=True,

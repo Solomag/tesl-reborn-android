@@ -4883,6 +4883,7 @@ Il2Cpp.perform(() => {
       return 0;
     }
   }
+  let resourceSettingsWindow = null;
   function resourceLanguage() {
     try {
       const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
@@ -4890,6 +4891,13 @@ Il2Cpp.perform(() => {
     } catch (_) {
     }
     return "";
+  }
+  function resourceSettingsOpen() {
+    try {
+      return resourceSettingsWindow != null && Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy"));
+    } catch (_) {
+      return false;
+    }
   }
   function shortLanguage(code) {
     return String(code).toLowerCase().replace("-", "_").split("_")[0];
@@ -4899,10 +4907,23 @@ Il2Cpp.perform(() => {
   }
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
-    let lastLanguage = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0;
+    let lastLanguage = "", lastRestored = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0;
+    try {
+      const input = ucls("UnityEngine.Input");
+      Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+        onEnter() {
+          try {
+            if (resourceSettingsOpen() && (Number(input.method("get_touchCount", 0).invoke()) > 0 || input.method("GetMouseButtonDown", 1).invoke(0) || input.method("GetMouseButtonUp", 1).invoke(0))) recentInputAt = Date.now();
+          } catch (_) {
+          }
+        }
+      });
+    } catch (error) {
+      log(`resources: settings input trace unavailable: ${error}`);
+    }
     const languageHandlers = /* @__PURE__ */ new Set();
     for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name))) {
-      for (const method of owner.methods.filter((m) => /^(On.*Language.*|SelectLanguage|ChangeLanguage|LanguageChanged)$/.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+      for (const method of owner.methods.filter((m) => /^(On.*(?:Language|Locale|Lang|ValueChanged|SelectionChanged).*|(?:Select|Change|Set).*(?:Language|Locale|Lang)|LanguageChanged)$/i.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
         const key = method.virtualAddress.toString();
         if (languageHandlers.has(key)) continue;
         languageHandlers.add(key);
@@ -4929,10 +4950,11 @@ Il2Cpp.perform(() => {
       tr_tr: ["turkish", "tr"]
     };
     function requestLanguage(target, current) {
-      if (!target || target === current || !loaded || languageInputDepth <= 0 || switching) return;
+      if (!target || target === current || !loaded || switching || languageInputDepth <= 0 && Date.now() - recentInputAt > 3e3) return;
       switching = true;
+      log(`resources: in-game language change ${current} -> ${target}; applying through setup`);
       schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(
-        Il2Cpp.string("teslreborn://resources?language=" + target)
+        Il2Cpp.string("teslreborn://resources?language=" + target + "&apply=1")
       ));
     }
     const setLanguage = localization.method("SetLanguage", 2);
@@ -4945,7 +4967,7 @@ Il2Cpp.perform(() => {
           if (type.name === "System.String") {
             const old = rawStr(args[index]);
             const normalized = old.toLowerCase().replace("-", "_");
-            requestLanguage(Object.keys(languageNames).includes(normalized) ? normalized : Object.keys(languageNames).find((c) => shortLanguage(c) === shortLanguage(old)), choice);
+            requestLanguage(Object.keys(languageNames).includes(normalized) ? normalized : Object.keys(languageNames).find((c) => shortLanguage(c) === shortLanguage(old) || languageNames[c].includes(normalized.replace(/[^a-z]/g, ""))), choice);
             this.languageString = Il2Cpp.string(shapedLanguage(choice, old)).object.ref(false);
             args[index] = this.languageString.target.handle;
           } else if (type.class.isEnum) {
@@ -4968,6 +4990,17 @@ Il2Cpp.perform(() => {
     });
     const pinnedStrings = /* @__PURE__ */ new Map();
     const prefs = ucls("UnityEngine.PlayerPrefs");
+    for (const method of prefs.methods.filter((m) => m.name === "SetString" && m.parameterCount === 2)) {
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) {
+          const key = rawStr(args[0]);
+          if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(key)) return;
+          const value = rawStr(args[1]).toLowerCase().replace("-", "_");
+          const target = Object.keys(languageNames).find((code) => code === value || languageNames[code].includes(value.replace(/[^a-z]/g, "")));
+          requestLanguage(target, resourceLanguage());
+        }
+      });
+    }
     for (const method of prefs.methods.filter((m) => m.name === "GetString" && m.parameterCount >= 1)) {
       Interceptor.attach(method.virtualAddress, {
         onEnter(args) {
@@ -5001,9 +5034,13 @@ Il2Cpp.perform(() => {
           const code = String(call(manager, "get_CurrentLanguageCode")?.content ?? "en");
           let data = manager.field("_localizedData").value;
           let entries = countOf(data);
-          if (entries === 0 || lastLanguage !== code) {
+          const selection = resourceLanguage() || code;
+          if (entries === 0 || lastLanguage !== code || lastRestored !== selection) {
+            lastRestored = selection;
             const restored = restoreLocalization(manager, code);
-            if (restored > 0) log(`localization: restored ${restored} strings from ${code}`);
+            if (restored > 0) {
+              log(`localization: restored ${restored} strings for ${selection}; Unity locale ${code}`);
+            }
             data = manager.field("_localizedData").value;
             entries = countOf(data);
           }
@@ -5842,6 +5879,11 @@ Il2Cpp.perform(() => {
   function installSettingsDataButton(self) {
     if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
     const root = call(self, "get_transform");
+    const window = call(root, "get_gameObject");
+    if (!isNull(window) && (!resourceSettingsWindow || !resourceSettingsWindow.target.handle.equals(window.handle))) {
+      if (resourceSettingsWindow) resourceSettingsWindow.free();
+      resourceSettingsWindow = window.ref(false);
+    }
     if (!isNull(call(root, "Find", Il2Cpp.string("RebornGameData")))) return;
     const labels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
@@ -7168,21 +7210,67 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     });
   });
   section("mobile global debug shortcut", () => {
-    let taps = [], chordFrame = -1, lastFrame = -1, began = null;
+    let taps = [], startFrame = -1, keyDownFrame = -1, lastFrame = -1, began = null, lastError = "";
     const input = ucls("UnityEngine.Input"), time = ucls("UnityEngine.Time");
     const frame = () => Number(time.method("get_frameCount", 0).invoke());
-    for (const name of ["GetKey", "GetKeyDown"]) {
-      const method = input.method(name).overload("UnityEngine.KeyCode");
-      Interceptor.attach(method.virtualAddress, {
-        onEnter(args) {
-          this.code = args[0].toInt32();
-        },
-        onLeave(result) {
-          if (frame() !== chordFrame) return;
-          if (name === "GetKey" && [100, 305, 306].includes(this.code) || name === "GetKeyDown" && this.code === 100)
-            result.replace(ptr(1));
+    function diagnostic(status, detail = "") {
+      log(`mobile debug: ${status}${detail ? ": " + detail : ""}`);
+      try {
+        writeTextFile(`${persistentPath()}/tesl-reborn-debug-status.json`, JSON.stringify({ status, detail, at: (/* @__PURE__ */ new Date()).toISOString() }));
+      } catch (_) {
+      }
+    }
+    const attached = /* @__PURE__ */ new Set();
+    function attachKey(address, name, stringKey = false) {
+      if (!address || address.isNull?.() || attached.has(address.toString())) return;
+      try {
+        Interceptor.attach(address, {
+          onEnter(args) {
+            this.key = stringKey ? rawStr(args[0]).toLowerCase() : args[0]?.toInt32();
+          },
+          onLeave(result) {
+            if (startFrame < 0) return;
+            const current = frame();
+            if (current > startFrame + 5) {
+              startFrame = -1;
+              return;
+            }
+            if (current < startFrame || keyDownFrame >= 0 && current !== keyDownFrame) return;
+            const any = /anyKey/.test(name), down = /Down/.test(name);
+            const d = stringKey ? this.key === "d" : this.key === 100;
+            const ctrl = stringKey ? ["left ctrl", "right ctrl", "left control", "right control"].includes(this.key) : [305, 306].includes(this.key);
+            if (!any && !d && !ctrl) return;
+            if (d && down && keyDownFrame < 0) {
+              keyDownFrame = current;
+              diagnostic("ctrl-d-forwarded", name);
+            }
+            if (any || d || ctrl && !down) result.replace(ptr(1));
+          }
+        });
+        attached.add(address.toString());
+      } catch (error) {
+        log(`mobile debug: cannot hook ${name}: ${error}`);
+      }
+    }
+    for (const method of input.methods.filter((m) => /^(GetKey(?:Down)?(?:Int|String)?|get_anyKey(?:Down)?)$/.test(m.name))) {
+      const stringKey = method.parameters[0]?.type.name === "System.String";
+      try {
+        attachKey(method.virtualAddress, method.name, stringKey);
+      } catch (error) {
+        log(`mobile debug: input method unavailable ${method.name}: ${error}`);
+      }
+    }
+    try {
+      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+      for (const name of ["GetKeyInt", "GetKeyDownInt", "GetKeyString", "GetKeyDownString", "get_anyKey", "get_anyKeyDown"]) {
+        const signature = name.endsWith("Int") ? "UnityEngine.KeyCode" : name.endsWith("String") ? "System.String" : "";
+        for (const suffix of ["", `(${signature})`]) {
+          const address = resolve(Memory.allocUtf8String(`UnityEngine.Input::${name}${suffix}`));
+          attachKey(address, name, name.endsWith("String"));
         }
-      });
+      }
+    } catch (error) {
+      log(`mobile debug: native input resolution unavailable: ${error}`);
     }
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
     Interceptor.attach(update.virtualAddress, {
@@ -7191,13 +7279,15 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
           const current = frame();
           if (current === lastFrame) return;
           lastFrame = current;
-          if (Number(input.method("get_touchCount", 0).invoke()) !== 1) {
+          const count = Number(input.method("get_touchCount", 0).invoke());
+          if (count !== 1) {
             began = null;
+            if (count > 1) taps = [];
             return;
           }
           const touch = input.method("GetTouch", 1).invoke(0), phase = enumVal(touch.method("get_phase", 0).invoke());
           const point = uiXY(touch.method("get_position", 0).invoke()), screen = chatScreen();
-          const size = Math.max(40, Math.min(96, Math.min(screen.width, screen.height) * 0.08));
+          const size = Math.max(64, Math.min(160, Math.min(screen.width, screen.height) * 0.1));
           const inside = point.x >= 0 && point.x <= size && point.y >= screen.height - size && point.y <= screen.height;
           if (phase === 0) {
             began = inside ? { x: point.x, y: point.y, at: Date.now() } : null;
@@ -7216,17 +7306,24 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
             return;
           }
           began = null;
-          taps = taps.filter((at) => now - at < 900);
+          taps = taps.filter((at) => now - at < 1100);
           taps.push(now);
           if (taps.length >= 3) {
             taps = [];
-            chordFrame = current + 1;
+            startFrame = current + 1;
+            keyDownFrame = -1;
+            diagnostic("gesture-detected");
           }
-        } catch (_) {
+        } catch (error) {
+          const message = String(error);
+          if (message !== lastError) {
+            lastError = message;
+            diagnostic("input-error", message);
+          }
         }
       }
     });
-    log("mobile debug gesture active in menu and battle; original Ctrl+D permissions preserved");
+    diagnostic("ready", `${attached.size} input hooks; original Ctrl+D permissions preserved`);
   });
   section("Reborn Android updater and diagnostics", () => {
     const uriClass = ucls("System.Uri");

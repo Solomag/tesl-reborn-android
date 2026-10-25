@@ -107,7 +107,18 @@ def patch_manifest(path):
             ANDROID + "configChanges": "keyboard|keyboardHidden|orientation|screenSize",
         },
     )
-    launcher = ET.SubElement(activity, "intent-filter")
+    gate = ET.SubElement(
+        application,
+        "activity",
+        {
+            ANDROID + "name": "org.teslreborn.setup.LaunchActivity",
+            ANDROID + "exported": "true",
+            ANDROID + "process": ":resources",
+            ANDROID + "theme": "@android:style/Theme.NoDisplay",
+            ANDROID + "label": "TESL Reborn",
+        },
+    )
+    launcher = ET.SubElement(gate, "intent-filter")
     ET.SubElement(launcher, "action", {ANDROID + "name": "android.intent.action.MAIN"})
     ET.SubElement(
         launcher, "category", {ANDROID + "name": "android.intent.category.LAUNCHER"}
@@ -135,6 +146,7 @@ def patch_manifest(path):
         "activity",
         {
             ANDROID + "name": "org.teslreborn.setup.ScanActivity",
+            ANDROID + "hardwareAccelerated": "true",
             ANDROID + "exported": "false",
             ANDROID + "process": ":resources",
             ANDROID + "theme": "@android:style/Theme.Material.Light.NoActionBar",
@@ -516,7 +528,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=27,
+                        androidBuild=28,
                     ),
                     indent=2,
                 ),

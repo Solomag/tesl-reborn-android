@@ -13,6 +13,11 @@ def main():
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--cert", type=Path)
     parser.add_argument("--key", type=Path)
+    parser.add_argument(
+        "--apk",
+        type=Path,
+        help="APK or builder XAPK offered on the QR installation page",
+    )
     args = parser.parse_args()
     server = ResourceServer(
         args.catalog_directory,
@@ -20,7 +25,9 @@ def main():
         port=args.port,
         cert=args.cert,
         key=args.key,
+        apk=args.apk,
     ).start()
+    print("Installation page path:", server.connect_path, flush=True)
     print("Port:", server.port, "\nTemporary access code:", server.token, flush=True)
     try:
         while not server.stopped.wait(1):

@@ -18,7 +18,11 @@ and one `tesl-reborn-data.zip` containing the original OBB, recovered PC bundles
 and selected languages. Install the APK and choose **Import data ZIP** on the
 phone, or transfer missing data through the temporary PC server and QR code.
 Game data is opened from **Settings**, and optional languages can be transferred
-later. See [Android 27 verification](docs/android-27-check-ru.md).
+later. The same QR opens an APK installation page in the phone browser or connects
+the installed app to the PC. Downloading the APK does not acknowledge resource
+installation. Verified existing data launches straight into Unity without showing
+setup; Game data remains available in Settings.
+See [Android 28 verification](docs/android-28-check-ru.md).
 
 **Offline XAPK** remains an alternative. The legacy command-line workflow below
 builds that layout: the OBB ships in the XAPK, while recovered cache entries ship

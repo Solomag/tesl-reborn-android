@@ -36,48 +36,6 @@ final class UiStrings {
           "Oyun dili"
         });
     TEXT.put(
-        "Use phone language",
-        new String[] {
-          "Use phone language",
-          "Telefonsprache verwenden",
-          "Usar idioma del teléfono",
-          "Usar idioma del teléfono",
-          "Langue du téléphone",
-          "Usa lingua del telefono",
-          "Użyj języka telefonu",
-          "Usar idioma do telefone",
-          "Язык системы телефона",
-          "Telefon dilini kullan"
-        });
-    TEXT.put(
-        "Scan QR code",
-        new String[] {
-          "Scan QR code",
-          "QR-Code scannen",
-          "Escanear código QR",
-          "Escanear código QR",
-          "Scanner le code QR",
-          "Scansiona codice QR",
-          "Zeskanuj kod QR",
-          "Ler código QR",
-          "Сканировать QR-код",
-          "QR kodunu tara"
-        });
-    TEXT.put(
-        "Download missing game data and language",
-        new String[] {
-          "Download missing game data and language",
-          "Fehlende Spieldaten und Sprache laden",
-          "Descargar datos e idioma que faltan",
-          "Descargar datos e idioma que faltan",
-          "Télécharger les données et la langue manquantes",
-          "Scarica dati e lingua mancanti",
-          "Pobierz brakujące dane i język",
-          "Baixar dados e idioma ausentes",
-          "Скачать недостающие данные и язык",
-          "Eksik oyun verilerini ve dili indir"
-        });
-    TEXT.put(
         "Import OBB file",
         new String[] {
           "Import OBB file",
@@ -496,6 +454,62 @@ final class UiStrings {
           "XAPK offline",
           "Автономный XAPK",
           "Çevrimdışı XAPK"
+        });
+    TEXT.put(
+        "Use system language for the game",
+        new String[] {
+          "Use system language for the game",
+          "Systemsprache für das Spiel verwenden",
+          "Usar el idioma del sistema en el juego",
+          "Usar el idioma del sistema en el juego",
+          "Utiliser la langue du système pour le jeu",
+          "Usa la lingua di sistema nel gioco",
+          "Użyj języka systemu w grze",
+          "Usar o idioma do sistema no jogo",
+          "Установить в игре язык системы",
+          "Oyunda sistem dilini kullan"
+        });
+    TEXT.put(
+        "Scan QR code to download game data from your PC",
+        new String[] {
+          "Scan QR code to download game data from your PC",
+          "QR-Code scannen, um Spieldaten vom PC zu laden",
+          "Escanear QR para descargar datos del juego desde tu PC",
+          "Escanear QR para descargar datos del juego desde tu PC",
+          "Scanner le QR pour télécharger les données du jeu depuis le PC",
+          "Scansiona il QR per scaricare i dati di gioco dal PC",
+          "Zeskanuj QR, aby pobrać dane gry z komputera",
+          "Ler QR para baixar dados do jogo do PC",
+          "Сканировать QR для скачивания данных игры с ПК",
+          "Oyun verilerini bilgisayardan indirmek için QR tara"
+        });
+    TEXT.put(
+        "Download missing game data",
+        new String[] {
+          "Download missing game data",
+          "Fehlende Spieldaten herunterladen",
+          "Descargar datos del juego que faltan",
+          "Descargar datos del juego que faltan",
+          "Télécharger les données de jeu manquantes",
+          "Scarica i dati di gioco mancanti",
+          "Pobierz brakujące dane gry",
+          "Baixar dados do jogo ausentes",
+          "Скачать недостающие данные игры",
+          "Eksik oyun verilerini indir"
+        });
+    TEXT.put(
+        "QR code scanned. Choose your language, then tap Download missing game data.",
+        new String[] {
+          "QR code scanned. Choose your language, then tap Download missing game data.",
+          "QR-Code erkannt. Sprache wählen und fehlende Spieldaten herunterladen.",
+          "QR leído. Elige tu idioma y pulsa Descargar datos del juego que faltan.",
+          "QR leído. Elige tu idioma y pulsa Descargar datos del juego que faltan.",
+          "QR lu. Choisissez la langue, puis téléchargez les données manquantes.",
+          "QR letto. Scegli la lingua, poi scarica i dati di gioco mancanti.",
+          "Kod QR odczytany. Wybierz język i pobierz brakujące dane gry.",
+          "QR lido. Escolha o idioma e baixe os dados do jogo ausentes.",
+          "QR-код считан. Выбери язык и нажми «Скачать недостающие данные игры».",
+          "QR okundu. Dili seçip eksik oyun verilerini indir."
         });
   }
 

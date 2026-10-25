@@ -36,7 +36,8 @@ public final class ResourceActivity extends Activity {
   private PackInstaller installer;
   private JSONObject setup;
   private EditText address, token;
-  private TextView status;
+  private TextView status, connectionHint;
+  private String requestedLanguage;
   private Spinner language;
   private Button launch, download, embedded, remove;
   private final List<Button> actions = new ArrayList<>();
@@ -73,14 +74,20 @@ public final class ResourceActivity extends Activity {
                 .put("safeMode", false));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       uiCode = getPreferences(0).getString("uiLanguage", "en_us");
+      applyLink(getIntent());
+      // Route before inflating the setup UI. Normal launches never draw it
+      // when the selected data is present; explicit Game data links still do.
+      if (readyFor(selected()) && (getIntent().getData() == null || applyRequested())) {
+        if (applyRequested()) launchGame();
+        else startGame();
+        return;
+      }
       buildUi();
       applyLink(getIntent());
       initialized = true;
       refresh();
       if (setup.getJSONArray("embeddedPacks").length() > 0 && !ready()) installEmbedded();
-      else if (ready()
-          && getPreferences(0).getBoolean("setupComplete", false)
-          && getIntent().getData() == null) launchGame();
+
     } catch (Exception e) {
       new AlertDialog.Builder(this)
           .setTitle("Game data setup")
@@ -95,6 +102,15 @@ public final class ResourceActivity extends Activity {
     super.onNewIntent(intent);
     setIntent(intent);
     applyLink(intent);
+    if (applyRequested() && ready()) launchGame();
+  }
+
+  private boolean applyRequested() {
+    Uri data = getIntent().getData();
+    return data != null
+        && "teslreborn".equals(data.getScheme())
+        && "resources".equals(data.getHost())
+        && "1".equals(data.getQueryParameter("apply"));
   }
 
   private void applyLink(Intent intent) {
@@ -103,11 +119,20 @@ public final class ResourceActivity extends Activity {
         && "teslreborn".equals(data.getScheme())
         && "resources".equals(data.getHost())) {
       String url = data.getQueryParameter("url"), key = data.getQueryParameter("token");
-      if (url != null) address.setText(url);
-      if (key != null) token.setText(key);
+      if (url != null && address != null) address.setText(url);
+      if (key != null && token != null) {
+        token.setText(key);
+        if (connectionHint != null)
+          connectionHint.setText(
+              tr("QR code scanned. Choose your language, then tap Download missing game data."));
+      }
       String code = data.getQueryParameter("language");
       if (code != null)
-        for (int i = 0; i < CODES.length; i++) if (CODES[i].equals(code)) language.setSelection(i);
+        for (int i = 0; i < CODES.length; i++)
+          if (CODES[i].equals(code)) {
+            requestedLanguage = code;
+            if (language != null) language.setSelection(i);
+          }
     }
   }
 
@@ -120,7 +145,7 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 27\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 28\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -163,17 +188,15 @@ public final class ResourceActivity extends Activity {
     TextView gameLabel = new TextView(this);
     gameLabel.setText(tr("Game language"));
     box.addView(gameLabel);
+    String savedGameSelection = selection();
     language = new Spinner(this);
     language.setAdapter(
         new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, LABELS));
     box.addView(language);
-    String saved =
-        getPreferences(0).getInt("setupVersion", 0) >= 2
-            ? getPreferences(0).getString("language", setup.optString("defaultLanguage", "en_us"))
-            : setup.optString("defaultLanguage", "en_us");
+    String saved = savedGameSelection;
     for (int i = 0; i < CODES.length; i++) if (CODES[i].equals(saved)) language.setSelection(i);
     Button system = new Button(this);
-    system.setText(tr("Use phone language"));
+    system.setText(tr("Use system language for the game"));
     system.setOnClickListener(v -> language.setSelection(0));
     box.addView(system);
     actions.add(system);
@@ -196,9 +219,12 @@ public final class ResourceActivity extends Activity {
     advanced.addView(token);
     button(
         box,
-        "Scan QR code",
+        "Scan QR code to download game data from your PC",
         () -> startActivityForResult(new Intent(this, ScanActivity.class), 10));
-    download = button(box, "Download missing game data and language", () -> download());
+    connectionHint = new TextView(this);
+    connectionHint.setTextColor(0xff26703a);
+    box.addView(connectionHint);
+    download = button(box, "Download missing game data", () -> download());
     button(
         advanced,
         "Import OBB file",
@@ -277,21 +303,36 @@ public final class ResourceActivity extends Activity {
     return b;
   }
 
+  private String selection() {
+    if (language != null) return CODES[language.getSelectedItemPosition()];
+    if (requestedLanguage != null) return requestedLanguage;
+    String value =
+        getPreferences(0).getInt("setupVersion", 0) >= 2
+            ? getPreferences(0).getString("language", setup.optString("defaultLanguage", "en_us"))
+            : setup.optString("defaultLanguage", "en_us");
+    return Arrays.asList(CODES).contains(value) ? value : "en_us";
+  }
+
   private String selected() {
-    String code = CODES[language.getSelectedItemPosition()];
+    String code = selection();
     if (!code.equals("system")) return code;
-    Locale locale = systemLocale();
+    return systemLanguageCode();
+  }
+
+  static String systemLanguageCode() {
+    Locale locale =
+        android.content.res.Resources.getSystem().getConfiguration().getLocales().get(0);
     String lang = locale.getLanguage();
     if (lang.equals("es")) return locale.getCountry().equals("MX") ? "es_mx" : "es_es";
     for (String c : CODES) if (c.startsWith(lang + "_")) return c;
     return "en_us";
   }
 
-  private Locale systemLocale() {
-    return android.content.res.Resources.getSystem().getConfiguration().getLocales().get(0);
+  private boolean obbReady() {
+    return verifiedObb(obbFile, setup, getPreferences(0));
   }
 
-  private boolean obbReady() {
+  static boolean verifiedObb(File obbFile, JSONObject setup, SharedPreferences prefs) {
     try {
       if (obbFile == null || !obbFile.isFile()) return false;
       JSONObject expected = setup.optJSONObject("obb");
@@ -299,11 +340,9 @@ public final class ResourceActivity extends Activity {
       try (ZipFile zip = new ZipFile(obbFile)) {
         return zip.getEntry("assets/versions.json") != null
             && (expected == null
-                || getPreferences(0).getLong("obbSize", -1) == obbFile.length()
-                    && getPreferences(0).getLong("obbModified", -1) == obbFile.lastModified()
-                    && expected
-                        .getString("sha256")
-                        .equals(getPreferences(0).getString("obbHash", "")));
+                || prefs.getLong("obbSize", -1) == obbFile.length()
+                    && prefs.getLong("obbModified", -1) == obbFile.lastModified()
+                    && expected.getString("sha256").equals(prefs.getString("obbHash", "")));
       }
     } catch (Exception e) {
       return false;
@@ -414,6 +453,11 @@ public final class ResourceActivity extends Activity {
               () -> {
                 if (isDestroyed()) return;
                 busy = false;
+                if (error != null && status == null) {
+                  buildUi();
+                  initialized = true;
+                  applyLink(getIntent());
+                }
                 refresh();
                 if (error != null)
                   new AlertDialog.Builder(this)
@@ -490,7 +534,7 @@ public final class ResourceActivity extends Activity {
             JSONObject obb = catalog.optJSONObject("obb");
             if (obb == null)
               throw new IOException(
-                  "This previous build cannot transfer OBB. Rebuild with Android 27 or import the"
+                  "This previous build cannot transfer OBB. Rebuild with Android 28 or import the"
                       + " OBB file.");
             JSONObject expected = setup.optJSONObject("obb");
             if (expected != null && !expected.getString("sha256").equals(obb.getString("sha256")))
@@ -555,7 +599,7 @@ public final class ResourceActivity extends Activity {
     if (isDestroyed()) return;
     try {
       String code = selected();
-      boolean system = CODES[language.getSelectedItemPosition()].equals("system");
+      boolean system = selection().equals("system");
       String previousLanguage = "";
       try {
         previousLanguage =
@@ -565,7 +609,12 @@ public final class ResourceActivity extends Activity {
       PackInstaller.writeJson(
           new File(root, "tesl-reborn-language.json"),
           new JSONObject().put("language", code).put("system", system));
-      getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2).apply();
+      getPreferences(0)
+          .edit()
+          .putBoolean("setupComplete", true)
+          .putInt("setupVersion", 2)
+          .putString("language", selection())
+          .commit();
       // Unity runs in the main process; the preparation screen lives in :resources.
       // Always start a clean Unity process after resources or language changes.
       if (dataChanged || !code.equals(previousLanguage)) stopGameProcess();
@@ -646,7 +695,10 @@ public final class ResourceActivity extends Activity {
     if (request == 10) {
       Intent link = new Intent(Intent.ACTION_VIEW, data.getData());
       applyLink(link);
-      message("Connected. Tap Download missing game data and language.");
+      connectionHint.setText(
+          tr("QR code scanned. Choose your language, then tap Download missing game data."));
+      download.requestFocus();
+      download.announceForAccessibility(connectionHint.getText());
     } else if (request == 12 && data.getData() != null) {
       final Uri uri = data.getData();
       run(

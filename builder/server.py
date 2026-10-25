@@ -1,14 +1,17 @@
 """Temporary, capability-authenticated, allow-listed resource HTTP server."""
 
 import hmac
+from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import secrets
 import threading
 import time
+from urllib.parse import quote
+import zipfile
 
-from .resources import sha256, LANGUAGES
+from .resources import sha256, LANGUAGES, PACKAGE
 
 
 class ResourceServer:
@@ -22,6 +25,7 @@ class ResourceServer:
         log=print,
         cert=None,
         key=None,
+        apk=None,
     ):
         self.root = Path(root).resolve()
         if (self.root / "catalog.json").stat().st_size > 256 * 1024:
@@ -30,6 +34,21 @@ class ResourceServer:
             (self.root / "catalog.json").read_text(encoding="utf-8")
         )
         self.allowed = {"/catalog.json": self.root / "catalog.json"}
+        self.apk = Path(apk).resolve() if apk else None
+        if self.apk and (
+            not self.apk.is_file() or self.apk.suffix.lower() not in (".apk", ".xapk")
+        ):
+            raise ValueError("The APK selected for transfer is missing")
+        self.apk_member = None
+        self.apk_size = self.apk.stat().st_size if self.apk else 0
+        if self.apk and self.apk.suffix.lower() == ".xapk":
+            self.apk_member = PACKAGE + ".apk"
+            with zipfile.ZipFile(self.apk) as archive:
+                if archive.namelist().count(self.apk_member) != 1:
+                    raise ValueError("The XAPK must contain exactly one base APK")
+                self.apk_size = archive.getinfo(self.apk_member).file_size
+        if self.apk and not 0 < self.apk_size <= 4 * 1024**3:
+            raise ValueError("Invalid APK size")
         self.packs = {}
         for pack in self.catalog["packs"]:
             if pack["id"] not in ("common", *LANGUAGES) or pack["id"] in self.packs:
@@ -108,14 +127,46 @@ class ResourceServer:
                 self.close_connection = True
 
             def do_GET(self):
-                if not self.authenticated():
-                    return
-                # Literal allow-list. No filesystem joins using request paths.
-                if self.path not in owner.allowed:
-                    self.error(404)
-                    return
-                path = owner.allowed[self.path]
-                total = path.stat().st_size
+                browser = self.path in (
+                    owner.connect_path,
+                    owner.connect_path + "/tesl-reborn.apk",
+                )
+                if browser:
+                    if self.headers.get("Origin"):
+                        self.error(403)
+                        return
+                    if self.path == owner.connect_path:
+                        with owner.lock:
+                            owner.last_activity = time.monotonic()
+                        data = owner.landing_page()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Referrer-Policy", "no-referrer")
+                        self.send_header("X-Content-Type-Options", "nosniff")
+                        self.send_header(
+                            "Content-Security-Policy",
+                            "default-src 'none'; script-src 'nonce-"
+                            + owner.token
+                            + "'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+                        )
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+                    if not owner.apk:
+                        self.error(404)
+                        return
+                    path = owner.apk
+                else:
+                    if not self.authenticated():
+                        return
+                    # Literal allow-list. No filesystem joins using request paths.
+                    if self.path not in owner.allowed:
+                        self.error(404)
+                        return
+                    path = owner.allowed[self.path]
+                total = owner.apk_size if browser else path.stat().st_size
                 start, end, partial = 0, total - 1, False
                 value = self.headers.get("Range")
                 if value:
@@ -141,19 +192,35 @@ class ResourceServer:
                         (
                             "application/json"
                             if self.path == "/catalog.json"
-                            else "application/zip"
+                            else (
+                                "application/vnd.android.package-archive"
+                                if browser
+                                else "application/zip"
+                            )
                         ),
                     )
                     self.send_header("Content-Length", str(end - start + 1))
                     self.send_header("Accept-Ranges", "bytes")
                     self.send_header("ETag", '"' + path.stem + '"')
                     self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "no-referrer")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    if browser:
+                        self.send_header(
+                            "Content-Disposition",
+                            'attachment; filename="tesl-reborn.apk"',
+                        )
                     if partial:
                         self.send_header(
                             "Content-Range", f"bytes {start}-{end}/{total}"
                         )
                     self.end_headers()
-                    with path.open("rb") as stream:
+                    with ExitStack() as stack:
+                        if browser and owner.apk_member:
+                            archive = stack.enter_context(zipfile.ZipFile(path))
+                            stream = stack.enter_context(archive.open(owner.apk_member))
+                        else:
+                            stream = stack.enter_context(path.open("rb"))
                         stream.seek(start)
                         remaining = end - start + 1
                         while remaining:
@@ -226,6 +293,42 @@ class ResourceServer:
             except BaseException:
                 self.http.server_close()
                 raise
+
+    @property
+    def connect_path(self):
+        return "/connect/" + self.token
+
+    def connection_url(self, base):
+        return base.rstrip("/") + self.connect_path
+
+    def landing_page(self):
+        # No external content or Host-header interpolation. Relative links also
+        # work behind a reverse proxy with a URL prefix.
+        apk = (
+            '<a class="button" href="'
+            + quote(self.token)
+            + '/tesl-reborn.apk" download>1. Download APK</a>'
+            if self.apk
+            else "<p>This transfer has no APK. Install TESL Reborn first.</p>"
+        )
+        return (
+            """<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Install TESL Reborn</title>
+<style>body{font:18px system-ui;background:#161a20;color:#eee;max-width:38em;margin:3em auto;padding:0 20px;line-height:1.5}.button{display:block;background:#d7ae63;color:#171717;padding:16px;margin:18px 0;border-radius:8px;text-decoration:none;font-weight:bold}</style>
+<h1>TESL Reborn</h1><p>Keep the builder running on your PC. Use the same Wi-Fi or Tailscale connection.</p>"""
+            + apk
+            + '''<p>Install the downloaded APK. Android may ask you to allow installations from your browser. Then return to this page.</p>
+<a class="button" id="open">2. Open TESL Reborn to download game data</a>
+<p>Already installed? Use step 2. In the app, choose your game language and tap <b>Download missing game data</b>.</p>
+<p>The transfer stops automatically after the app confirms installation, or after 15 minutes of inactivity. Downloading the APK alone does not stop it.</p>
+<script nonce="'''
+            + self.token
+            + """">const marker=location.pathname.lastIndexOf('/connect/');
+const base=location.origin+location.pathname.slice(0,marker)+'/';
+document.getElementById('open').href='teslreborn://resources?url='+encodeURIComponent(base)+'&token="""
+            + self.token
+            + """';</script></html>"""
+        ).encode("utf-8")
 
     @property
     def port(self):

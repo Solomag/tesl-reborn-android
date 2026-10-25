@@ -1,10 +1,15 @@
 import hashlib
 import http.client
 import json
+import re
+import shutil
+import subprocess
+from urllib.parse import urljoin, urlsplit, parse_qs
 from pathlib import Path
 import tempfile
 import time
 import unittest
+import zipfile
 
 from builder.server import ResourceServer
 
@@ -68,6 +73,95 @@ class BuilderServerTest(unittest.TestCase):
             403,
         )
         self.assertNotIn(self.server.token, "\n".join(self.logs))
+
+    def test_browser_installation_is_capability_scoped_and_does_not_complete_transfer(
+        self,
+    ):
+        self.server.stop()
+        apk = self.root / "phone.apk"
+        apk.write_bytes(b"APK fixture bytes")
+        self.server = ResourceServer(
+            self.root, host="127.0.0.1", apk=apk, log=self.logs.append
+        ).start()
+        page = self.server.connect_path
+        status, headers, html = self.request(page)
+        self.assertEqual(status, 200)
+        self.assertIn(b"Download APK", html)
+        self.assertIn(b"teslreborn://resources?url=", html)
+        self.assertIn("no-referrer", headers["Referrer-Policy"])
+        self.assertNotIn(b"https://", html)  # no external scripts, fonts or analytics
+        html_text = html.decode("utf-8")
+        href = re.search(r'href="([^"]+)" download', html_text).group(1)
+        location = f"http://127.0.0.1:{self.server.port}" + page
+        apk_path = urlsplit(urljoin(location, href)).path
+        self.assertEqual(apk_path, page + "/tesl-reborn.apk")
+        # Execute the actual page's connection script, including reverse-proxy
+        # prefixes. A valid HTTP response alone does not make the Open button work.
+        node = shutil.which("node")
+        if node:
+            script = re.search(
+                r'<script nonce="[^"]+">(.*?)</script>', html_text, re.S
+            ).group(1)
+            harness = "const vm=require('vm'),fs=require('fs');const link={};vm.runInNewContext(fs.readFileSync(0,'utf8'),{location:new URL(process.argv[1]),document:{getElementById:()=>link}});console.log(link.href)"
+            for address, expected in [
+                (location, f"http://127.0.0.1:{self.server.port}/"),
+                (
+                    "https://example.com/proxy/connect/" + self.server.token,
+                    "https://example.com/proxy/",
+                ),
+            ]:
+                result = subprocess.run(
+                    [node, "-e", harness, address],
+                    input=script,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                connection = urlsplit(result.stdout.strip())
+                self.assertEqual(connection.scheme, "teslreborn")
+                fields = parse_qs(connection.query)
+                self.assertEqual(fields["url"], [expected])
+                self.assertEqual(fields["token"], [self.server.token])
+        status, headers, data = self.request(apk_path)
+        self.assertEqual(status, 200)
+        self.assertEqual(data, apk.read_bytes())
+        self.assertEqual(
+            headers["Content-Type"], "application/vnd.android.package-archive"
+        )
+        self.assertIsNone(self.server.finished_at)
+        self.assertFalse(self.server.should_stop())
+        status, _, data = self.request(
+            page + "/tesl-reborn.apk", {"Range": "bytes=4-10"}
+        )
+        self.assertEqual(status, 206)
+        self.assertEqual(data, apk.read_bytes()[4:11])
+        self.assertEqual(self.request(page + "/../catalog.json")[0], 401)
+        self.assertEqual(self.request("/connect/wrong/tesl-reborn.apk")[0], 401)
+        self.assertEqual(
+            self.request(page, {"Origin": "https://other.example"})[0], 403
+        )
+        self.assertEqual(self.request("/catalog.json")[0], 401)
+        self.assertNotIn(self.server.token, "\n".join(self.logs))
+
+    def test_browser_can_download_apk_from_offline_xapk_without_extracting_it(self):
+        from builder.resources import PACKAGE
+
+        self.server.stop()
+        xapk = self.root / "tesl-reborn.xapk"
+        with zipfile.ZipFile(xapk, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(PACKAGE + ".apk", self.data)
+            z.writestr("unrelated.txt", b"never served")
+        self.server = ResourceServer(
+            self.root, host="127.0.0.1", apk=xapk, log=self.logs.append
+        ).start()
+        status, headers, data = self.request(
+            self.server.connect_path + "/tesl-reborn.apk", {"Range": "bytes=20-99"}
+        )
+        self.assertEqual(status, 206)
+        self.assertEqual(data, self.data[20:100])
+        self.assertEqual(headers["Content-Range"], "bytes 20-99/1000")
+        self.assertFalse((self.root / (PACKAGE + ".apk")).exists())
+        self.assertIsNone(self.server.finished_at)
 
     def test_range_for_resume(self):
         status, headers, data = self.request(

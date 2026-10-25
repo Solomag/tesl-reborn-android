@@ -3,7 +3,7 @@ const text=fs.readFileSync('hook.ts','utf8');
 const a=text.indexOf('  // BEGIN android-ui: settings-data'),b=text.indexOf('  // END android-ui: settings-data',a);
 const objects=new Map();let opened=0,created=0;
 const root={};const self={};
-const c={section:()=>{},resourceLanguage:()=>"en_us",fileExists:()=>true,persistentPath:()=>'/files',isNull:x=>x==null,
+const c={resourceSettingsWindow:null,section:()=>{},resourceLanguage:()=>"en_us",fileExists:()=>true,persistentPath:()=>'/files',isNull:x=>x==null,
  call:(o,n,...args)=>n==='get_transform'?root:n==='Find'?objects.get(args[0])||null:undefined,
  Il2Cpp:{string:x=>x},uiLabeledButton:(name,parent,label,x,y,width,action)=>{created++;objects.set(name,{action});return{}},uiAdd:()=>({}),
  ucls:()=>({method:()=>({invoke:()=>opened++})})};

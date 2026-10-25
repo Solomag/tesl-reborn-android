@@ -189,6 +189,35 @@ def main():
                                 ).compress_type
                                 == zipfile.ZIP_STORED
                             )
+                # Exercise browser APK delivery from both output formats using the
+                # actual signed APK, rather than only the small HTTP fixtures.
+                from builder.server import ResourceServer
+                import http.client
+
+                transfer_source = (
+                    apk if fmt == "manual" else result / "tesl-reborn.xapk"
+                )
+                server = ResourceServer(
+                    result / "resources",
+                    host="127.0.0.1",
+                    apk=transfer_source,
+                    log=lambda _: None,
+                ).start()
+                try:
+                    c = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+                    c.request(
+                        "GET",
+                        server.connect_path + "/tesl-reborn.apk",
+                        headers={"Range": "bytes=0-1023"},
+                    )
+                    response = c.getresponse()
+                    assert response.status == 206
+                    with apk.open("rb") as stream:
+                        assert response.read() == stream.read(1024)
+                    c.close()
+                    assert server.finished_at is None
+                finally:
+                    server.stop()
                 decoded = root / ("inspect-" + fmt)
                 subprocess.run(
                     [
@@ -210,6 +239,25 @@ def main():
                 text = (decoded / "AndroidManifest.xml").read_text()
                 assert "org.teslreborn.setup.ResourceActivity" in text
                 assert "org.teslreborn.setup.ScanActivity" in text
+                assert "org.teslreborn.setup.LaunchActivity" in text
+                assert "Theme.NoDisplay" in text
+                from xml.etree import ElementTree as ET
+
+                ns = "{http://schemas.android.com/apk/res/android}"
+                application = ET.fromstring(text).find("application")
+                launchers = [
+                    a
+                    for a in application.findall("activity")
+                    if any(
+                        i.find("action") is not None
+                        and i.find("action").get(ns + "name")
+                        == "android.intent.action.MAIN"
+                        for i in a.findall("intent-filter")
+                    )
+                ]
+                assert len(launchers) == 1 and launchers[0].get(ns + "name").endswith(
+                    "LaunchActivity"
+                )
                 assert 'android:process=":resources"' in text
         after = {
             p.relative_to(game): p.read_bytes() for p in game.rglob("*") if p.is_file()

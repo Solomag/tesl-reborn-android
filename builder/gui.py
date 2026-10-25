@@ -11,7 +11,6 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from urllib.parse import urlencode
 from urllib.parse import urlsplit
 
 from .build import build, application_directory
@@ -158,13 +157,13 @@ class BuilderWindow:
         options.pack(fill="x", pady=6)
         self.format = tk.StringVar(value="manual")
         ttk.Radiobutton(
-            options, text="Offline XAPK", variable=self.format, value="xapk"
-        ).pack(side="left")
-        ttk.Radiobutton(
             options,
             text="Small APK + data ZIP",
             variable=self.format,
             value="manual",
+        ).pack(side="left")
+        ttk.Radiobutton(
+            options, text="Offline XAPK", variable=self.format, value="xapk"
         ).pack(side="left")
         ttk.Label(
             root,
@@ -211,7 +210,7 @@ class BuilderWindow:
             transfer, text="Advanced connection…", command=self.network_options
         ).pack(anchor="w", pady=3)
         self.connection = tk.StringVar(
-            value="Build first, then start transfer. On the phone tap Scan QR code. Use the same Wi-Fi or Tailscale on both devices."
+            value="Build first, then start transfer. Scan the QR with your phone camera to install, or from TESL Reborn for game data. Use the same Wi-Fi or Tailscale."
         )
         ttk.Label(transfer, textvariable=self.connection, wraplength=790).pack(
             anchor="w", pady=6
@@ -394,7 +393,20 @@ class BuilderWindow:
                         "server",
                         (
                             ResourceServer(
-                                root, log=self.log, port=port, cert=cert, key=key
+                                root,
+                                log=self.log,
+                                port=port,
+                                cert=cert,
+                                key=key,
+                                apk=(
+                                    (root.parent / "tesl-reborn.apk")
+                                    if (root.parent / "tesl-reborn.apk").is_file()
+                                    else (
+                                        (root.parent / "tesl-reborn.xapk")
+                                        if (root.parent / "tesl-reborn.xapk").is_file()
+                                        else None
+                                    )
+                                ),
                             ).start(),
                             public,
                         ),
@@ -487,28 +499,29 @@ class BuilderWindow:
                         else f"http://{self.ip.get()}:{self.server.port}/"
                     )
                     self.connection.set(
-                        f"Address: {url}\nConnection code: {self.server.token}"
+                        f"Install / connect: {self.server.connection_url(url)}\nAddress: {url}\nConnection code: {self.server.token}"
                     )
                     try:
                         import qrcode
                         from PIL import ImageTk
 
-                        image = qrcode.make(
-                            "teslreborn://resources?"
-                            + urlencode({"url": url, "token": self.server.token})
-                        ).resize((160, 160))
+                        image = qrcode.make(self.server.connection_url(url)).resize(
+                            (160, 160)
+                        )
                         self.qr = ImageTk.PhotoImage(image)
                         self.qr_label.configure(image=self.qr)
                         popup = tk.Toplevel(self.window)
                         popup.title("Connect your phone")
                         ttk.Label(
-                            popup, text="On the phone, tap Scan QR code.", padding=12
+                            popup,
+                            text="Scan with your phone camera to install the APK, or scan inside TESL Reborn to download game data.",
+                            padding=12,
+                            wraplength=370,
                         ).pack()
                         large = ImageTk.PhotoImage(
-                            qrcode.make(
-                                "teslreborn://resources?"
-                                + urlencode({"url": url, "token": self.server.token})
-                            ).resize((360, 360))
+                            qrcode.make(self.server.connection_url(url)).resize(
+                                (360, 360)
+                            )
                         )
                         label = ttk.Label(popup, image=large)
                         label.image = large

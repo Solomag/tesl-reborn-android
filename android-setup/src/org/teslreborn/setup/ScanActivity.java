@@ -5,6 +5,8 @@ import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
+import android.graphics.SurfaceTexture;
 import android.hardware.camera2.*;
 import android.media.*;
 import android.net.Uri;
@@ -19,18 +21,21 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 /** In-app QR scanner. Frames are decoded locally; no images are saved or uploaded. */
-public final class ScanActivity extends Activity implements SurfaceHolder.Callback {
+public final class ScanActivity extends Activity implements TextureView.SurfaceTextureListener {
   private CameraDevice camera;
   private CameraCaptureSession session;
   private ImageReader reader;
   private HandlerThread thread;
   private Handler handler;
-  private SurfaceView preview;
+  private TextureView preview;
+  private Surface cameraSurface;
+  private final Handler main = new Handler(Looper.getMainLooper());
   private FrameLayout container;
   private Size previewSize;
   private int sensorRotation;
   private volatile boolean done = false;
   private boolean opening = false;
+  private boolean resumed = false;
   private long lastFrame = 0;
   private int generation = 0;
 
@@ -40,8 +45,9 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
     FrameLayout box = new FrameLayout(this);
     container = box;
     box.setBackgroundColor(0xff000000);
-    preview = new SurfaceView(this);
-    box.addView(preview);
+    preview = new TextureView(this);
+    box.addView(preview, new FrameLayout.LayoutParams(-1, -1));
+    box.setClipChildren(true);
     TextView hint = new TextView(this);
     hint.setText("Point the camera at the QR code in TESL Reborn Builder");
     hint.setTextSize(20);
@@ -50,7 +56,7 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
     hint.setPadding(20, 30, 20, 30);
     box.addView(hint);
     setContentView(box);
-    preview.getHolder().addCallback(this);
+    preview.setSurfaceTextureListener(this);
     if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
       requestPermissions(new String[] {Manifest.permission.CAMERA}, 1);
   }
@@ -65,32 +71,41 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
   }
 
   @Override
-  public void surfaceCreated(SurfaceHolder holder) {
-    open();
+  public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
+    if (resumed) {
+      done = false;
+      open();
+    }
   }
 
   @Override
-  public void surfaceChanged(SurfaceHolder h, int f, int w, int x) {
+  public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int width, int height) {
     fitPreview();
   }
 
   @Override
-  public void surfaceDestroyed(SurfaceHolder holder) {
+  public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
     closeCamera();
+    return true;
   }
+
+  @Override
+  public void onSurfaceTextureUpdated(SurfaceTexture texture) {}
 
   @Override
   protected void onResume() {
     super.onResume();
+    resumed = true;
     done = false;
     if (preview != null) open();
   }
 
   private void open() {
     if (done
+        || !resumed
         || camera != null
         || opening
-        || !preview.getHolder().getSurface().isValid()
+        || !preview.isAvailable()
         || checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
       return;
     opening = true;
@@ -111,7 +126,7 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
                 .getOutputSizes(ImageFormat.YUV_420_888);
         Size[] surfaces =
             info.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                .getOutputSizes(SurfaceHolder.class);
+                .getOutputSizes(SurfaceTexture.class);
         for (Size size : sizes)
           if (surfaces != null
               && Arrays.asList(surfaces).contains(size)
@@ -129,7 +144,11 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
       }
       if (id == null) throw new Exception("No supported rear camera");
       previewSize = chosen;
-      preview.getHolder().setFixedSize(chosen.getWidth(), chosen.getHeight());
+      // Configure the buffer before wrapping it. Capture and request keep these
+      // exact Surface instances for their whole session; layout changes only
+      // change the TextureView matrix, never the camera outputs.
+      preview.getSurfaceTexture().setDefaultBufferSize(chosen.getWidth(), chosen.getHeight());
+      cameraSurface = new Surface(preview.getSurfaceTexture());
       fitPreview();
       reader =
           ImageReader.newInstance(
@@ -139,16 +158,17 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
           id,
           new CameraDevice.StateCallback() {
             public void onOpened(CameraDevice value) {
-              opening = false;
               if (done || ticket != generation) {
                 value.close();
                 return;
               }
+              opening = false;
               camera = value;
               try {
-                final Surface screen = preview.getHolder().getSurface();
+                final Surface screen = cameraSurface;
+                final Surface frames = reader.getSurface();
                 camera.createCaptureSession(
-                    Arrays.asList(screen, reader.getSurface()),
+                    Arrays.asList(screen, frames),
                     new CameraCaptureSession.StateCallback() {
                       public void onConfigured(CameraCaptureSession value) {
                         if (done || ticket != generation || camera == null) {
@@ -160,7 +180,7 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
                           CaptureRequest.Builder request =
                               camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                           request.addTarget(screen);
-                          request.addTarget(reader.getSurface());
+                          request.addTarget(frames);
                           request.set(
                               CaptureRequest.CONTROL_AF_MODE,
                               CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
@@ -171,10 +191,11 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
                       }
 
                       public void onConfigureFailed(CameraCaptureSession s) {
-                        failure("Cannot start camera preview");
+                        s.close();
+                        if (ticket == generation && !done) failure("Cannot start camera preview");
                       }
                     },
-                    handler);
+                    main);
               } catch (Exception e) {
                 failure(e.getMessage());
               }
@@ -182,34 +203,32 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
 
             public void onDisconnected(CameraDevice c) {
               c.close();
-              failure("Camera disconnected");
+              if (ticket == generation && !done) failure("Camera disconnected");
             }
 
             public void onError(CameraDevice c, int e) {
               c.close();
-              failure("Camera error " + e);
+              if (ticket == generation && !done) failure("Camera error " + e);
             }
           },
-          handler);
+          main);
     } catch (Exception e) {
       failure(e.getMessage());
     }
   }
 
   private void fitPreview() {
-    if (previewSize == null || container.getWidth() < 1 || container.getHeight() < 1) return;
+    if (previewSize == null || preview.getWidth() < 1 || preview.getHeight() < 1) return;
     int displayRotation = getWindowManager().getDefaultDisplay().getRotation() * 90;
-    int rotation = (sensorRotation + displayRotation) % 360;
-    int[] fit =
-        PreviewSize.fit(
-            container.getWidth(),
-            container.getHeight(),
-            previewSize.getWidth(),
-            previewSize.getHeight(),
-            rotation);
-    FrameLayout.LayoutParams current = (FrameLayout.LayoutParams) preview.getLayoutParams();
-    if (current.width != fit[0] || current.height != fit[1])
-      preview.setLayoutParams(new FrameLayout.LayoutParams(fit[0], fit[1], Gravity.CENTER));
+    int rotation = (sensorRotation - displayRotation + 360) % 360;
+    int width = preview.getWidth(), height = preview.getHeight();
+    float[] source = {0, 0, width, 0, 0, height};
+    float[] destination =
+        PreviewSize.corners(
+            width, height, previewSize.getWidth(), previewSize.getHeight(), rotation);
+    Matrix transform = new Matrix();
+    transform.setPolyToPoly(source, 0, destination, 0, 3);
+    preview.setTransform(transform);
   }
 
   private void decode(ImageReader r) {
@@ -229,12 +248,7 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
           new PlanarYUVLuminanceSource(y, width, height, 0, 0, width, height, false);
       QRCodeReader qr = new QRCodeReader();
       Result result = qr.decode(new BinaryBitmap(new HybridBinarizer(luma)));
-      Uri uri = Uri.parse(result.getText());
-      if (!"teslreborn".equals(uri.getScheme())
-          || !"resources".equals(uri.getHost())
-          || uri.getQueryParameter("url") == null
-          || uri.getQueryParameter("token") == null) return;
-      PackInstaller.baseUrl(uri.getQueryParameter("url"));
+      Uri uri = Uri.parse(ConnectionLink.resourceUri(result.getText()));
       done = true;
       runOnUiThread(
           () -> {
@@ -270,6 +284,10 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
       camera.close();
       camera = null;
     }
+    if (cameraSurface != null) {
+      cameraSurface.release();
+      cameraSurface = null;
+    }
     if (reader != null) {
       reader.close();
       reader = null;
@@ -283,6 +301,7 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
 
   @Override
   protected void onPause() {
+    resumed = false;
     closeCamera();
     super.onPause();
   }

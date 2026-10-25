@@ -23,42 +23,6 @@
     "ru_ru": "Язык игры",
     "tr_tr": "Oyun dili"
   },
-  "Use phone language": {
-    "en_us": "Use phone language",
-    "de_de": "Telefonsprache verwenden",
-    "es_es": "Usar idioma del teléfono",
-    "es_mx": "Usar idioma del teléfono",
-    "fr_fr": "Langue du téléphone",
-    "it_it": "Usa lingua del telefono",
-    "pl_pl": "Użyj języka telefonu",
-    "pt_br": "Usar idioma do telefone",
-    "ru_ru": "Язык системы телефона",
-    "tr_tr": "Telefon dilini kullan"
-  },
-  "Scan QR code": {
-    "en_us": "Scan QR code",
-    "de_de": "QR-Code scannen",
-    "es_es": "Escanear código QR",
-    "es_mx": "Escanear código QR",
-    "fr_fr": "Scanner le code QR",
-    "it_it": "Scansiona codice QR",
-    "pl_pl": "Zeskanuj kod QR",
-    "pt_br": "Ler código QR",
-    "ru_ru": "Сканировать QR-код",
-    "tr_tr": "QR kodunu tara"
-  },
-  "Download missing game data and language": {
-    "en_us": "Download missing game data and language",
-    "de_de": "Fehlende Spieldaten und Sprache laden",
-    "es_es": "Descargar datos e idioma que faltan",
-    "es_mx": "Descargar datos e idioma que faltan",
-    "fr_fr": "Télécharger les données et la langue manquantes",
-    "it_it": "Scarica dati e lingua mancanti",
-    "pl_pl": "Pobierz brakujące dane i język",
-    "pt_br": "Baixar dados e idioma ausentes",
-    "ru_ru": "Скачать недостающие данные и язык",
-    "tr_tr": "Eksik oyun verilerini ve dili indir"
-  },
   "Import OBB file": {
     "en_us": "Import OBB file",
     "de_de": "OBB-Datei importieren",
@@ -418,5 +382,53 @@
     "pt_br": "XAPK offline",
     "ru_ru": "Автономный XAPK",
     "tr_tr": "Çevrimdışı XAPK"
+  },
+  "Use system language for the game": {
+    "en_us": "Use system language for the game",
+    "de_de": "Systemsprache für das Spiel verwenden",
+    "es_es": "Usar el idioma del sistema en el juego",
+    "es_mx": "Usar el idioma del sistema en el juego",
+    "fr_fr": "Utiliser la langue du système pour le jeu",
+    "it_it": "Usa la lingua di sistema nel gioco",
+    "pl_pl": "Użyj języka systemu w grze",
+    "pt_br": "Usar o idioma do sistema no jogo",
+    "ru_ru": "Установить в игре язык системы",
+    "tr_tr": "Oyunda sistem dilini kullan"
+  },
+  "Scan QR code to download game data from your PC": {
+    "en_us": "Scan QR code to download game data from your PC",
+    "de_de": "QR-Code scannen, um Spieldaten vom PC zu laden",
+    "es_es": "Escanear QR para descargar datos del juego desde tu PC",
+    "es_mx": "Escanear QR para descargar datos del juego desde tu PC",
+    "fr_fr": "Scanner le QR pour télécharger les données du jeu depuis le PC",
+    "it_it": "Scansiona il QR per scaricare i dati di gioco dal PC",
+    "pl_pl": "Zeskanuj QR, aby pobrać dane gry z komputera",
+    "pt_br": "Ler QR para baixar dados do jogo do PC",
+    "ru_ru": "Сканировать QR для скачивания данных игры с ПК",
+    "tr_tr": "Oyun verilerini bilgisayardan indirmek için QR tara"
+  },
+  "Download missing game data": {
+    "en_us": "Download missing game data",
+    "de_de": "Fehlende Spieldaten herunterladen",
+    "es_es": "Descargar datos del juego que faltan",
+    "es_mx": "Descargar datos del juego que faltan",
+    "fr_fr": "Télécharger les données de jeu manquantes",
+    "it_it": "Scarica i dati di gioco mancanti",
+    "pl_pl": "Pobierz brakujące dane gry",
+    "pt_br": "Baixar dados do jogo ausentes",
+    "ru_ru": "Скачать недостающие данные игры",
+    "tr_tr": "Eksik oyun verilerini indir"
+  },
+  "QR code scanned. Choose your language, then tap Download missing game data.": {
+    "en_us": "QR code scanned. Choose your language, then tap Download missing game data.",
+    "de_de": "QR-Code erkannt. Sprache wählen und fehlende Spieldaten herunterladen.",
+    "es_es": "QR leído. Elige tu idioma y pulsa Descargar datos del juego que faltan.",
+    "es_mx": "QR leído. Elige tu idioma y pulsa Descargar datos del juego que faltan.",
+    "fr_fr": "QR lu. Choisissez la langue, puis téléchargez les données manquantes.",
+    "it_it": "QR letto. Scegli la lingua, poi scarica i dati di gioco mancanti.",
+    "pl_pl": "Kod QR odczytany. Wybierz język i pobierz brakujące dane gry.",
+    "pt_br": "QR lido. Escolha o idioma e baixe os dados do jogo ausentes.",
+    "ru_ru": "QR-код считан. Выбери язык и нажми «Скачать недостающие данные игры».",
+    "tr_tr": "QR okundu. Dili seçip eksik oyun verilerini indir."
   }
 }

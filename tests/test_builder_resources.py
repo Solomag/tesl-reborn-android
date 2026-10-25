@@ -215,9 +215,22 @@ class BuilderResourcesTest(unittest.TestCase):
                 if a.get(ANDROID + "name").endswith("ScanActivity")
             )
             self.assertEqual(scanner.get(ANDROID + "exported"), "false")
+            gate = next(
+                a
+                for a in activities
+                if a.get(ANDROID + "name").endswith("LaunchActivity")
+            )
+            self.assertEqual(
+                gate.get(ANDROID + "theme"), "@android:style/Theme.NoDisplay"
+            )
+            self.assertEqual(
+                gate.find("intent-filter/action").get(ANDROID + "name"),
+                "android.intent.action.MAIN",
+            )
+            self.assertEqual(len(setup_activity.findall("intent-filter")), 1)
             self.assertEqual(len(activities[0].findall("intent-filter")), 0)
             self.assertEqual(
-                setup_activity.findall("intent-filter")[1]
+                setup_activity.findall("intent-filter")[0]
                 .find("data")
                 .get(ANDROID + "scheme"),
                 "teslreborn",
