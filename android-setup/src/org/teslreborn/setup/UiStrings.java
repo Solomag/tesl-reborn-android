@@ -8,6 +8,48 @@ final class UiStrings {
 
   static {
     TEXT.put(
+        "Game language at launch",
+        new String[] {
+          "Game language at launch",
+          "Spielsprache beim Start",
+          "Idioma al iniciar el juego",
+          "Idioma al iniciar el juego",
+          "Langue au lancement du jeu",
+          "Lingua all’avvio del gioco",
+          "Język przy uruchomieniu gry",
+          "Idioma ao iniciar o jogo",
+          "Язык игры при запуске",
+          "Oyun başlatma dili"
+        });
+    TEXT.put(
+        "Choose language packs and download",
+        new String[] {
+          "Choose language packs and download",
+          "Sprachpakete auswählen und herunterladen",
+          "Elegir y descargar paquetes de idiomas",
+          "Elegir y descargar paquetes de idiomas",
+          "Choisir et télécharger les langues",
+          "Scegli e scarica pacchetti lingua",
+          "Wybierz i pobierz pakiety językowe",
+          "Escolher e baixar pacotes de idiomas",
+          "Выбрать и скачать языковые пакеты",
+          "Dil paketlerini seç ve indir"
+        });
+    TEXT.put(
+        "Download the missing language pack, then launch the game.",
+        new String[] {
+          "Download the missing language pack, then launch the game.",
+          "Lade das fehlende Sprachpaket herunter und starte dann das Spiel.",
+          "Descarga el idioma que falta y luego inicia el juego.",
+          "Descarga el idioma que falta y luego inicia el juego.",
+          "Téléchargez la langue manquante, puis lancez le jeu.",
+          "Scarica la lingua mancante, poi avvia il gioco.",
+          "Pobierz brakujący język, a następnie uruchom grę.",
+          "Baixe o idioma ausente e inicie o jogo.",
+          "Скачайте недостающий языковой пакет, затем запустите игру.",
+          "Eksik dil paketini indir, ardından oyunu başlat."
+        });
+    TEXT.put(
         "Game data setup",
         new String[] {
           "Game data setup",
@@ -498,18 +540,19 @@ final class UiStrings {
           "Eksik oyun verilerini indir"
         });
     TEXT.put(
-        "QR code scanned. Choose your language, then tap Download missing game data.",
+        "QR code scanned. Choose your language, then tap Choose language packs and download.",
         new String[] {
-          "QR code scanned. Choose your language, then tap Download missing game data.",
-          "QR-Code erkannt. Sprache wählen und fehlende Spieldaten herunterladen.",
-          "QR leído. Elige tu idioma y pulsa Descargar datos del juego que faltan.",
-          "QR leído. Elige tu idioma y pulsa Descargar datos del juego que faltan.",
-          "QR lu. Choisissez la langue, puis téléchargez les données manquantes.",
-          "QR letto. Scegli la lingua, poi scarica i dati di gioco mancanti.",
-          "Kod QR odczytany. Wybierz język i pobierz brakujące dane gry.",
-          "QR lido. Escolha o idioma e baixe os dados do jogo ausentes.",
-          "QR-код считан. Выбери язык и нажми «Скачать недостающие данные игры».",
-          "QR okundu. Dili seçip eksik oyun verilerini indir."
+          "QR code scanned. Choose your language, then tap Choose language packs and download.",
+          "QR-Code gelesen. Wähle die Spielsprache und tippe auf Sprachpakete auswählen und"
+              + " herunterladen.",
+          "QR leído. Elige el idioma y pulsa Elegir y descargar paquetes de idiomas.",
+          "QR leído. Elige el idioma y pulsa Elegir y descargar paquetes de idiomas.",
+          "QR lu. Choisissez la langue, puis Choisir et télécharger les langues.",
+          "QR letto. Scegli la lingua, poi Scegli e scarica pacchetti lingua.",
+          "Kod QR odczytany. Wybierz język i dotknij Wybierz i pobierz pakiety językowe.",
+          "QR lido. Escolha o idioma e toque em Escolher e baixar pacotes de idiomas.",
+          "QR считан. Выберите язык игры, затем нажмите «Выбрать и скачать языковые пакеты».",
+          "QR okundu. Oyun dilini seç, ardından Dil paketlerini seç ve indir."
         });
   }
 

@@ -87,7 +87,8 @@ public final class ResourceActivity extends Activity {
       applyLink(getIntent());
       initialized = true;
       refresh();
-      if (setup.getJSONArray("embeddedPacks").length() > 0 && !ready()) installEmbedded();
+      if (chooseLanguageRequested()) showLanguageChoice();
+      else if (setup.getJSONArray("embeddedPacks").length() > 0 && !ready()) installEmbedded();
 
     } catch (Exception e) {
       new AlertDialog.Builder(this)
@@ -103,7 +104,41 @@ public final class ResourceActivity extends Activity {
     super.onNewIntent(intent);
     setIntent(intent);
     applyLink(intent);
-    if (applyRequested() && ready()) launchGame();
+    if (chooseLanguageRequested()) showLanguageChoice();
+    else if (applyRequested() && ready()) launchGame();
+  }
+
+  private boolean chooseLanguageRequested() {
+    Uri data = getIntent().getData();
+    return data != null
+        && "teslreborn".equals(data.getScheme())
+        && "resources".equals(data.getHost())
+        && "1".equals(data.getQueryParameter("chooseLanguage"));
+  }
+
+  private void showLanguageChoice() {
+    if (busy || language == null) return;
+    new AlertDialog.Builder(this)
+        .setTitle(tr("Game language at launch"))
+        .setSingleChoiceItems(
+            LABELS,
+            language.getSelectedItemPosition(),
+            (dialog, position) -> {
+              requestedLanguage = null;
+              language.setSelection(position);
+              dialog.dismiss();
+              // setSelection may dispatch its listener later. Read the spinner
+              // in the posted action, then use precisely the Game data path.
+              language.post(
+                  () -> {
+                    refresh();
+                    if (ready()) launchGame();
+                    else message(tr("Download the missing language pack, then launch the game."));
+                  });
+            })
+        .setNegativeButton(tr("Cancel"), (dialog, which) -> finish())
+        .setOnCancelListener(dialog -> finish())
+        .show();
   }
 
   private boolean applyRequested() {
@@ -125,7 +160,9 @@ public final class ResourceActivity extends Activity {
         token.setText(key);
         if (connectionHint != null)
           connectionHint.setText(
-              tr("QR code scanned. Choose your language, then tap Download missing game data."));
+              tr(
+                  "QR code scanned. Choose your language, then tap Choose language packs and"
+                      + " download."));
       }
       String code = data.getQueryParameter("language");
       if (code != null)
@@ -146,7 +183,7 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 29\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 30\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -187,7 +224,7 @@ public final class ResourceActivity extends Activity {
           }
         });
     TextView gameLabel = new TextView(this);
-    gameLabel.setText(tr("Game language"));
+    gameLabel.setText(tr("Game language at launch"));
     box.addView(gameLabel);
     String savedGameSelection = selection();
     language = new Spinner(this);
@@ -225,7 +262,7 @@ public final class ResourceActivity extends Activity {
     connectionHint = new TextView(this);
     connectionHint.setTextColor(0xff26703a);
     box.addView(connectionHint);
-    download = button(box, "Download missing game data", () -> download());
+    download = button(box, "Choose language packs and download", () -> download());
     button(
         advanced,
         "Import OBB file",
@@ -403,7 +440,7 @@ public final class ResourceActivity extends Activity {
     language.setEnabled(!busy);
     uiLanguage.setEnabled(!busy);
     status.setText(
-        tr("Game language")
+        tr("Game language at launch")
             + ": "
             + selected()
             + "\n"
@@ -743,7 +780,9 @@ public final class ResourceActivity extends Activity {
       Intent link = new Intent(Intent.ACTION_VIEW, data.getData());
       applyLink(link);
       connectionHint.setText(
-          tr("QR code scanned. Choose your language, then tap Download missing game data."));
+          tr(
+              "QR code scanned. Choose your language, then tap Choose language packs and"
+                  + " download."));
       download.requestFocus();
       download.announceForAccessibility(connectionHint.getText());
     } else if (request == 12 && data.getData() != null) {

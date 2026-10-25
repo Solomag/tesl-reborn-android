@@ -593,7 +593,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=29,
+                        androidBuild=30,
                     ),
                     indent=2,
                 ),

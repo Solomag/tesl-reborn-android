@@ -1452,14 +1452,27 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     return /[_-]/.test(old) ? code.slice(0, 2) + "_" + code.slice(3).toUpperCase() : code.slice(0, 2);
   }
 
+  function languageLabel(text: string): string | undefined {
+    const label = String(text).replace(/<[^>]*>/g, "").toLowerCase().replace(/[\s()_-]/g, "");
+    const native = { en_us:["english","englishus","английский"],de_de:["deutsch","german","немецкий"],
+      es_es:["español","spanish","испанский"],es_mx:["españollatinoamérica","latinamericanspanish","españolméxico"],
+      fr_fr:["français","french","французский"],it_it:["italiano","italian","итальянский"],
+      pl_pl:["polski","polish","польский"],pt_br:["portuguêsbrasil","brazilianportuguese","português","portuguese"],
+      ru_ru:["русский","russian"],tr_tr:["türkçe","turkish","турецкий"] };
+    return Object.keys(native).find(code => native[code].includes(label));
+  }
+
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
-    let lastLanguage = "", lastRestored = "", lastRestoredDictionary = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0;
+    let lastLanguage = "", lastRestored = "", lastRestoredDictionary = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0, recentExplicitInputAt = 0, switchingAt = 0;
     function noteLanguageInput() {
       try {
         const input = ucls("UnityEngine.Input");
-        if (resourceSettingsOpen() && (Number(input.method("get_touchCount", 0).invoke()) > 0 ||
-            input.method("GetMouseButtonDown", 1).invoke(0) || input.method("GetMouseButtonUp", 1).invoke(0))) recentInputAt = Date.now();
+        if (Number(input.method("get_touchCount", 0).invoke()) > 0 ||
+            input.method("GetMouseButtonDown", 1).invoke(0) || input.method("GetMouseButtonUp", 1).invoke(0)) {
+          recentExplicitInputAt = Date.now();
+          if (resourceSettingsOpen()) recentInputAt = recentExplicitInputAt;
+        }
       } catch (_) {}
     }
     // Settings may save a preference and load its language asynchronously, after
@@ -1487,13 +1500,103 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       es_mx: ["mexicanspanish", "spanishmexican", "latinamericanspanish", "spanishlatinamerica"],
       fr_fr: ["french", "fr"], it_it: ["italian", "it"], pl_pl: ["polish", "pl"],
       pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"], ru_ru: ["russian", "ru"], tr_tr: ["turkish", "tr"] };
-    function requestLanguage(target: string | undefined, current: string) {
+    function requestLanguage(target: string | undefined, current: string, explicit = false): boolean {
       noteLanguageInput();
-      if (!target || target === current || !loaded || switching || !recentInputAt || Date.now() - recentInputAt > 3000) return;
+      if (!explicit && (!target || target === current || !loaded || !recentInputAt || Date.now() - recentInputAt > 3000)) return false;
+      if (switching && Date.now() - switchingAt < 1500 || target && target === current) return true;
       switching = true;
-      log(`resources: in-game language change ${current} -> ${target}; applying through setup`);
-      schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(
-        Il2Cpp.string("teslreborn://resources?language=" + target + "&apply=1")));
+      switchingAt = Date.now();
+      const link = target ? "language=" + target + "&apply=1" : "chooseLanguage=1";
+      try {
+        writeTextFile(`${persistentPath()}/tesl-reborn-language-status.json`, JSON.stringify({
+          revision: 30, status: "opening-game-data", current, requested: target || "chooser", at: new Date().toISOString()
+        }));
+      } catch (_) {}
+      log(`resources: language control -> Game data (${target || "chooser"}); native handler suppressed`);
+      schedule(0, () => {
+        try {
+          ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources?" + link));
+        } catch (error) {
+          switching = false;
+          log(`resources: could not open language setup: ${error}`);
+        }
+      });
+      return true;
+    }
+    // Intercept the user-facing control BEFORE Unity invokes the game's change
+    // listeners. Observing SetLanguage afterwards is too late: those listeners
+    // can already have logged out and loaded only part of the new locale.
+    // Show is an explicit user action and needs neither the guessed Settings
+    // root nor a touch timestamp. Read option labels, never numeric locale IDs.
+    const replacedLanguageControls = new Set<string>();
+    function replaceLanguageControl(method, route) {
+      if (!method || method.isStatic || method.virtualAddress.isNull()) return;
+      const key = method.virtualAddress.toString();
+      if (replacedLanguageControls.has(key)) return;
+      replacedLanguageControls.add(key);
+      method.implementation = function (...args) {
+        try { if (route(this, args)) return; }
+        catch (error) { log(`resources: language control ${method.name}: ${error}`); }
+        return method.invokeRaw(this.handle, ...args);
+      };
+    }
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+      try {
+        replaceLanguageControl(ucls(name).tryMethod("Show", 0), self => {
+          const options = call(self, "get_options"), count = Number(call(options, "get_Count"));
+          if (count < 2 || count > 16) return false;
+          let recognized = 0;
+          for (let i=0; i<count; i++) if (languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || ""))) recognized++;
+          if (recognized < 2) return false;
+          return requestLanguage(undefined, resourceLanguage(), true);
+        });
+      } catch (error) { log(`resources: ${name} language entry: ${error}`); }
+    }
+    // Some game prefabs use a button/custom selector instead of a Unity
+    // dropdown. A language-specific persistent callback identifies that button
+    // without guessing which Settings/Options prefab is the real dialog.
+    try {
+      replaceLanguageControl(ucls("UnityEngine.UI.Button").tryMethod("Press", 0), self => {
+        const event = call(self, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
+        let languageAction = false;
+        for (let i=0; i<count; i++) {
+          const name = String(call(event, "GetPersistentMethodName", i)?.content || "");
+          if (/^(?:On|Show|Open|Select|Change|Choose|Set).*(?:Language|Locale)/i.test(name)) languageAction = true;
+        }
+        if (!languageAction) {
+          const node = call(self, "get_transform");
+          const name = String(call(node,"get_name")?.content || "");
+          languageAction = /language|locale/i.test(name) && !/cancel|close|back|download/i.test(name);
+        }
+        if (!languageAction) return false;
+        return requestLanguage(undefined, resourceLanguage(), true);
+      });
+    } catch (error) { log(`resources: language button entry: ${error}`); }
+    // Catch custom Settings callbacks too. Only UI components and language-
+    // specific void handlers qualify; profile/model setters remain observers.
+    for (const owner of img.classes.filter(c => /settings|options|language/i.test(c.name))) {
+      let component = false;
+      try { component = Array.from(owner.hierarchy()).some(base => base.type.name === "UnityEngine.Component"); } catch (_) {}
+      if (!component) continue;
+      for (const method of owner.methods.filter(m => /^(?:On|Select|Change|Choose|Show|Open).*Language/i.test(m.name)
+          && !/load|ready|initializ|complete|response|success/i.test(m.name)
+          && m.returnType.name === "System.Void" && m.parameterCount <= 1)) {
+        replaceLanguageControl(method, (self, args) => {
+          if (!Boolean(call(call(self, "get_gameObject"), "get_activeInHierarchy"))) return false;
+          noteLanguageInput();
+          if (!recentExplicitInputAt || Date.now() - recentExplicitInputAt > 3000) return false;
+          let target;
+          if (method.parameterCount === 1) {
+            const type = method.parameters[0].type;
+            if (type.name === "System.String") target = languageLabel(args[0]?.content || "");
+            else if (type.class.isEnum) {
+              const field = type.class.fields.find(f => f.isStatic && enumVal(f.value) === Number(args[0]));
+              target = field && Object.keys(languageNames).find(code => languageNames[code].includes(field.name.toLowerCase().replace(/[^a-z]/g, "")));
+            }
+          }
+          return requestLanguage(target, resourceLanguage(), true);
+        });
+      }
     }
     // The Android options UI can update a profile/settings setter without
     // calling LocalizationManager inside its callback. Capture that source too.
@@ -1516,15 +1619,6 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     }
     // Unity dropdowns may store a numeric index directly, without a game
     // language setter. Read their actual option labels instead of guessing IDs.
-    function languageLabel(text: string): string | undefined {
-      const label = String(text).replace(/<[^>]*>/g, "").toLowerCase().replace(/[\s()_-]/g, "");
-      const native = { en_us:["english","englishus","английский"],de_de:["deutsch","german","немецкий"],
-        es_es:["español","spanish","испанский"],es_mx:["españollatinoamérica","latinamericanspanish","españolméxico"],
-        fr_fr:["français","french","французский"],it_it:["italiano","italian","итальянский"],
-        pl_pl:["polski","polish","польский"],pt_br:["portuguêsbrasil","brazilianportuguese","português","portuguese"],
-        ru_ru:["русский","russian"],tr_tr:["türkçe","turkish","турецкий"] };
-      return Object.keys(native).find(code => native[code].includes(label));
-    }
     for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
       try {
         const dropdown = ucls(name), method = dropdown.tryMethod("OnSelectItem", 1) || dropdown.tryMethod("Set", 2) || dropdown.tryMethod("set_value", 1);
@@ -2425,14 +2519,31 @@ function uiComponent(go, type) {
     const window = call(root, "get_gameObject");
     // The shortcut/pause menu and the real settings window are separate roots.
     // Only the latter has active language/audio/options controls.
-    let controls = false;
-    for (const name of ["UnityEngine.UI.Slider", "UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown", "UnityEngine.UI.Toggle"]) {
+    let languageControl = false;
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
       try {
         const list = window.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(name).type.object, false);
-        if (Number(list.length) > 0) { controls = true; break; }
+        for (let i=0; i<list.length; i++) {
+          const options = call(list.get(i), "get_options"), count = Number(call(options, "get_Count"));
+          let recognized = 0;
+          for (let j=0; j<Math.min(16,count); j++) if (languageLabel(String(call(call(options,"get_Item",j),"get_text")?.content || ""))) recognized++;
+          if (recognized >= 2) languageControl = true;
+        }
       } catch (_) {}
     }
-    if (!controls) return;
+    // Custom language selectors still expose a language/locale-named child.
+    try {
+      const nodes = window.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.Transform").type.object, false);
+      for (let i=0; i<nodes.length; i++) {
+        const node = nodes.get(i);
+        if (!node.handle.equals(root.handle) && /language|locale/i.test(String(call(node,"get_name")?.content || ""))) languageControl = true;
+      }
+    } catch (_) {}
+    if (!languageControl) {
+      const old = call(root, "Find", Il2Cpp.string("RebornGameData"));
+      if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old,"get_gameObject"));
+      return;
+    }
     if (resourceSettingsWindow && !resourceSettingsWindow.target.handle.equals(window.handle)) {
       try {
         const previous = call(resourceSettingsWindow.target, "get_transform");
