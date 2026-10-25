@@ -3592,7 +3592,7 @@ function invokeDelegatePtr(del, value) {
 const CREATE_ACCOUNT = false;
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-23-port-source`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-25-resources`);
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
   const steamReq = nested(img, "AuthBase", "AuthBNETSteamRequest");
@@ -4841,9 +4841,51 @@ Il2Cpp.perform(() => {
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
     let lastLanguage = "";
-    Interceptor.attach(localization.method("SetLanguage", 2).virtualAddress, {
+    let languageApplied = false;
+    const setLanguage = localization.method("SetLanguage", 2);
+    Interceptor.attach(setLanguage.virtualAddress, {
       onEnter(args) {
         log(`LocalizationManager.SetLanguage called`);
+        if (languageApplied) return;
+        try {
+          const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
+          if (!choice || !/^(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)$/.test(choice.language)) return;
+          const index = setLanguage.isStatic ? 0 : 1, type = setLanguage.parameters[0].type;
+          if (type.name === "System.String") {
+            const old = rawStr(args[index]);
+            const code = /[_-]/.test(old) ? choice.language.slice(0, 2) + "_" + choice.language.slice(3).toUpperCase() : choice.language.slice(0, 2);
+            this.languageString = Il2Cpp.string(code).object.ref(false);
+            args[index] = this.languageString.target.handle;
+            languageApplied = true;
+          } else if (type.class.isEnum) {
+            const names = {
+              en_us: ["english", "en"],
+              de_de: ["german", "de"],
+              es_es: ["spanish", "es"],
+              es_mx: ["mexicanspanish", "spanishmexican", "latinamericanspanish", "spanishlatinamerica"],
+              fr_fr: ["french", "fr"],
+              it_it: ["italian", "it"],
+              pl_pl: ["polish", "pl"],
+              pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"],
+              ru_ru: ["russian", "ru"],
+              tr_tr: ["turkish", "tr"]
+            };
+            const field = type.class.fields.find((f) => f.isStatic && names[choice.language].includes(f.name.toLowerCase().replace(/[^a-z]/g, "")));
+            if (field) {
+              const value = enumVal(field.value);
+              if (value >= 0) {
+                args[index] = ptr(value);
+                languageApplied = true;
+              }
+            }
+          }
+          log(`resources: default language ${choice.language}; managed override=${languageApplied}, parameter=${type.name}`);
+        } catch (error) {
+          log(`resources: language override unavailable: ${error}`);
+        }
+      },
+      onLeave() {
+        if (this.languageString) this.languageString.free();
       }
     });
     Interceptor.attach(localization.method("UpdateObjects").virtualAddress, {
@@ -5219,6 +5261,7 @@ Il2Cpp.perform(() => {
           const list = new Il2Cpp.Object(args[0]);
           for (const [type, text] of [
             [CREDIT_GROUP, "TESL Reborn Team"],
+            [CREDIT_TITLE, "Android port \xB7 build 25 \xB7 resource manager"],
             [CREDIT_TITLE, "Project Lead"],
             [CREDIT_NAME, "Renian"],
             [CREDIT_TITLE, "Game Server Developer"],
@@ -6706,6 +6749,12 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       const transition = pickerButton.tryMethod("set_transition", 1);
       if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
       record.pickerButton = uiRect(picker).ref(false);
+      if (fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) {
+        const resources = uiLabeledButton("RebornResources", window, "Resources", -8, -40, 125, () => {
+          ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
+        });
+        call(uiAdd(resources, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+      }
       try {
         const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`) || "null");
         const screen = chatScreen();

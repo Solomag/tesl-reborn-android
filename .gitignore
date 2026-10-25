@@ -44,3 +44,10 @@ node_modules/
 resources/
 release/
 obb-report.json
+vendor/
+.venv-builder/
+android-setup/build/
+dist/
+build/
+output/
+*.spec

@@ -1,0 +1,62 @@
+name: Build Windows Builder
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-ui-and-update-loader, portable-builder-and-resources]
+    paths: ['builder/**', 'android-setup/**', '.github/workflows/build-builder.yml', 'hook.ts', 'runtime/**']
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: |
+          python -m pip install -r builder/requirements.txt
+          npm ci
+      - name: Prepare tools and emoji resources
+        run: |
+          python -m builder.bootstrap_tools
+          python tools/prepare_emojis.py
+          python android-setup/build.py
+          npm run build
+      - name: Validate
+        run: |
+          npm test
+          python android-setup/test_native.py
+          python -m tests.integration_builder_apk
+      - name: Create bundled Java runtime
+        shell: pwsh
+        run: |
+          & "$env:JAVA_HOME/bin/jlink.exe" --add-modules java.base,java.desktop,java.logging,java.xml,java.naming,jdk.crypto.ec,jdk.unsupported,jdk.zipfs,jdk.charsets,jdk.localedata --strip-debug --no-header-files --no-man-pages --output vendor/jre
+      - name: Package Windows EXE
+        run: python -m builder.package_windows
+      - name: Smoke-test frozen Windows EXE
+        shell: pwsh
+        run: |
+          $report = Join-Path $PWD 'dist/self-test.json'
+          $process = Start-Process -FilePath dist/TESL-Reborn-Builder.exe -ArgumentList '--self-test', "`"$report`"" -WorkingDirectory $PWD.Path -Wait -PassThru
+          if ($process.ExitCode -ne 0) { Get-Content dist/self-test.json; throw 'Frozen EXE smoke test failed' }
+          Get-Content dist/self-test.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TESL-Reborn-Builder-Windows
+          path: |
+            dist/TESL-Reborn-Builder.exe
+            dist/self-test.json
+            dist/builder-ru.md
+            dist/THIRD_PARTY_BUILDER.md
+            dist/third-party-notices
+          retention-days: 14

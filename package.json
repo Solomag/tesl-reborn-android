@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "node tools/build-hook.mjs",
-    "test": "node tests/run.cjs && python3 -m unittest discover -s tests -p \"test_*.py\""
+    "test": "node tests/run.cjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2"

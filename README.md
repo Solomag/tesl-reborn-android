@@ -7,6 +7,10 @@ The Android UI improvements, stable hook loader, update-channel configuration,
 emoji setup and OBB inspection tool are described in
 [Android features and updates](docs/android-updates.md).
 
+The experimental portable Windows builder and separate language/resource transfer
+are described in [Сборщик и ресурсы](docs/builder-ru.md). Windows binaries are built
+by the `Build Windows Builder` Actions workflow; device validation is still required.
+
 ## What you get
 
 The final artefact `tesl-reborn.xapk` is a single ~2.2 GB package. After
@@ -17,8 +21,8 @@ installing it, no further file pushes are needed:
   inside the APK and is restored by the hook on the first launch into
   `UnityCache/Shared/<bundle>/<hash>/`.
 
-After that first run the game is fully offline: card art, voices and
-translations all load from local files. Auto-login works once a
+After that first run card art, voices and translations load from local files;
+playing still requires the Reborn server. Auto-login works once a
 `tesl-login.json` is pushed (see *Manual push* below), or after a successful login with username and password.
 
 ## Prerequisites
@@ -29,7 +33,7 @@ translations all load from local files. Auto-login works once a
 - Java JDK (for `zipalign` and `uber-apk-signer.jar`).
 - Android build-tools 14 (`android-14-buildtools`, must provide `zipalign`).
 - Node.js and npm (`npm ci` installs the pinned build tool).
-- A Frida gadget for Android arm64 v8a (17.24.3, the file written as
+- A Frida gadget for Android arm64 v8a (the builder pins 17.2.4, written as
   `gadget.so`).
 - Minimum Android: 10 (Android 14 was the development target).
 - Base artefacts:
