@@ -25,11 +25,30 @@ from .resources import (
 
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 SETUP_ACTIVITY = "org.teslreborn.setup.ResourceActivity"
-FEED = "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json"
 
 
 def data_root():
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+
+
+def hook_feed():
+    from urllib.parse import urlsplit
+
+    feed = json.loads(
+        (data_root() / "runtime/channel.json").read_text(encoding="utf-8")
+    )["feedUrl"]
+    if feed:
+        uri = urlsplit(feed)
+        if (
+            uri.scheme != "https"
+            or not uri.hostname
+            or uri.username
+            or uri.password
+            or uri.query
+            or uri.fragment
+        ):
+            raise ValueError("Hook channel must be a public HTTPS manifest URL")
+    return feed
 
 
 def application_directory():
@@ -229,33 +248,64 @@ def patch_game_touch(decoded, activity):
         )
     path = files[0]
     text = path.read_text(encoding="utf-8")
-    call = "    invoke-static {p0, p1}, Lorg/teslreborn/setup/GestureBridge;->onTouch(Landroid/app/Activity;Landroid/view/MotionEvent;)V\n"
-    if "Lorg/teslreborn/setup/GestureBridge;->onTouch" in text:
-        return activity
-    method = re.search(
-        r"(?m)^\.method [^\n]* dispatchTouchEvent\(Landroid/view/MotionEvent;\)Z\s*$",
-        text,
-    )
-    if method:
-        end = text.index(".end method", method.end())
-        local = re.search(
-            r"(?m)^\s*\.(?:locals|registers) \d+[^\n]*\n", text[method.end() : end]
-        )
-        if not local:
-            raise ValueError("Cannot instrument the game touch handler")
-        pos = method.end() + local.end()
-        text = text[:pos] + call + text[pos:]
-    else:
-        parent = re.search(r"(?m)^\.super (L[^;]+;)", text)
-        if not parent:
-            raise ValueError("Game Activity superclass is missing")
-        text += (
-            "\n.method public dispatchTouchEvent(Landroid/view/MotionEvent;)Z\n    .locals 1\n"
-            + call
-            + "    invoke-super {p0, p1}, "
+    parent = re.search(r"(?m)^\.super (L[^;]+;)", text)
+    if not parent:
+        raise ValueError("Game Activity superclass is missing")
+    methods = [
+        (
+            "dispatchTouchEvent(Landroid/view/MotionEvent;)Z",
+            "public",
+            "{p0 .. p1}",
+            "onTouch(Landroid/app/Activity;Landroid/view/MotionEvent;)V",
+            1,
+            "    invoke-super {p0, p1}, "
             + parent[1]
-            + "->dispatchTouchEvent(Landroid/view/MotionEvent;)Z\n    move-result v0\n    return v0\n.end method\n"
+            + "->dispatchTouchEvent(Landroid/view/MotionEvent;)Z\n    move-result v0\n    return v0\n",
+        ),
+        (
+            "onResume()V",
+            "protected",
+            "{p0 .. p0}",
+            "onResume(Landroid/app/Activity;)V",
+            0,
+            "    invoke-super {p0}, " + parent[1] + "->onResume()V\n    return-void\n",
+        ),
+    ]
+    for signature, visibility, registers, hook, locals_, fallback in methods:
+        if "Lorg/teslreborn/setup/GestureBridge;->" + hook in text:
+            continue
+        call = (
+            "    invoke-static/range "
+            + registers
+            + ", Lorg/teslreborn/setup/GestureBridge;->"
+            + hook
+            + "\n"
         )
+        method = re.search(
+            r"(?m)^\.method [^\n]* " + re.escape(signature) + r"\s*$", text
+        )
+        if method:
+            end = text.index(".end method", method.end())
+            local = re.search(
+                r"(?m)^\s*\.(?:locals|registers) \d+[^\n]*\n", text[method.end() : end]
+            )
+            if not local:
+                raise ValueError("Cannot instrument the game " + signature)
+            pos = method.end() + local.end()
+            text = text[:pos] + call + text[pos:]
+        else:
+            text += (
+                "\n.method "
+                + visibility
+                + " "
+                + signature
+                + "\n    .locals "
+                + str(locals_)
+                + "\n"
+                + call
+                + fallback
+                + ".end method\n"
+            )
     path.write_text(text, encoding="utf-8")
     return activity
 
@@ -449,11 +499,14 @@ def build(
     # If the EXE was placed in the game folder, refuse rather than write there.
     ensure_outside(output, source_roots(game, assets))
     ensure_outside(scratch, source_roots(game, assets))
+    apk_only = format == "apk"
+    if apk_only:
+        languages, default_language, embedded = [], "system", False
     if default_language not in ("system", *LANGUAGES):
         raise ValueError("Unknown default language")
     if default_language != "system" and default_language not in languages:
         raise ValueError("Include the default language in the languages to prepare")
-    if format not in ("xapk", "manual"):
+    if format not in ("xapk", "manual", "apk"):
         raise ValueError("Unknown output format")
     vendor = data_root() / "vendor"
     for name in [
@@ -486,48 +539,52 @@ def build(
                 stream.write(str(text) + "\n")
             emit(text)
 
-        inventory = read_manifest(versions)
-        codes = {LANGUAGES[language] for language in languages}
-        estimated = sum(
-            (assets / e["BundleName"]).stat().st_size
-            for e in inventory
-            if e["StorageMode"] == 0
-            and (
-                e["LocCode"] in codes
-                or e["LocCode"] == -1
-                or "filemanifest" in e["BundleName"]
+        if apk_only:
+            public = {"schema": 1, "gameVersionCode": 11009, "packs": []}
+            log("APK-only update: no language packs or data archive will be prepared.")
+        else:
+            inventory = read_manifest(versions)
+            codes = {LANGUAGES[language] for language in languages}
+            estimated = sum(
+                (assets / e["BundleName"]).stat().st_size
+                for e in inventory
+                if e["StorageMode"] == 0
+                and (
+                    e["LocCode"] in codes
+                    or e["LocCode"] == -1
+                    or "filemanifest" in e["BundleName"]
+                )
+                and (assets / e["BundleName"]).is_file()
             )
-            and (assets / e["BundleName"]).is_file()
-        )
-        required = 3 * xapk.stat().st_size + 5 * estimated + 512 * 1024**2
-        if shutil.disk_usage(output).free < required:
-            raise ValueError(
-                f"This build needs approximately {required / 1024**3:.1f} GiB of additional free space"
-            )
-        kwargs = {"converter": converter} if converter else {}
-        try:
-            catalog = build_packs(
-                assets,
-                versions,
-                languages,
-                resources,
-                work / "converted",
-                log,
-                **kwargs,
-            )
-        except BaseException:
-            (result / "BUILD_FAILED.txt").write_text(
-                "Resource preparation failed. Do not use partial files.",
-                encoding="utf-8",
-            )
-            raise
-        public = {
-            **catalog,
-            "packs": [
-                {k: v for k, v in p.items() if k != "manifest"}
-                for p in catalog["packs"]
-            ],
-        }
+            required = 3 * xapk.stat().st_size + 5 * estimated + 512 * 1024**2
+            if shutil.disk_usage(output).free < required:
+                raise ValueError(
+                    f"This build needs approximately {required / 1024**3:.1f} GiB of additional free space"
+                )
+            kwargs = {"converter": converter} if converter else {}
+            try:
+                catalog = build_packs(
+                    assets,
+                    versions,
+                    languages,
+                    resources,
+                    work / "converted",
+                    log,
+                    **kwargs,
+                )
+            except BaseException:
+                (result / "BUILD_FAILED.txt").write_text(
+                    "Resource preparation failed. Do not use partial files.",
+                    encoding="utf-8",
+                )
+                raise
+            public = {
+                **catalog,
+                "packs": [
+                    {k: v for k, v in p.items() if k != "manifest"}
+                    for p in catalog["packs"]
+                ],
+            }
         obb_source = work / "inputs" / OBB
         from .resources import sha256
 
@@ -537,8 +594,10 @@ def build(
             bytes=obb_source.stat().st_size,
             sha256=sha256(obb_source),
         )
-        shutil.copyfile(obb_source, resources / "game.obb")
-        public["obb"] = obb_meta
+        if not apk_only:
+            shutil.copyfile(obb_source, resources / "game.obb")
+            public["obb"] = obb_meta
+        resources.mkdir(parents=True, exist_ok=True)
         (resources / "catalog.json").write_text(
             json.dumps(public, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -546,7 +605,7 @@ def build(
             schema=1,
             obb=obb_meta,
             defaultLanguage=default_language,
-            hookFeed=FEED,
+            hookFeed=hook_feed(),
             embeddedPacks=public["packs"] if embedded else [],
         )
         try:
@@ -554,7 +613,7 @@ def build(
             apk = native_base(
                 work / "inputs/base.apk", work, vendor, setup, embedded, resources, log
             )
-            if format == "manual":
+            if format in ("manual", "apk"):
                 shutil.copyfile(apk, result / "tesl-reborn.apk")
             else:
                 final = result / "tesl-reborn.xapk"
@@ -593,7 +652,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=30,
+                        androidBuild=31,
                     ),
                     indent=2,
                 ),

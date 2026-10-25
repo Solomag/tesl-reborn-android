@@ -66,7 +66,7 @@
       writeCore: (hash, code) => write(`${root}/${hash}.js`, code),
       readInbox: limit => read(`${external}/tesl-reborn-inbox/hook.js`, limit),
       sha256: code => Checksum.compute("sha256", code),
-      byteLength: text => unescape(encodeURIComponent(text)).length,
+      byteLength: text => encodeURIComponent(text).replace(/%[0-9a-f]{2}/gi, "x").length,
       evaluate: code => {
         evaluationStarted = true;
         return Script.evaluate("/tesl-reborn/core.js", `(function(){\n${code}\n})();`);

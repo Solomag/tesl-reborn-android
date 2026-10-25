@@ -8,6 +8,90 @@ final class UiStrings {
 
   static {
     TEXT.put(
+        "Automatic patch updates",
+        new String[] {
+          "Automatic patch updates",
+          "Automatische Patch-Updates",
+          "Actualizaciones automáticas de parches",
+          "Actualizaciones automáticas de parches",
+          "Mises à jour automatiques du patch",
+          "Aggiornamenti automatici della patch",
+          "Automatyczne aktualizacje łatki",
+          "Atualizações automáticas do patch",
+          "Автоматические обновления патча",
+          "Otomatik yama güncellemeleri"
+        });
+    TEXT.put(
+        "Show Ctrl+D test area",
+        new String[] {
+          "Show Ctrl+D test area",
+          "Ctrl+D-Testbereich anzeigen",
+          "Mostrar zona de prueba Ctrl+D",
+          "Mostrar zona de prueba Ctrl+D",
+          "Afficher la zone de test Ctrl+D",
+          "Mostra area di prova Ctrl+D",
+          "Pokaż obszar testowy Ctrl+D",
+          "Mostrar área de teste Ctrl+D",
+          "Показать область проверки Ctrl+D",
+          "Ctrl+D test alanını göster"
+        });
+    TEXT.put(
+        "Updates apply on the next game start.",
+        new String[] {
+          "Updates apply on the next game start.",
+          "Updates werden beim nächsten Spielstart angewendet.",
+          "Las actualizaciones se aplican al reiniciar el juego.",
+          "Las actualizaciones se aplican al reiniciar el juego.",
+          "Les mises à jour sont appliquées au prochain démarrage.",
+          "Gli aggiornamenti si applicano al prossimo avvio.",
+          "Aktualizacje są stosowane przy następnym uruchomieniu gry.",
+          "As atualizações são aplicadas ao reiniciar o jogo.",
+          "Обновления применяются при следующем запуске игры.",
+          "Güncellemeler oyunun sonraki açılışında uygulanır."
+        });
+    TEXT.put(
+        "Update downloaded. Restart the game.",
+        new String[] {
+          "Update downloaded. Restart the game.",
+          "Update heruntergeladen. Spiel neu starten.",
+          "Actualización descargada. Reinicia el juego.",
+          "Actualización descargada. Reinicia el juego.",
+          "Mise à jour téléchargée. Relancez le jeu.",
+          "Aggiornamento scaricato. Riavvia il gioco.",
+          "Aktualizacja pobrana. Uruchom grę ponownie.",
+          "Atualização baixada. Reinicie o jogo.",
+          "Обновление скачано. Перезапустите игру.",
+          "Güncelleme indirildi. Oyunu yeniden başlat."
+        });
+    TEXT.put(
+        "Up to date",
+        new String[] {
+          "Up to date",
+          "Aktuell",
+          "Actualizado",
+          "Actualizado",
+          "À jour",
+          "Aggiornato",
+          "Aktualne",
+          "Atualizado",
+          "Установлена актуальная версия",
+          "Güncel"
+        });
+    TEXT.put(
+        "Update check failed. Retry on the next game start.",
+        new String[] {
+          "Update check failed. Retry on the next game start.",
+          "Update-Prüfung fehlgeschlagen. Neuer Versuch beim nächsten Spielstart.",
+          "Error al buscar actualizaciones. Se reintentará al iniciar el juego.",
+          "Error al buscar actualizaciones. Se reintentará al iniciar el juego.",
+          "Échec de la recherche. Nouvel essai au prochain démarrage.",
+          "Controllo aggiornamenti fallito. Nuovo tentativo al prossimo avvio.",
+          "Nie udało się sprawdzić aktualizacji. Ponowna próba przy następnym uruchomieniu.",
+          "Falha ao buscar atualizações. Nova tentativa ao iniciar o jogo.",
+          "Не удалось проверить обновления. Повтор при следующем запуске игры.",
+          "Güncelleme kontrolü başarısız. Sonraki açılışta yeniden denenecek."
+        });
+    TEXT.put(
         "Game language at launch",
         new String[] {
           "Game language at launch",

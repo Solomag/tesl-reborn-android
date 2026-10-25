@@ -64,15 +64,7 @@ public final class ResourceActivity extends Activity {
       try (InputStream in = getAssets().open("tesl-reborn/setup.json")) {
         setup = new JSONObject(new String(PackInstaller.read(in, 256 * 1024), "UTF-8"));
       }
-      File updaterConfig = new File(root, "tesl-reborn-updater.json");
-      if (!updaterConfig.exists())
-        PackInstaller.writeJson(
-            updaterConfig,
-            new JSONObject()
-                .put("enabled", true)
-                .put("feedUrl", setup.optString("hookFeed", ""))
-                .put("allowLocalUpdates", false)
-                .put("safeMode", false));
+      UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       uiCode = getPreferences(0).getString("uiLanguage", "en_us");
       applyLink(getIntent());
@@ -183,7 +175,7 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 30\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 31\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -300,6 +292,7 @@ public final class ResourceActivity extends Activity {
         () ->
             advanced.setVisibility(
                 advanced.getVisibility() == View.GONE ? View.VISIBLE : View.GONE));
+    addDiagnosticsAndUpdates(advanced);
     box.addView(advanced);
     launch = button(box, "Launch game", () -> launchGame());
     status = new TextView(this);
@@ -330,6 +323,68 @@ public final class ResourceActivity extends Activity {
             }
           }
         });
+  }
+
+  private void addDiagnosticsAndUpdates(LinearLayout box) {
+    try {
+      JSONObject config = UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
+      Switch updates = new Switch(this);
+      updates.setText(tr("Automatic patch updates"));
+      updates.setChecked(config.optBoolean("enabled", true));
+      updates.setOnCheckedChangeListener(
+          (button, enabled) -> {
+            try {
+              UpdateConfig.enabled(root, config, enabled);
+            } catch (Exception error) {
+              message(error.toString());
+            }
+          });
+      box.addView(updates);
+      TextView updateInfo = new TextView(this);
+      String info = tr("Updates apply on the next game start.");
+      try {
+        JSONObject state = PackInstaller.json(new File(root, "tesl-reborn-update-status.json"));
+        JSONObject current = state.optJSONObject("current"),
+            pending = state.optJSONObject("pending");
+        if (current != null) info += "\n" + current.optString("version");
+        String status = state.optString("status");
+        if (pending != null) info += "\n" + tr("Update downloaded. Restart the game.");
+        else if (status.equals("up-to-date")) info += "\n" + tr("Up to date");
+        else if (status.equals("update-error"))
+          info += "\n" + tr("Update check failed. Retry on the next game start.");
+      } catch (Exception ignored) {
+      }
+      if (config.optBoolean("safeMode", false)) info += "\nSafe mode";
+      updateInfo.setText(info);
+      box.addView(updateInfo);
+      TextView source = new TextView(this);
+      source.setText(config.optString("feedUrl", ""));
+      source.setTextIsSelectable(true);
+      box.addView(source);
+      Switch marker = new Switch(this);
+      marker.setText(tr("Show Ctrl+D test area"));
+      boolean visible = true;
+      try {
+        visible =
+            PackInstaller.json(new File(root, "tesl-reborn-debug-marker.json"))
+                .optBoolean("enabled", true);
+      } catch (Exception ignored) {
+      }
+      marker.setChecked(visible);
+      marker.setOnCheckedChangeListener(
+          (button, enabled) -> {
+            try {
+              PackInstaller.writeJson(
+                  new File(root, "tesl-reborn-debug-marker.json"),
+                  new JSONObject().put("enabled", enabled));
+            } catch (Exception error) {
+              message(error.toString());
+            }
+          });
+      box.addView(marker);
+    } catch (Exception error) {
+      message(error.toString());
+    }
   }
 
   private Button button(LinearLayout box, String text, Runnable action) {

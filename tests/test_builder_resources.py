@@ -84,12 +84,34 @@ class BuilderResourcesTest(unittest.TestCase):
                 self.assertEqual(
                     value.count("Lorg/teslreborn/setup/GestureBridge;->onTouch"), 1
                 )
+                self.assertEqual(value.count("GestureBridge;->onResume"), 1)
                 if body:
                     self.assertIn("const/4 v0, 0x1", value)
                 else:
                     self.assertIn("invoke-super", value)
                 patch_game_touch(root, "game.Main")
                 self.assertEqual(path.read_text(), value)
+
+    def test_existing_touch_instrumentation_gets_resume_marker_too(self):
+        from builder.build import patch_game_touch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "smali/game/Main.smali"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                ".class public Lgame/Main;\n.super Landroid/app/Activity;\n.method public dispatchTouchEvent(Landroid/view/MotionEvent;)Z\n .locals 1\n invoke-static {p0, p1}, Lorg/teslreborn/setup/GestureBridge;->onTouch(Landroid/app/Activity;Landroid/view/MotionEvent;)V\n const/4 v0, 0x1\n return v0\n.end method\n.method protected onResume()V\n .locals 0\n invoke-super {p0}, Landroid/app/Activity;->onResume()V\n return-void\n.end method\n"
+            )
+            patch_game_touch(root, "game.Main")
+            result = path.read_text()
+            self.assertEqual(result.count("GestureBridge;->onTouch"), 1)
+            self.assertEqual(result.count("GestureBridge;->onResume"), 1)
+            self.assertEqual(
+                result.count("invoke-super {p0}, Landroid/app/Activity;->onResume()V"),
+                1,
+            )
+            patch_game_touch(root, "game.Main")
+            self.assertEqual(path.read_text(), result)
 
     def test_framework_native_activity_can_receive_the_gesture(self):
         from builder.build import patch_game_touch
@@ -301,6 +323,10 @@ class BuilderResourcesTest(unittest.TestCase):
                 p.parent.mkdir(exist_ok=True)
                 p.write_bytes(b"tool fixture")
 
+            channel = root / "data/runtime/channel.json"
+            channel.parent.mkdir(parents=True)
+            channel.write_text('{"feedUrl":"https://example.com/manifest.json"}')
+
             def fake_native(base, work, vendor, setup, embedded, catalog, log):
                 out = work / "test.apk"
                 with zipfile.ZipFile(out, "w") as z:
@@ -310,12 +336,12 @@ class BuilderResourcesTest(unittest.TestCase):
             with patch("builder.build.data_root", return_value=root / "data"), patch(
                 "builder.build.native_base", side_effect=fake_native
             ), patch("builder.build.prepare_builder_emojis"):
-                for fmt in ("manual", "xapk"):
+                for fmt in ("manual", "xapk", "apk"):
                     result = build(
                         game,
                         source,
-                        ["ru_ru"],
-                        default_language="ru_ru",
+                        [] if fmt == "apk" else ["ru_ru"],
+                        default_language="system" if fmt == "apk" else "ru_ru",
                         embedded=False,
                         format=fmt,
                         appdir=root / "builder",
@@ -323,7 +349,18 @@ class BuilderResourcesTest(unittest.TestCase):
                         converter=convert,
                     )
                     self.assertTrue((result / "resources/catalog.json").exists())
-                    if fmt == "manual":
+                    if fmt == "apk":
+                        self.assertTrue((result / "tesl-reborn.apk").is_file())
+                        self.assertFalse((result / "tesl-reborn-data.zip").exists())
+                        self.assertFalse((result / "resources/game.obb").exists())
+                        self.assertFalse((result / "resources/packs").exists())
+                        self.assertEqual(
+                            json.loads((result / "resources/catalog.json").read_text())[
+                                "packs"
+                            ],
+                            [],
+                        )
+                    elif fmt == "manual":
                         with zipfile.ZipFile(result / "tesl-reborn-data.zip") as data:
                             self.assertEqual(
                                 data.read("game.obb"),

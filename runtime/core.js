@@ -6101,32 +6101,18 @@ Il2Cpp.perform(() => {
     const typeName = String(self.class?.name || "");
     if (/menu/i.test(rootName + " " + typeName)) return;
     const window = call(root, "get_gameObject");
-    let languageControl = false;
-    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+    let controls = false;
+    for (const name of ["UnityEngine.UI.Slider", "UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown", "UnityEngine.UI.Toggle"]) {
       try {
         const list = window.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(name).type.object, false);
-        for (let i = 0; i < list.length; i++) {
-          const options = call(list.get(i), "get_options"), count = Number(call(options, "get_Count"));
-          let recognized = 0;
-          for (let j = 0; j < Math.min(16, count); j++) if (languageLabel(String(call(call(options, "get_Item", j), "get_text")?.content || ""))) recognized++;
-          if (recognized >= 2) languageControl = true;
+        if (Number(list.length) > 0) {
+          controls = true;
+          break;
         }
       } catch (_) {
       }
     }
-    try {
-      const nodes = window.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.Transform").type.object, false);
-      for (let i = 0; i < nodes.length; i++) {
-        const node = nodes.get(i);
-        if (!node.handle.equals(root.handle) && /language|locale/i.test(String(call(node, "get_name")?.content || ""))) languageControl = true;
-      }
-    } catch (_) {
-    }
-    if (!languageControl) {
-      const old = call(root, "Find", Il2Cpp.string("RebornGameData"));
-      if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
-      return;
-    }
+    if (!controls) return;
     if (resourceSettingsWindow && !resourceSettingsWindow.target.handle.equals(window.handle)) {
       try {
         const previous = call(resourceSettingsWindow.target, "get_transform");
@@ -6208,6 +6194,95 @@ Il2Cpp.perform(() => {
       }
     } });
     log(`settings game data: ${hooks} window hooks and prefab fallback`);
+  });
+  section("settings and language diagnostics", () => {
+    let lastPoll = 0, lastRequest = "";
+    function collect(request) {
+      const report = {
+        schema: 1,
+        label: request.label,
+        requestId: request.id,
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        buttons: [],
+        classes: [],
+        localizationFiles: []
+      };
+      try {
+        const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
+        report.choice = choice && { language: choice.language, system: choice.system };
+      } catch (_) {
+      }
+      try {
+        const status = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-update-status.json`) || "null");
+        report.core = status?.current && { revision: status.current.revision, version: status.current.version };
+      } catch (_) {
+      }
+      try {
+        const owner = cls(img, "LocalizationManager");
+        report.localizationMethods = owner.methods.filter((m) => /language|locale|updateobjects/i.test(m.name)).slice(0, 40).map((m) => ({ name: m.name, parameters: m.parameters.map((p) => p.type.name), returns: m.returnType.name }));
+        const manager = owner.method("get_Instance", 0).invoke();
+        if (!isNull(manager)) report.managerLanguage = String(call(manager, "get_CurrentLanguageCode")?.content || "");
+      } catch (error) {
+        report.managerError = String(error).slice(0, 300);
+      }
+      for (const code of ["en_us", "ru_ru"]) {
+        try {
+          const text = readTextFile(`${persistentPath()}/tesl-localization-${code}.json`);
+          const values = Object.values(JSON.parse(text || "{}"));
+          report.localizationFiles.push({
+            language: code,
+            entries: values.length,
+            cyrillicValues: values.filter((value) => /[а-яё]/i.test(String(value))).length
+          });
+        } catch (_) {
+          report.localizationFiles.push({ language: code, error: "unreadable" });
+        }
+      }
+      for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name)).slice(0, 80)) {
+        report.classes.push({ name: owner.name, methods: owner.methods.filter((m) => /language|locale|select|click|show|settings/i.test(m.name)).slice(0, 40).map((m) => ({ name: m.name, parameters: m.parameters.map((p) => p.type.name), returns: m.returnType.name })) });
+      }
+      try {
+        const buttons = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Button").type.object);
+        for (let i = 0; i < buttons.length && report.buttons.length < 160; i++) {
+          const button = buttons.get(i), go = call(button, "get_gameObject");
+          if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
+          let node = call(button, "get_transform");
+          const path = [];
+          for (let depth = 0; depth < 14 && !isNull(node); depth++, node = call(node, "get_parent"))
+            path.unshift(String(call(node, "get_name")?.content || "").slice(0, 120));
+          const entry = { path: path.join("/"), callbacks: [] };
+          try {
+            const event = call(button, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
+            for (let j = 0; j < Math.min(count, 12); j++) {
+              const target = call(event, "GetPersistentTarget", j);
+              entry.callbacks.push({ method: String(call(event, "GetPersistentMethodName", j)?.content || ""), class: isNull(target) ? null : target.class.name });
+            }
+          } catch (_) {
+          }
+          report.buttons.push(entry);
+        }
+      } catch (error) {
+        report.uiError = String(error).slice(0, 300);
+      }
+      writeTextFile(`${persistentPath()}/tesl-reborn-settings-report-${request.label}.json`, JSON.stringify(report, null, 2));
+    }
+    Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
+      if (Date.now() - lastPoll < 1e3) return;
+      lastPoll = Date.now();
+      try {
+        const request = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-inspect-request.json`) || "null");
+        if (!request || typeof request.id !== "string" || request.id.length > 80 || request.id === lastRequest || !/^(gear|settings|english|russian)$/.test(request.label)) return;
+        lastRequest = request.id;
+        schedule(0, () => {
+          try {
+            collect(request);
+          } catch (error) {
+            log(`settings diagnostic failed: ${error}`);
+          }
+        });
+      } catch (_) {
+      }
+    } });
   });
   const historyRows = /* @__PURE__ */ new Map(), historyTargets = /* @__PURE__ */ new Map();
   let historyUiReports = 0, historyPopup = null, historyActiveKey = null, historyLastFetch = 0;

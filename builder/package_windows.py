@@ -46,6 +46,8 @@ def main():
             # zipalign needs libc++, not the SDK's unrelated LLVM/clang libraries.
             for library in (ROOT / "vendor/build-tools/lib64").glob("libc++.so*"):
                 shutil.copy2(library, tools / "lib64" / library.name)
+    (bundle / "runtime").mkdir()
+    shutil.copyfile(ROOT / "runtime/channel.json", bundle / "runtime/channel.json")
     (bundle / "builder").mkdir()
     shutil.copyfile(ROOT / "builder/ui-text.json", bundle / "builder/ui-text.json")
     shutil.copyfile(ROOT / "hook.js", bundle / "hook.js")
@@ -120,7 +122,7 @@ def main():
             python_lib + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
         )
     subprocess.run(command, cwd=ROOT, check=True, env=environment)
-    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-30-check-ru.md"):
+    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-31-check-ru.md"):
         shutil.copyfile(ROOT / "docs" / name, ROOT / "dist" / name)
     shutil.copytree(notices, ROOT / "dist/third-party-notices", dirs_exist_ok=True)
     if not windows:
@@ -132,7 +134,7 @@ def main():
                 binary,
                 "builder-ru.md",
                 "THIRD_PARTY_BUILDER.md",
-                "android-30-check-ru.md",
+                "android-31-check-ru.md",
                 "third-party-notices",
             ):
                 package.add(ROOT / "dist" / name, arcname="TESL-Reborn-Builder/" + name)

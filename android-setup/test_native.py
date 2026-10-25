@@ -84,10 +84,22 @@ public class InstallerTest {
     try(FileOutputStream file=new FileOutputStream(new File(oldDownloads,filename))){file.write(new byte[]{1,2,3});}
     PackInstaller.migrateDownloads(oldDownloads,newDownloads);
     if(new File(newDownloads,filename).length()!=3||new File(oldDownloads,filename).exists())throw new AssertionError("Partial download migration");
+    File configRoot=new File(root,"updater-config");configRoot.mkdirs();
+    JSONObject cfg=UpdateConfig.ensure(configRoot,"https://raw.githubusercontent.com/owner/repo/main/manifest.json");
+    if(!cfg.optBoolean("enabled")||!cfg.optString("feedUrl").startsWith("https://raw."))throw new AssertionError("Missing update defaults");
+    cfg.put("feedUrl", "").put("enabled", false).put("safeMode", true);
+    PackInstaller.writeJson(new File(configRoot,"tesl-reborn-updater.json"),cfg);
+    cfg=UpdateConfig.ensure(configRoot,"https://example.com/new.json");
+    if(cfg.optBoolean("enabled")||!cfg.optBoolean("safeMode")||!cfg.optString("feedUrl").equals("https://example.com/new.json"))throw new AssertionError("Migration lost explicit settings");
+    cfg.put("feedUrl","https://custom.example/feed.json");PackInstaller.writeJson(new File(configRoot,"tesl-reborn-updater.json"),cfg);
+    if(!UpdateConfig.ensure(configRoot,"https://example.com/new.json").optString("feedUrl").equals("https://custom.example/feed.json"))throw new AssertionError("Overrode custom channel");
+    File invalidRoot=new File(root,"bad-feed");invalidRoot.mkdirs();
+    if(!UpdateConfig.ensure(invalidRoot,"http://unsafe.example/feed.json").optString("feedUrl").isEmpty())throw new AssertionError("Accepted plaintext default");
     CornerTaps taps=new CornerTaps(); long at=1000;
     for(int tap=0;tap<3;tap++) {
       taps.touch(0,1,10,10,100,at);boolean emitted=taps.touch(1,1,10,10,100,at+40);
-      if(emitted!=(tap==2))throw new AssertionError("Android triple tap");at+=100;
+      if(emitted!=(tap==2))throw new AssertionError("Android triple tap");
+      if(taps.progress(at+40)!=(tap==2?0:tap+1))throw new AssertionError("Marker progress differs from detector");at+=100;
     }
     taps.touch(0,1,10,10,100,at);taps.touch(1,1,90,90,100,at+40);
     for(int tap=0;tap<2;tap++) {at+=100;taps.touch(0,1,10,10,100,at);if(taps.touch(1,1,10,10,100,at+40))throw new AssertionError("Swipe counted as tap");}
@@ -177,6 +189,7 @@ def main():
                 str(ROOT / "android-setup/src/org/teslreborn/setup/DataArchive.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/PreviewSize.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/CornerTaps.java"),
+                str(ROOT / "android-setup/src/org/teslreborn/setup/UpdateConfig.java"),
                 str(
                     ROOT / "android-setup/src/org/teslreborn/setup/ConnectionLink.java"
                 ),

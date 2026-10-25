@@ -193,6 +193,7 @@ class BuilderWindow:
         ).pack(anchor="w")
         options = ttk.Frame(root)
         options.pack(fill="x", pady=6)
+        self.apk_only = tk.BooleanVar(value=False)
         self.format = tk.StringVar(value="manual")
         ttk.Radiobutton(
             options,
@@ -210,12 +211,13 @@ class BuilderWindow:
         languages = ttk.LabelFrame(root, text="Game languages to prepare", padding=6)
         languages.pack(fill="x", pady=6)
         self.languages = {}
+        self.language_checks = []
         for i, code in enumerate(LANGUAGES):
             value = tk.BooleanVar(value=code == "en_us")
             self.languages[code] = value
-            ttk.Checkbutton(languages, text=NAMES[code], variable=value).grid(
-                row=i // 5, column=i % 5, sticky="w", padx=6
-            )
+            check = ttk.Checkbutton(languages, text=NAMES[code], variable=value)
+            check.grid(row=i // 5, column=i % 5, sticky="w", padx=6)
+            self.language_checks.append(check)
         row = ttk.Frame(root)
         row.pack(fill="x")
         ttk.Label(row, text="Default game language:").pack(side="left")
@@ -224,6 +226,10 @@ class BuilderWindow:
         )
         self.default.current(1)
         self.default.pack(side="left", padx=8)
+        self.output_options = options
+        ttk.Button(root, text="Expert mode…", command=self.expert_options).pack(
+            anchor="w"
+        )
         self.build_button = ttk.Button(root, text="Build", command=self.start_build)
         self.build_button.pack(fill="x", pady=8)
         transfer = ttk.LabelFrame(root, text="Transfer game data to phone", padding=6)
@@ -284,6 +290,52 @@ class BuilderWindow:
                 visit(child)
 
         visit(parent)
+        self.build_button.configure(
+            text=self.tr("Build APK only") if self.apk_only.get() else self.tr("Build")
+        )
+
+    def tr(self, key):
+        translations = json.loads(
+            Path(__file__).with_name("ui-text.json").read_text(encoding="utf-8")
+        )
+        return translations.get(key, {}).get(list(NAMES)[self.ui_locale.current()], key)
+
+    def expert_options(self):
+        dialog = tk.Toplevel(self.window)
+        dialog.title(self.tr("Expert mode…"))
+        dialog.transient(self.window)
+
+        def changed():
+            state = ["disabled"] if self.apk_only.get() else ["!disabled"]
+            for widget in self.language_checks + list(
+                self.output_options.winfo_children()
+            ):
+                widget.state(state)
+            self.default.configure(
+                state="disabled" if self.apk_only.get() else "readonly"
+            )
+            self.build_button.configure(
+                text=(
+                    self.tr("Build APK only")
+                    if self.apk_only.get()
+                    else self.tr("Build")
+                )
+            )
+
+        ttk.Checkbutton(
+            dialog,
+            text=self.tr("APK only (keep installed game data)"),
+            variable=self.apk_only,
+            command=changed,
+        ).pack(padx=16, pady=12)
+        ttk.Label(
+            dialog,
+            text=self.tr(
+                "Build only the APK? Game data must already be installed on the phone. No language packs, OBB or data ZIP will be produced."
+            ),
+            wraplength=450,
+        ).pack(padx=16, pady=8)
+        ttk.Button(dialog, text=self.tr("Done"), command=dialog.destroy).pack(pady=8)
 
     def path_row(self, parent, label, variable, directory, filetypes=None):
         row = ttk.Frame(parent)
@@ -327,22 +379,33 @@ class BuilderWindow:
             ensure_outside(destination, source_roots(game, assets))
             ensure_outside(destination / ".work", source_roots(game, assets))
             selected = [c for c, v in self.languages.items() if v.get()]
-            if not selected:
+            if not selected and not self.apk_only.get():
                 raise ValueError("Select at least one language")
             default = (
                 "system"
                 if self.default.current() == 0
                 else list(LANGUAGES)[self.default.current() - 1]
             )
-            if default != "system" and default not in selected:
+            if (
+                not self.apk_only.get()
+                and default != "system"
+                and default not in selected
+            ):
                 raise ValueError("Select the default language pack")
+            if self.apk_only.get() and not messagebox.askyesno(
+                self.tr("APK update only"),
+                self.tr(
+                    "Build only the APK? Game data must already be installed on the phone. No language packs, OBB or data ZIP will be produced."
+                ),
+            ):
+                return
             args = dict(
                 game=game,
                 xapk=source,
                 languages=selected,
                 default_language=default,
-                embedded=self.format.get() == "xapk",
-                format=self.format.get(),
+                embedded=not self.apk_only.get() and self.format.get() == "xapk",
+                format="apk" if self.apk_only.get() else self.format.get(),
                 appdir=self.appdir,
                 output_dir=destination,
                 log=self.log,

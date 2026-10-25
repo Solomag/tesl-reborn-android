@@ -146,18 +146,18 @@ def main():
             shutil.copytree(repo / "resources/emojis", work / "emojis")
 
         with patch("builder.build.prepare_builder_emojis", side_effect=emojis):
-            for embedded, fmt in [(False, "manual"), (True, "xapk")]:
+            for embedded, fmt in [(False, "manual"), (True, "xapk"), (False, "apk")]:
                 result = build(
                     game,
                     source,
-                    ["en_us", "ru_ru"],
-                    default_language="ru_ru",
+                    [] if fmt == "apk" else ["en_us", "ru_ru"],
+                    default_language="system" if fmt == "apk" else "ru_ru",
                     embedded=embedded,
                     format=fmt,
                     appdir=root / "builder",
                     converter=fake_convert,
                 )
-                if fmt == "manual":
+                if fmt in ("manual", "apk"):
                     apk = result / "tesl-reborn.apk"
                 else:
                     with zipfile.ZipFile(result / "tesl-reborn.xapk") as z:
@@ -181,9 +181,14 @@ def main():
                     assert z.testzip() is None
                     settings = json.loads(z.read("assets/tesl-reborn/setup.json"))
                     assert settings["gameActivity"] == PACKAGE + ".UnityPlayerActivity"
-                    assert settings["defaultLanguage"] == "ru_ru"
+                    assert settings["defaultLanguage"] == (
+                        "system" if fmt == "apk" else "ru_ru"
+                    )
                     assert settings["obb"]["path"] == "game.obb"
-                    assert (result / "resources/game.obb").is_file()
+                    assert (result / "resources/game.obb").is_file() == (fmt != "apk")
+                    if fmt == "apk":
+                        assert not (result / "tesl-reborn-data.zip").exists()
+                        assert not (result / "resources/packs").exists()
                     assert bool(settings["embeddedPacks"]) == embedded
                     assert "classes2.dex" in z.namelist()
                     assert (
@@ -204,7 +209,7 @@ def main():
                 import http.client
 
                 transfer_source = (
-                    apk if fmt == "manual" else result / "tesl-reborn.xapk"
+                    apk if fmt in ("manual", "apk") else result / "tesl-reborn.xapk"
                 )
                 server = ResourceServer(
                     result / "resources",
@@ -273,7 +278,7 @@ def main():
         }
         assert before == after
     print(
-        "PASS: full synthetic original XAPK -> native launcher/Dex/JNI/ELF -> signed manual and embedded XAPK outputs; source game unchanged"
+        "PASS: full synthetic original XAPK -> native launcher/Dex/JNI/ELF -> signed manual, embedded XAPK and APK-only outputs; source game unchanged"
     )
 
 

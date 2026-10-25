@@ -430,5 +430,65 @@
     "pt_br": "QR lido. Escolha o idioma e baixe os dados do jogo ausentes.",
     "ru_ru": "QR-код считан. Выбери язык и нажми «Скачать недостающие данные игры».",
     "tr_tr": "QR okundu. Dili seçip eksik oyun verilerini indir."
+  },
+  "Expert mode…": {
+    "en_us": "Expert mode…",
+    "de_de": "Expertenmodus…",
+    "es_es": "Modo experto…",
+    "es_mx": "Modo experto…",
+    "fr_fr": "Mode expert…",
+    "it_it": "Modalità esperto…",
+    "pl_pl": "Tryb ekspercki…",
+    "pt_br": "Modo avançado…",
+    "ru_ru": "Экспертный режим…",
+    "tr_tr": "Uzman modu…"
+  },
+  "APK only (keep installed game data)": {
+    "en_us": "APK only (keep installed game data)",
+    "de_de": "Nur APK (installierte Spieldaten behalten)",
+    "es_es": "Solo APK (conservar datos instalados)",
+    "es_mx": "Solo APK (conservar datos instalados)",
+    "fr_fr": "APK seul (conserver les données installées)",
+    "it_it": "Solo APK (mantieni i dati installati)",
+    "pl_pl": "Tylko APK (zachowaj zainstalowane dane)",
+    "pt_br": "Somente APK (manter dados instalados)",
+    "ru_ru": "Только APK (сохранить данные на телефоне)",
+    "tr_tr": "Yalnızca APK (kurulu verileri koru)"
+  },
+  "APK update only": {
+    "en_us": "APK update only",
+    "de_de": "Nur APK aktualisieren",
+    "es_es": "Actualizar solo APK",
+    "es_mx": "Actualizar solo APK",
+    "fr_fr": "Mettre à jour l’APK seul",
+    "it_it": "Aggiorna solo APK",
+    "pl_pl": "Aktualizuj tylko APK",
+    "pt_br": "Atualizar somente APK",
+    "ru_ru": "Обновление только APK",
+    "tr_tr": "Yalnızca APK güncellemesi"
+  },
+  "Build APK only": {
+    "en_us": "Build APK only",
+    "de_de": "Nur APK erstellen",
+    "es_es": "Crear solo APK",
+    "es_mx": "Crear solo APK",
+    "fr_fr": "Créer l’APK seul",
+    "it_it": "Crea solo APK",
+    "pl_pl": "Zbuduj tylko APK",
+    "pt_br": "Criar somente APK",
+    "ru_ru": "Собрать только APK",
+    "tr_tr": "Yalnızca APK oluştur"
+  },
+  "Build only the APK? Game data must already be installed on the phone. No language packs, OBB or data ZIP will be produced.": {
+    "en_us": "Build only the APK? Game data must already be installed on the phone. No language packs, OBB or data ZIP will be produced.",
+    "de_de": "Nur APK erstellen? Spieldaten müssen bereits auf dem Telefon installiert sein. Es werden keine Sprachpakete, OBB oder Daten-ZIP erstellt.",
+    "es_es": "¿Crear solo el APK? Los datos del juego ya deben estar instalados en el teléfono. No se crearán idiomas, OBB ni ZIP de datos.",
+    "es_mx": "¿Crear solo el APK? Los datos del juego ya deben estar instalados en el teléfono. No se crearán idiomas, OBB ni ZIP de datos.",
+    "fr_fr": "Créer seulement l’APK ? Les données doivent déjà être installées sur le téléphone. Aucun pack de langue, OBB ni ZIP de données ne sera créé.",
+    "it_it": "Creare solo l’APK? I dati devono essere già installati sul telefono. Non verranno creati pacchetti lingua, OBB o ZIP di dati.",
+    "pl_pl": "Zbudować tylko APK? Dane gry muszą już być zainstalowane na telefonie. Pakiety językowe, OBB i ZIP danych nie zostaną utworzone.",
+    "pt_br": "Criar somente o APK? Os dados já devem estar instalados no telefone. Não serão criados idiomas, OBB ou ZIP de dados.",
+    "ru_ru": "Собрать только APK? Игровые данные уже должны быть установлены на телефоне. Языковые пакеты, OBB и ZIP с данными создаваться не будут.",
+    "tr_tr": "Yalnızca APK oluşturulsun mu? Oyun verileri telefonda kurulu olmalıdır. Dil paketleri, OBB veya veri ZIP dosyası oluşturulmaz."
   }
 }

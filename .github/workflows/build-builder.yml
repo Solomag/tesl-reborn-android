@@ -64,7 +64,7 @@ jobs:
           path: |
             dist/TESL-Reborn-Builder.exe
             dist/self-test.json
-            dist/android-30-check-ru.md
+            dist/android-31-check-ru.md
             dist/builder-ru.md
             dist/THIRD_PARTY_BUILDER.md
             dist/third-party-notices

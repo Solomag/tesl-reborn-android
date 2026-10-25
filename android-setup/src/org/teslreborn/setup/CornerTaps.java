@@ -36,6 +36,10 @@ public final class CornerTaps {
     return ++count == 3 && reset();
   }
 
+  public int progress(long now) {
+    return count > 0 && now - first <= 1100 ? count : 0;
+  }
+
   private boolean reset() {
     count = 0;
     return true;
