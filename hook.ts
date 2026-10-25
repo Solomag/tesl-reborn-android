@@ -17,6 +17,7 @@ const LOGIN_PLATFORM = "Steam";          // value of BNETAuthUtilities.GetLoginP
 const MAJOR_VERSION = "db-630167952";    // hardcoded by the plugin
 const CHANGELIST = "317259";             // SourceControlVersion.GetChangelist() on the Windows build
 const TAG = "[tesl-hook]";
+const PROGRESS_BYTES = 256 * 1024 * 1024;   // payload copy: one progress line per this many bytes
 
 let androidLogWrite: NativeFunction<number, [number, NativePointer, NativePointer]> | null = null;
 try {
@@ -25,10 +26,14 @@ try {
     "int", ["int", "pointer", "pointer"]);
 } catch (e) { console.log(`${TAG} no liblog: ${e}`); }
 const tagPtr = Memory.allocUtf8String("tesl-hook");
-const log = (m: string) => {
+const log = (m: string, prio = 4) => {      // prio: android log priority, 4 = info, 6 = error
   console.log(`${TAG} ${m}`);
-  try { androidLogWrite?.(4, tagPtr, Memory.allocUtf8String(m.length > 900 ? m.slice(0, 900) + "..." : m)); } catch (_) {}
+  try { androidLogWrite?.(prio, tagPtr, Memory.allocUtf8String(m.length > 900 ? m.slice(0, 900) + "..." : m)); } catch (_) {}
 };
+// Masks secrets in logged JSON bodies (a quoted string is non-quote-non-backslash characters or backslash pairs) and header dumps.
+const SECRET_JSON = /("(?:password|encryptedAppTicket|token|sessionToken)"\s*:\s*")(?:[^"\\]|\\.)*"/g;
+const SECRET_HEADER = /((?:authorization|token|sessiontoken)\s*:\s*)[^\r\n]*/gi;
+const maskSecrets = (t: string): string => t.replace(SECRET_JSON, '$1***"').replace(SECRET_HEADER, "$1***");
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 function fakeTicket(len = 32): string {      // base64 of `len` random bytes, like the plugin's Generate()
   const b: number[] = [];
@@ -43,10 +48,16 @@ function fakeTicket(len = 32): string {      // base64 of `len` random bytes, li
   return o;
 }
 
-// Calls a managed delegate whose single parameter is a 32-bit value (e.g. Action<ResultCode>).
+// A managed enum field reads back as a value type; dig the number out of it.
+function enumVal(v: any): number {
+  if (v == null) return -1;
+  if (typeof v === "number") return v;
+  try { return Number((v as any).field("value__").value); } catch (_) { return -1; }
+}
+
+// Calls a managed delegate whose single parameter is a 32-bit value (e.g. Action<ResultCode>), through Invoke so static and multicast delegates work too.
 function invokeDelegateInt(del: Il2Cpp.Object, value: number) {
-  const fn = new NativeFunction(del.field<NativePointer>("method_ptr").value, "void", ["pointer", "int32", "pointer"]);
-  fn(del.field<NativePointer>("m_target").value, value, del.field<NativePointer>("method").value);
+  new Il2Cpp.Object(del.handle).method("Invoke").invoke(value);
 }
 
 function nested(image: Il2Cpp.Image, outer: string, inner: string): Il2Cpp.Class {
@@ -59,7 +70,8 @@ function channelFrom(settings: Il2Cpp.Object | null): string {
   try {
     if (settings && !settings.handle.isNull()) {
       const names = settings.field<Il2Cpp.Array<Il2Cpp.String>>("_channelNames").value;
-      const idx = Number(settings.field<any>("_channel").value);
+      const idx = enumVal(settings.field<any>("_channel").value);
+      if (idx < 0) throw new Error("the channel field is unreadable");
       return names.get(idx).content ?? "live";
     }
   } catch (e) { log(`channel lookup failed: ${e}`); }
@@ -84,7 +96,7 @@ function bodyOf(req: Il2Cpp.Object): string {
     const n = Math.min(Number(raw.length), 1500);
     let t = "";
     for (let i = 0; i < n; i++) t += String.fromCharCode(Number(raw.get(i)));
-    return t.replace(/("(?:password|encryptedAppTicket|token|sessionToken)"\s*:\s*")[^"]*"/g, '$1***"');
+    return maskSecrets(t);
   } catch (e) { return `(unreadable: ${e})`; }
 }
 
@@ -106,9 +118,12 @@ function loadOverrides(): Record<string, string> {
   return o;
 }
 
-function section(name: string, fn: () => void) {
+function section(name: string, fn: () => void, critical = false) {
   try { fn(); log(`OK   ${name}`); }
-  catch (e) { log(`FAIL ${name}: ${e}`); }
+  catch (e) {
+    if (critical) log(`FAIL ${name}: ${e} - login will not work without this section`, 6);
+    else log(`FAIL ${name}: ${e}`);
+  }
 }
 function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
   const c = img.tryClass(full);
@@ -120,15 +135,14 @@ function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
 }
 // Calls a managed delegate whose single parameter is a reference (e.g. Action<string>).
 function invokeDelegatePtr(del: Il2Cpp.Object, value: NativePointer) {
-  const fn = new NativeFunction(del.field<NativePointer>("method_ptr").value, "void", ["pointer", "pointer", "pointer"]);
-  fn(del.field<NativePointer>("m_target").value, value, del.field<NativePointer>("method").value);
+  new Il2Cpp.Object(del.handle).method("Invoke").invoke(value);
 }
 
 const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true if the server says "account not found"
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-3`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build plugin-parity-7`);
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -180,7 +194,7 @@ Il2Cpp.perform(() => {
       sendLink(sessionAuth as Il2Cpp.Object, language as Il2Cpp.String, settings as Il2Cpp.Object,
         endpoint as Il2Cpp.String, cb as Il2Cpp.Object);
     };
-  });
+  }, true);
 
   // 1b) Auth, Android entry points: the Android build signs in through Google Play instead
   section("auth hooks (GooglePlayAuthUtilities)", () => {
@@ -202,7 +216,7 @@ Il2Cpp.perform(() => {
       sendLink(sessionAuth as Il2Cpp.Object, language as Il2Cpp.String, settings as Il2Cpp.Object,
         endpoint as Il2Cpp.String, cb as Il2Cpp.Object);
     };
-  });
+  }, true);
 
   // 1c) Make every auth request look like the Windows client. The server expects a Windows PC client; Android
   //     values such as componentType "android" are the prime suspects for its HTTP 500 on username/password login.
@@ -280,14 +294,18 @@ Il2Cpp.perform(() => {
       onLeave(ret) { ret.replace(ptr(0)); },
     });
   });
+  let dumpingHeaders = false;             // set by the "http trace" section around DumpHeaders, which calls EnumerateHeaders itself
   section("http header", () => {
     let seen = 0;
     const m = cls(img, "BestHTTP.HTTPRequest").method("EnumerateHeaders", 2);   // (callback, callBeforeSendCallback); the 1-arg overload is an 8-byte stub
     Interceptor.attach(m.virtualAddress, {
       onEnter(args) {
+        if (dumpingHeaders) return;
         try {
           const req = new Il2Cpp.Object(args[0]);
-          req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
+          let has = false;
+          try { has = Boolean(call(req, "HasHeader", Il2Cpp.string("X-TeslRebornPlugin-Version"))); } catch (_) {}
+          if (!has) req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
           const uri = String(call(req, "get_Uri"));
           captureLogin(req, uri);
           rewriteAuthBody(req, uri);
@@ -301,7 +319,8 @@ Il2Cpp.perform(() => {
     let seen = 0;
     Interceptor.attach(cls(img, "BestHTTP.HTTPRequest").method("CallCallback").virtualAddress, {
       onEnter(args) {
-        if (seen++ > 80) return;
+        const verbose = seen++ <= 80;       // the log limiter; the login handling below always runs
+        if (!verbose && !pendingLogin) return;
         try {
           const req = new Il2Cpp.Object(args[0]);
           const uri = String(call(req, "get_Uri"));
@@ -309,23 +328,45 @@ Il2Cpp.perform(() => {
           const resp = call(req, "get_Response");
           let info = "no response";
           let status = 0;
+          let text = "";
           if (resp && !resp.handle.isNull()) {
             const code = Number(call(resp, "get_StatusCode"));
             status = code;
-            let text = "";
             try { text = String(call(resp, "get_DataAsText")?.content ?? ""); } catch (_) {}
-            info = `status ${code} body: ${text.replace(/\s+/g, " ").slice(0, 300)}`;
+            info = `status ${code} body: ${maskSecrets(text).replace(/\s+/g, " ").slice(0, 300)}`;
           } else {
             try { info = `exception: ${call(req, "get_Exception")}`; } catch (_) {}
           }
-          let sent = "";
-          try { sent = ` sent-headers: ${String(call(req, "DumpHeaders")).replace(/\s+/g, " ").slice(0, 300)}`; } catch (_) {}
-          log(`<- ${state} ${uri} ${info}${sent}`);
-          // The credentials are only stored once the service accepted them, and they are dropped again
-          // as soon as the service rejects them.
+          if (verbose) {
+            let sent = "";
+            dumpingHeaders = true;
+            try { sent = ` sent-headers: ${maskSecrets(String(call(req, "DumpHeaders"))).replace(/\s+/g, " ").slice(0, 300)}`; } catch (_) {}
+            finally { dumpingHeaders = false; }
+            log(`<- ${state} ${uri} ${info}${sent}`);
+          }
+          // The credentials are only stored once the service accepted them (HTTP 200 with resultCode 0, or no
+          // resultCode and a session token; the failures are 200 with resultCode 15 or 17), and they are dropped
+          // again when the service rejects them.
           if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
-            if (status === 200) writeSavedLogin(pendingLogin.username, pendingLogin.password);
-            else log("the service rejected the login, the saved credentials are dropped");
+            let resultCode: number | null = null;
+            let hasToken = false;
+            try {
+              const json = JSON.parse(text);
+              if (typeof json?.resultCode === "number") resultCode = json.resultCode;
+              hasToken = typeof json?.data?.token === "string" && json.data.token.length > 0;
+            } catch (_) {}
+            if (status === 200 && (resultCode === 0 || (resultCode === null && hasToken))) {
+              writeSavedLogin(pendingLogin.username, pendingLogin.password);
+              loginRejected = false;
+            } else if (status === 200 && resultCode !== null) {
+              clearSavedLogin();
+              loginRejected = true;
+              log(`the service rejected the login (resultCode ${resultCode}), the saved credentials are dropped`);
+            } else if (status === 0) {
+              log("the login request got no response, the saved credentials are unchanged");
+            } else {
+              log(`the login answer is not understood (HTTP ${status}), the saved credentials are unchanged`);
+            }
             pendingLogin = null;
           }
         } catch (e) { log(`trace error: ${e}`); }
@@ -338,7 +379,7 @@ Il2Cpp.perform(() => {
   const msgOf = (p: NativePointer) => { try { return p.isNull() ? "" : String(call(new Il2Cpp.Object(p), "get_Message")); } catch (_) { return "?"; } };
   const byName = (full: string, suffix: string, minParams = 0) => {
     const k = cls(img, full);
-    const m = k.methods.find(x => x.name.endsWith(suffix) && x.parameterCount >= minParams);
+    const m = k.methods.find(x => x.name.endsWith(suffix) && !/^(add|remove|set|get)_/.test(x.name) && x.parameterCount >= minParams);   // not an event or property accessor
     if (!m) throw new Error(`${full}::${suffix} not found`);
     return m;
   };
@@ -423,16 +464,12 @@ Il2Cpp.perform(() => {
           // bundle storage mode table from that version info. It is normally the versions.json
           // downloaded from the CDN, which is gone, so the table stays empty and every bundle
           // is treated as a local one. Fill it from the versions.json in the app's data folder.
+          // The raw arguments are not scanned: a static method passes a MethodInfo* as the last one, which is no object.
           let versionInfo: Il2Cpp.Object | null = null;
-          for (const arg of [args[0], args[1], args[2]]) {
-            if (className(arg) === "BundleVersionInfo") { versionInfo = new Il2Cpp.Object(arg); break; }
-          }
+          const remote = catalog.field<Il2Cpp.Object>("_remoteBundleVersionInfo").value;
+          if (className(remote) === "BundleVersionInfo") versionInfo = remote;
           if (!versionInfo) {
-            const remote = catalog.field<Il2Cpp.Object>("_remoteBundleVersionInfo").value;
-            if (className(remote) === "BundleVersionInfo") versionInfo = remote;
-          }
-          if (!versionInfo) {
-            log(`storage modes: no version info found (args: ${className(args[0])}, ${className(args[1])})`);
+            log("storage modes: no version info found in AssetCatalog._remoteBundleVersionInfo");
             return;
           }
           const count = () => Number(call(versionInfo!.field<Il2Cpp.Object>("_entries").value, "get_Count"));
@@ -513,8 +550,9 @@ Il2Cpp.perform(() => {
   //
   //   * EndGameStatePatch / SoloArenaPatch - the reborn server does not push
   //     the reward notices itself, so the client asks for the refresh.
-  //   * StatsPatch / GetResponseStatusPatch - match history with deck names
-  //     and win/loss, from the server's /fetchExtendedData endpoint.
+  //   * StatsPatch - match history with deck names and win/loss, from the
+  //     server's /fetchExtendedData endpoint (fetched only; the GetResponseStatusPatch
+  //     wait is dropped until a UI that shows the data is ported).
   //   * InventoryPatch / DeckTileAwakePatch - per deck win/loss statistics,
   //     from the server's /fetchDeckStats endpoint.
   //   * NewsPatch - the game's own news feed is dead, tesl-reborn.com serves
@@ -618,13 +656,6 @@ Il2Cpp.perform(() => {
     } catch (e) { return false; }
   }
 
-  // A managed enum field reads back as a value type; dig the number out of it.
-  function enumVal(v: any): number {
-    if (v == null) return -1;
-    if (typeof v === "number") return v;
-    try { return Number((v as any).field("value__").value); } catch (_) { return -1; }
-  }
-
   // A new source fingerprint: 32 hex digits without dashes, the way the game
   // generates it (Guid.NewGuid().ToString("N")).
   function freshFingerprint(): string {
@@ -666,6 +697,23 @@ Il2Cpp.perform(() => {
     return boxed.unbox();
   }
 
+  // Unity's Vector2 and Color are value types: a setter takes one boxed struct, not separate numbers.
+  function vec2(x: number, y: number): Il2Cpp.ValueType {
+    const boxed = ucls("UnityEngine.Vector2").alloc();
+    boxed.field<number>("x").value = x;
+    boxed.field<number>("y").value = y;
+    return boxed.unbox();
+  }
+
+  function color(r: number, g: number, b: number, a: number): Il2Cpp.ValueType {
+    const boxed = ucls("UnityEngine.Color").alloc();
+    boxed.field<number>("r").value = r;
+    boxed.field<number>("g").value = g;
+    boxed.field<number>("b").value = b;
+    boxed.field<number>("a").value = a;
+    return boxed.unbox();
+  }
+
   // The base URL of one of the server's endpoints ("" when not logged in).
   function endpointUrl(kind: number): string {
     try {
@@ -691,25 +739,49 @@ Il2Cpp.perform(() => {
   // A GET through the game's own HTTP stack. The callback is invoked by
   // BestHTTP from its update loop, so it runs on the Unity main thread.
   function httpGet(url: string, withAuth: boolean, cb: (status: number, body: string) => void) {
+    // -1 is the failure sentinel; the reason goes to the log and into the body.
+    const done = (status: number, body: string) => {
+      if (status === -1) log(`http GET ${url} failed: ${body}`);
+      cb(status, body);
+    };
     try {
-      const uri = newWith(Il2Cpp.corlib.class("System.Uri"), Il2Cpp.string(url));
+      // System.Uri lives in System.dll, not mscorlib.dll, in this Unity profile.
+      const uriClass = Il2Cpp.corlib.tryClass("System.Uri") ?? Il2Cpp.domain.assembly("System").image.class("System.Uri");
+      const uri = newWith(uriClass, Il2Cpp.string(url));
       const del = Il2Cpp.delegate(cls(img, "BestHTTP.OnRequestFinishedDelegate"), (req: any, resp: any) => {
         try {
-          if (isNull(resp)) { cb(-1, ""); return; }
+          if (isNull(resp)) {
+            let why = "no response";
+            try { why += `, state ${call(req, "get_State")}, exception ${call(req, "get_Exception")}`; } catch (_) {}
+            done(-1, why);
+            return;
+          }
           const status = Number(call(resp, "get_StatusCode"));
           let body = "";
           try { body = String(call(resp, "get_DataAsText")?.content ?? ""); } catch (_) {}
           cb(status, body);
-        } catch (e) { cb(-1, String(e)); }
+        } catch (e) { done(-1, String(e)); }
       });
-      const req = newWith(cls(img, "BestHTTP.HTTPRequest"), uri, del);
+      // The plugin's constructor (Uri, HTTPMethods, OnRequestFinishedDelegate) with HTTPMethods.Get; the first
+      // 2-parameter constructor is only the fallback, as other overloads share its parameter count.
+      const requestClass = cls(img, "BestHTTP.HTTPRequest");
+      const req = requestClass.alloc();
+      const ctor = requestClass.methods.find(m => m.name === ".ctor" && m.parameterCount === 3
+        && /HTTPMethods$/.test(String(m.parameters[1]?.type?.name)));
+      let built = false;
+      if (ctor) {
+        try { (ctor.bind(req) as any).invoke(uri, 0, del); built = true; }
+        catch (e) { log(`http GET: the 3-parameter constructor failed (${e}), using the 2-parameter one`); }
+      }
+      if (!built) (req.method(".ctor", 2) as any).invoke(uri, del);
       (req.method("AddHeader") as any).invoke(Il2Cpp.string("Accept"), Il2Cpp.string("application/json"));
       if (withAuth) {
         const token = authToken();
         if (token) (req.method("AddHeader") as any).invoke(Il2Cpp.string("Authorization"), Il2Cpp.string("Bearer " + token));
+        else log(`http GET ${url}: no auth token yet, sent without Authorization`);
       }
       (req.method("Send") as any).invoke();
-    } catch (e) { cb(-1, String(e)); }
+    } catch (e) { done(-1, String(e)); }
   }
 
   // ---------------------------------------------------------------------
@@ -752,9 +824,7 @@ Il2Cpp.perform(() => {
   //                                        deckName, deckStats, opponent... } ] }
   // ---------------------------------------------------------------------
   const deckStats = new Map<number, { wins: number; losses: number }>();
-  let matchEntryData: any[] = [];
-  let statsFinishedLoading = false;
-  let statsLoadingSince = 0;
+  let matchEntryData: any[] = [];       // fetched for the match history; nothing reads it yet, and the stats screen does not wait for it
 
   // Deferred work has to run on the Unity main thread, so it is queued here
   // and executed by the services manager's update loop. The work itself is
@@ -818,7 +888,7 @@ Il2Cpp.perform(() => {
     const base = endpointUrl(ENDPOINT_STATS);
     if (!base) return;
     httpGet(`${base}/fetchExtendedData`, true, (status, body) => {
-      if (status !== 200) { log(`fetchExtendedData -> HTTP ${status}`); statsFinishedLoading = true; return; }
+      if (status !== 200) { log(`fetchExtendedData -> HTTP ${status}`); return; }
       try {
         const json = JSON.parse(body);
         const entries = json.entries ?? [];
@@ -830,9 +900,8 @@ Il2Cpp.perform(() => {
           opponentDeckName: String(e.opponentDeckName ?? ""),
           opponentDeckStats: e.opponentDeckStats ? { wins: Number(e.opponentDeckStats.wins) | 0, losses: Number(e.opponentDeckStats.losses) | 0 } : null,
         }));
-        statsFinishedLoading = true;
         log(`match history: ${matchEntryData.length} entries`);
-      } catch (e) { log(`fetchExtendedData parse error: ${e}`); statsFinishedLoading = true; }
+      } catch (e) { log(`fetchExtendedData parse error: ${e}`); }
     });
   }
 
@@ -843,8 +912,6 @@ Il2Cpp.perform(() => {
         try {
           const response = new Il2Cpp.Object(args[1]);
           if (enumVal(response.field<any>("resultCode").value) !== 0) return;
-          statsFinishedLoading = false;
-          statsLoadingSince = Date.now();
           refreshMatchEntries();
         } catch (e) { log(`stats hook failed: ${e}`); }
       },
@@ -868,27 +935,6 @@ Il2Cpp.perform(() => {
       if (!method) continue;
       Interceptor.attach(method.virtualAddress, {
         onLeave() { schedule(1000, () => refreshDeckStats(true)); },
-      });
-    }
-
-    // GetResponseStatus is shared by every service (generic sharing), so the
-    // return value is only changed for the statistics service: while the
-    // extended data is still loading the match history keeps waiting.
-    const getResponseStatus = cls(img, "SparkleServices.Stats").method("GetResponseStatus");
-    if (getResponseStatus) {
-      Interceptor.attach(getResponseStatus.virtualAddress, {
-        onEnter(args) { this.instance = args[0]; },
-        onLeave(retval) {
-          try {
-            if (isNull(this.instance)) return;
-            const obj = new Il2Cpp.Object(this.instance);
-            if (obj.class.namespace !== "SparkleServices" || obj.class.name !== "Stats") return;   // only the stats service
-            const original = retval.toInt32();
-            const loading = !statsFinishedLoading && Date.now() - statsLoadingSince < 10000;
-            if (loading) { retval.replace(ptr(1)); return; }      // wait for the extended data
-            if (original === 2) retval.replace(ptr(2));
-          } catch (_) {}
-        },
       });
     }
   });
@@ -922,17 +968,27 @@ Il2Cpp.perform(() => {
       const stats = deckStats.get(Number(call(tile, "GetDeckId")));
       const text = stats ? `${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)` : "";
       (label.method("set_text") as any).invoke(Il2Cpp.string(text));
-      const labelObject = call(labelTransform, "gameObject");
+      if (stats) {
+        // The plate has no layout group, so it is sized from the text, as the desktop plugin does.
+        const containerRect = (container as any).method("GetComponent")
+          .overload("System.Type").invoke(ucls("UnityEngine.RectTransform").type.object) as Il2Cpp.Object;
+        const width = Number(call(label, "get_preferredWidth")) + 10;
+        const height = Number(call(label, "get_preferredHeight")) + 5;
+        if (!isNull(containerRect)) (containerRect.method("set_sizeDelta") as any).invoke(vec2(width, height));
+      }
+      const labelObject = call(labelTransform, "get_gameObject");
       if (!isNull(labelObject)) (labelObject.method("SetActive") as any).invoke(stats != null);
     } catch (e) { log(`deck tile label failed: ${e}`); }
   }
+
+  let labelSizeLogged = false;
 
   function createDeckTileLabel(tile: Il2Cpp.Object) {
     try {
       const nameText = tile.field<Il2Cpp.Object>("DeckNameText").value;
       if (isNull(nameText)) return;
-      const nameTransform = call(nameText, "get_transform");
-      const parent = call(nameTransform, "get_parent");
+      // The container hangs off the tile root: SetData looks it up there with Transform.Find, which only sees direct children.
+      const parent = call(tile, "get_transform");
       if (isNull(parent)) return;
 
       const gameObject = ucls("UnityEngine.GameObject");
@@ -945,10 +1001,10 @@ Il2Cpp.perform(() => {
       const containerRect = (container as any).method("GetComponent")
         .overload("System.Type").invoke(rectType.type.object) as Il2Cpp.Object;
       if (!isNull(containerRect)) {
-        (containerRect.method("set_anchorMin") as any).invoke(1, 0);
-        (containerRect.method("set_anchorMax") as any).invoke(1, 0);
-        (containerRect.method("set_pivot") as any).invoke(1, 0);
-        (containerRect.method("set_anchoredPosition") as any).invoke(-3, 2);
+        (containerRect.method("set_anchorMin") as any).invoke(vec2(1, 0));
+        (containerRect.method("set_anchorMax") as any).invoke(vec2(1, 0));
+        (containerRect.method("set_pivot") as any).invoke(vec2(1, 0));
+        (containerRect.method("set_anchoredPosition") as any).invoke(vec2(-3, 2));
       }
       // A black plate behind the numbers.
       const background = newWith(gameObject, Il2Cpp.string("Background"),
@@ -957,29 +1013,47 @@ Il2Cpp.perform(() => {
       (backgroundTransform.method("SetParent", 2) as any).invoke(containerTransform, false);
       const backgroundImage = (background as any).method("GetComponent")
         .overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object) as Il2Cpp.Object;
+      const backgroundRect = (background as any).method("GetComponent")
+        .overload("System.Type").invoke(rectType.type.object) as Il2Cpp.Object;
+      if (!isNull(backgroundRect)) {
+        (backgroundRect.method("set_anchorMin") as any).invoke(vec2(0, 0));
+        (backgroundRect.method("set_anchorMax") as any).invoke(vec2(1, 1));
+        (backgroundRect.method("set_sizeDelta") as any).invoke(vec2(0, 0));
+        (backgroundRect.method("set_anchoredPosition") as any).invoke(vec2(0, 0));
+      }
       if (!isNull(backgroundImage)) {
-        (backgroundImage.method("set_color") as any).invoke(0, 0, 0, 0.7);
+        (backgroundImage.method("set_color") as any).invoke(color(0, 0, 0, 0.7));
         (backgroundImage.method("set_raycastTarget") as any).invoke(false);
       }
       // The label itself is a copy of the deck name text, so it uses the
       // same font and style as the rest of the tile.
-      const label = (ucls("UnityEngine.Application").method("Instantiate", 3) as any)
-        .invoke(nameText, containerTransform, false) as Il2Cpp.Object;
+      // Object.Instantiate(Object, Transform, bool): the (Object, Vector3, Quaternion) overload has the same parameter count.
+      const objectClass = ucls("UnityEngine.Object");
+      const instantiate = objectClass.methods.find(m => m.name === "Instantiate" && !m.isGeneric && m.parameterCount === 3
+        && /Transform$/.test(String(m.parameters[1]?.type?.name))) ?? objectClass.method("Instantiate", 3);
+      const label = (instantiate as any).invoke(nameText, containerTransform, false) as Il2Cpp.Object;
       if (isNull(label)) return;
       (label.method("set_name") as any).invoke(Il2Cpp.string("WinLossRatioLabel"));
       (label.method("set_alignment") as any).invoke(5);            // MiddleRight
-      (label.method("set_fontSize") as any).invoke(16);
+      // The desktop plugin uses 16, which is tiny on a phone canvas: scale up from the name text the label was cloned from.
+      const nameSize = Number(call(label, "get_fontSize"));
+      const labelSize = Math.max(16, Math.round(nameSize * 1.3));
+      if (!labelSizeLogged) { labelSizeLogged = true; log(`deck tile label font size ${nameSize} -> ${labelSize}`); }
+      (label.method("set_fontSize") as any).invoke(labelSize);
       (label.method("set_horizontalOverflow") as any).invoke(1);   // Wrap
       (label.method("set_verticalOverflow") as any).invoke(1);     // Truncate
       (label.method("set_raycastTarget") as any).invoke(false);
-      const labelRect = call(label, "get_RectTransform");
+      const labelRect = call(label, "get_rectTransform");   // Graphic.rectTransform
       if (!isNull(labelRect)) {
-        (labelRect.method("set_anchorMin") as any).invoke(0, 0);
-        (labelRect.method("set_anchorMax") as any).invoke(1, 1);
-        (labelRect.method("set_offsetMin") as any).invoke(5, 2.5);
-        (labelRect.method("set_offsetMax") as any).invoke(-5, -2.5);
+        (labelRect.method("set_anchorMin") as any).invoke(vec2(0, 0));
+        (labelRect.method("set_anchorMax") as any).invoke(vec2(1, 1));
+        (labelRect.method("set_pivot") as any).invoke(vec2(0.5, 0.5));
+        (labelRect.method("set_anchoredPosition") as any).invoke(vec2(0, 0));
+        (labelRect.method("set_sizeDelta") as any).invoke(vec2(0, 0));
+        (labelRect.method("set_offsetMin") as any).invoke(vec2(5, 2.5));
+        (labelRect.method("set_offsetMax") as any).invoke(vec2(-5, -2.5));
       }
-      const labelObject = call(label, "gameObject");
+      const labelObject = call(label, "get_gameObject");
       if (!isNull(labelObject)) (labelObject.method("SetActive") as any).invoke(false);
     } catch (e) { log(`deck tile label creation failed: ${e}`); }
   }
@@ -1011,6 +1085,12 @@ Il2Cpp.perform(() => {
       onEnter(args) { this.tile = args[0]; },
       onLeave() { try { deckTiles.add(this.tile.toString()); } catch (_) {} },
     });
+    // A closed deck screen destroys its tiles; a stored pointer to one must not be dereferenced later.
+    for (const name of ["OnDisable", "OnDestroy"]) {
+      const gone = deckTile.methods.find(x => x.name === name && x.parameterCount === 0);
+      if (gone) Interceptor.attach(gone.virtualAddress, { onEnter(args) { deckTiles.delete(args[0].toString()); } });
+      else log(`deck tiles: DeckTile.${name} not found, stored tile pointers are not cleared by it`);
+    }
   });
 
   // ---------------------------------------------------------------------
@@ -1255,6 +1335,7 @@ Il2Cpp.perform(() => {
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
     let lastLanguage = "";
+    let lastApplied = "";
     // Trace the localization load: the English text lives in the appbase/en_us
     // bundle, and if that one is not resolved the whole UI shows raw keys.
     Interceptor.attach(localization.method("SetLanguage", 2).virtualAddress, {
@@ -1284,6 +1365,10 @@ Il2Cpp.perform(() => {
           }
           if (!fixes) return;
           if (isNull(data)) return;
+          // Once per language and dictionary: a restore above replaces the dictionary, which needs the fixes again.
+          const appliedFor = `${code}:${data.handle}`;
+          if (appliedFor === lastApplied) return;
+          lastApplied = appliedFor;
           let changed = 0;
           for (const key of Object.keys(fixes)) {
             // The keys of the plugin are not in the game's text bundle, they
@@ -1308,6 +1393,7 @@ Il2Cpp.perform(() => {
   class ZipReader {
     private file: any = null;
     private entries = new Map<string, any>();
+    ok = false;                       // false when the archive could not be read (already logged)
 
     constructor(path: string) {
       try {
@@ -1338,10 +1424,16 @@ Il2Cpp.perform(() => {
           this.entries.set(name, { method, size, offset });
           at += 46 + nameLen + extraLen + commentLen;
         }
+        this.ok = true;
       } catch (e) {
         log(`payload: the apk cannot be read: ${e}`);
-        this.file = null;
+        this.close();
       }
+    }
+
+    close() {
+      try { this.file?.close(); } catch (_) {}
+      this.file = null;
     }
 
     find(name: string): any { return this.entries.get(name) ?? null; }
@@ -1353,15 +1445,29 @@ Il2Cpp.perform(() => {
       return this.file.readBytes(length);
     }
 
+    // Writes to <target>.part and renames when complete, so a killed copy never leaves a truncated file under the final name.
     copy(entry: any, target: string) {
-      const out = new File(target, "wb");
-      let done = 0;
-      while (done < entry.size) {
-        const n = Math.min(4 * 1024 * 1024, entry.size - done);
-        out.write(this.read(entry, done, n));
-        done += n;
+      if (entry.method !== 0) throw new Error(`entry for ${target} is not stored (method ${entry.method})`);
+      const part = `${target}.part`;
+      const out = new File(part, "wb");
+      try {
+        let done = 0;
+        let reported = 0;
+        while (done < entry.size) {
+          const n = Math.min(4 * 1024 * 1024, entry.size - done);
+          out.write(this.read(entry, done, n));
+          done += n;
+          if (done - reported >= PROGRESS_BYTES && done < entry.size) {
+            reported = done;
+            log(`payload: ${target.split("/").pop()} ${Math.floor(done / 1048576)} of ${Math.floor(entry.size / 1048576)} MB`);
+          }
+        }
+        out.close();
+      } catch (e) {
+        try { out.close(); } catch (_) {}
+        throw e;
       }
-      out.close();
+      moveFile(part, target);
     }
 
     private dataOffset(entry: any): number {
@@ -1375,7 +1481,8 @@ Il2Cpp.perform(() => {
     const apk = apkPath();
     if (!apk) { log("payload: the apk was not found"); return; }
     const zip = new ZipReader(apk);
-    if (!zip) return;
+    try {
+    if (!zip.ok) return;             // the read failure is logged by ZipReader, it is not "no payload"
     const obb = zip.find("assets/tesl-payload/obb.bin");
     const cache = zip.find("assets/tesl-payload/cache.bin");
     const perFileEntries = zip.list().filter(e => e.startsWith("assets/tesl-payload/UnityCache/Shared/"));
@@ -1383,8 +1490,10 @@ Il2Cpp.perform(() => {
 
     if (obb) {
       const target = obbPath();
-      if (target && !fileExists(target)) {
-        log(`payload: writing the streaming assets to ${target}`);
+      // A file of another size is a truncated copy (or a different build) and is written again.
+      const have = target ? fileLength(target) : -1;
+      if (target && have !== obb.size) {
+        log(`payload: writing the streaming assets to ${target}${have >= 0 ? ` (found ${have} of ${obb.size} bytes)` : ""}`);
         makeDirectory(target.substring(0, target.lastIndexOf("/")));
         zip.copy(obb, target);
         log("payload: the streaming assets are ready");
@@ -1430,20 +1539,29 @@ Il2Cpp.perform(() => {
       if (perEntry.length) {
         const tgt = `${persistentPath()}/UnityCache/Shared`;
         let written = 0;
+        let failed = 0;
+        let bytes = 0;
+        let reported = 0;
         for (const name of perEntry) {
           const rel = name.substring(prefix.length);
           const path = `${tgt}/${rel}`;
-          if (!fileExists(path)) {
-            const e = zip.find(name);
+          const e = zip.find(name);
+          if (fileLength(path) === e.size) continue;
+          try {
             makeDirectory(path.substring(0, path.lastIndexOf("/")));
             zip.copy(e, path);
             written++;
-          }
+            bytes += e.size;
+            if (bytes - reported >= PROGRESS_BYTES) {
+              reported = bytes;
+              log(`payload: ${written} cache files written, ${Math.floor(bytes / 1048576)} MB`);
+            }
+          } catch (err) { failed++; log(`payload: cache file ${rel} failed: ${err}`); }
         }
-        log(`payload: ${written} of ${perEntry.length} cache files written (per-file)`);
+        log(`payload: ${written} of ${perEntry.length} cache files written (per-file)${failed ? `, ${failed} failed` : ""}`);
       }
     }
-        const versions = zip.find("assets/tesl-payload/versions.json");
+    const versions = zip.find("assets/tesl-payload/versions.json");
     if (versions) {
       const target = `${persistentPath()}/versions.json`;
       if (!fileExists(target)) {
@@ -1452,6 +1570,7 @@ Il2Cpp.perform(() => {
         zip.copy(versions, target);
       }
     }
+    } finally { zip.close(); }
   });
 
   // The path of the APK of the game, taken from the streaming assets path.
@@ -1497,6 +1616,21 @@ Il2Cpp.perform(() => {
     } catch (_) { return false; }
   }
 
+  // The size of a file in bytes, -1 when it does not exist.
+  function fileLength(path: string): number {
+    try {
+      const f = new File(path, "rb");
+      try { f.seek(0, File.SEEK_END); return f.tell(); } finally { f.close(); }
+    } catch (_) { return -1; }
+  }
+
+  // Replaces `to` by `from` (File.Move refuses an existing target).
+  function moveFile(from: string, to: string) {
+    const file = Il2Cpp.corlib.class("System.IO.File");
+    (file.method("Delete") as any).invoke(Il2Cpp.string(to));
+    (file.method("Move", 2) as any).invoke(Il2Cpp.string(from), Il2Cpp.string(to));
+  }
+
   function makeDirectory(path: string) {
     try {
       (Il2Cpp.corlib.class("System.IO.Directory").method("CreateDirectory") as any)
@@ -1526,8 +1660,10 @@ Il2Cpp.perform(() => {
   // directory and used on the next start. They are dropped again when the
   // server does not accept them any more.
   // ---------------------------------------------------------------------
+  // Plain text on shared storage: on Android 10 and below other apps with storage permission can read it.
   const LOGIN_FILE = "tesl-login.json";
-  let autoLoginTried = false;
+  let autoLoginTried = false;           // the last login screen was answered from the saved file; the next one is shown to the user
+  let loginRejected = false;            // the service answered a login with a failure code since the last success
 
   function readSavedLogin(): { username: string; password: string } | null {
     try {
@@ -1581,10 +1717,11 @@ Il2Cpp.perform(() => {
         const saved = autoLoginTried ? null : readSavedLogin();
         if (!saved) {
           if (autoLoginTried) {
-            // The server did not accept the remembered credentials.
+            // Either the server did not accept the remembered credentials (the file is already dropped), or the
+            // login screen came back after a good auto login (logout, expired session): the valid file stays.
             autoLoginTried = false;
-            clearSavedLogin();
-            log("auto login was rejected, showing the login window");
+            log(loginRejected ? "auto login was rejected, showing the login window" : "login window requested after an auto login, showing it");
+            loginRejected = false;
           }
           mobileOriginal(this.handle, title as any, description as any, callback as any);
           return;
@@ -1606,8 +1743,8 @@ Il2Cpp.perform(() => {
         if (!saved) {
           if (autoLoginTried) {
             autoLoginTried = false;
-            clearSavedLogin();
-            log("auto login was rejected, showing the login window");
+            log(loginRejected ? "auto login was rejected, showing the login window" : "login window requested after an auto login, showing it");
+            loginRejected = false;
           }
           fallbackOriginal(title as any, description as any, callback as any);
           return;
@@ -1766,12 +1903,15 @@ Il2Cpp.perform(() => {
   // interface shows the raw localization keys instead of the text.
   section("localization asset trace", () => {
     const catalog = cls(img, "AssetCatalog");
+    let logged = 0;
     for (const m of catalog.methods.filter(x => x.name === "LoadAssetFromPathAsync")) {
       Interceptor.attach(m.virtualAddress, {
-        onEnter(args) { this.path = rawStr(args[1]); },
+        onEnter(args) { if (logged < 40) this.path = rawStr(args[1]); },
         onLeave(ret) {
+          if (logged >= 40) return;
           const path = this.path ?? "";
           if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
+          logged++;
           log(`LoadAssetFromPathAsync("${path}") -> ${ret.isNull() ? "NULL (not in the asset map)" : "ok"}`);
         },
       });
@@ -1786,12 +1926,15 @@ Il2Cpp.perform(() => {
   section("bundle hash report", () => {
     const mgr = cls(img, "AssetBundles.AssetBundleManager");
     const catalog = cls(img, "AssetCatalog");
-    const target = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/tesl-bundle-hashes.txt";
+    let reported = false;               // the report is written once per process
     Interceptor.attach(catalog.method("SetCacheExpiration").virtualAddress, {
       onEnter() {
+        if (reported) return;
         try {
+          const target = `${persistentPath()}/tesl-bundle-hashes.txt`;
           const manifest = mgr.field<Il2Cpp.Object>("m_AssetBundleManifest").value;
           if (isNull(manifest)) { log("bundle hashes: the manifest is not loaded yet"); return; }
+          reported = true;
           const names = manifest.method("GetAllAssetBundles").invoke() as Il2Cpp.Array<Il2Cpp.String>;
           const lines: string[] = [];
           for (let i = 0; i < names.length; i++) {

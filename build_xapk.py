@@ -16,21 +16,21 @@ Usage:
 
     python3 build_xapk.py [--apk tesl-reborn.apk] [--obb main.11009...obb]
                           [--xapk The+Elder+...xapk] [--output tesl-reborn.xapk]
+                          [--icon icon.png --manifest manifest.json]
+
+With --icon and --manifest together the original XAPK is not needed.
 """
 
 import argparse
 import json
 import os
-import shutil
-import subprocess
 import sys
 import zipfile
 
-PACKAGE = "com.bethsoft.theelderscrollslegends"
-VERSION_CODE = "11009"
+from build_single_apk import OBB_NAME, PACKAGE, VERSION_CODE
+
 VERSION_NAME = "2.17.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
-OBB_NAME = "main.%s.%s.obb" % (VERSION_CODE, PACKAGE)
 OBB_IN_XAPK = "Android/obb/%s/%s" % (PACKAGE, OBB_NAME)
 
 
@@ -47,18 +47,29 @@ def main():
     ap.add_argument("--xapk", default=os.path.join(
         HERE, "The+Elder+Scrolls_+Legends_2.17.0_APKPure.xapk"),
         help="the original XAPK, the icon and the manifest come from it")
+    ap.add_argument("--icon", help="icon.png, replaces the one of the original XAPK (needs --manifest)")
+    ap.add_argument("--manifest", help="manifest.json, replaces the one of the original XAPK (needs --icon)")
     ap.add_argument("--output", default=os.path.join(HERE, "tesl-reborn.xapk"),
                     help="the XAPK to write")
     args = ap.parse_args()
 
-    for path in (args.apk, args.obb, args.xapk):
+    if bool(args.icon) != bool(args.manifest):
+        sys.exit("--icon and --manifest go together")
+    own = bool(args.icon)
+    for path in (args.apk, args.obb, *((args.icon, args.manifest) if own else (args.xapk,))):
         if not os.path.exists(path):
             sys.exit("%s is missing" % path)
 
-    # the icon and the manifest of the original package
-    with zipfile.ZipFile(args.xapk) as original:
-        icon = original.read("icon.png")
-        manifest = json.loads(original.read("manifest.json"))
+    # the icon and the manifest, from the files or from the original package
+    if own:
+        with open(args.icon, "rb") as f:
+            icon = f.read()
+        with open(args.manifest, "rb") as f:
+            manifest = json.loads(f.read())
+    else:
+        with zipfile.ZipFile(args.xapk) as original:
+            icon = original.read("icon.png")
+            manifest = json.loads(original.read("manifest.json"))
 
     apk_size = os.path.getsize(args.apk)
     obb_size = os.path.getsize(args.obb)
@@ -88,15 +99,17 @@ def main():
         out.writestr("manifest.json", json.dumps(manifest, separators=(",", ":")))
         # the streaming assets, they are read from the OBB of the package
         out.write(args.obb, OBB_IN_XAPK)
+    # the archive is tested before it takes the final name
+    with zipfile.ZipFile(tmp) as z:
+        bad = z.testzip()
+    if bad:
+        sys.exit("the archive is broken: %s (left as %s)" % (bad, tmp))
     os.replace(tmp, args.output)
 
     print("wrote %s (%s)" % (args.output, human(os.path.getsize(args.output))))
     with zipfile.ZipFile(args.output) as z:
         for info in z.infolist():
             print("   %-70s %s" % (info.filename, human(info.file_size)))
-    bad = zipfile.ZipFile(args.output).testzip()
-    if bad:
-        sys.exit("the archive is broken: " + bad)
 
 
 if __name__ == "__main__":
