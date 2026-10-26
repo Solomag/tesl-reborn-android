@@ -6394,15 +6394,35 @@ Il2Cpp.perform(() => {
   function settingsButtonPressed(button) {
     try {
       let node = call(button, "get_transform"), names = [];
-      const event = call(button, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
-      for (let i = 0; i < count; i++) names.push(String(call(event, "GetPersistentMethodName", i)?.content || ""));
       const buttonName = String(call(node, "get_name")?.content || "");
+      try {
+        const event = call(button, "get_onClick");
+        const countMethod = event.tryMethod("GetPersistentEventCount", 0);
+        const nameMethod = event.tryMethod("GetPersistentMethodName", 1);
+        if (countMethod && nameMethod) {
+          const count = Math.min(32, Number(countMethod.invoke()));
+          for (let i = 0; i < count; i++) names.push(String(nameMethod.invoke(i)?.content || ""));
+        } else {
+          const fields = Array.from(event.class.hierarchy()).flatMap((c) => c.fields);
+          const groupField = fields.find((f) => !f.isStatic && /PersistentCallGroup$/.test(f.type.name));
+          const group = groupField && event.field(groupField.name).value;
+          if (!isNull(group)) {
+            const listField = group.class.fields.find((f) => !f.isStatic && /List.*PersistentCall/.test(f.type.name));
+            const list = listField && group.field(listField.name).value;
+            if (!isNull(list)) for (let i = 0, count = Math.min(32, Number(call(list, "get_Count"))); i < count; i++) {
+              const entry = call(list, "get_Item", i), field = entry.class.fields.find((f) => !f.isStatic && /methodname/i.test(f.name) && f.type.name === "System.String");
+              if (field) names.push(String(entry.field(field.name).value?.content || ""));
+            }
+          }
+        }
+      } catch (_) {
+      }
       for (let depth = 0; depth < 10 && !isNull(node); depth++, node = call(node, "get_parent")) {
         const name = String(call(node, "get_name")?.content || "");
         if (!/^SettingsWin[_ -]?Mobile(?:\(Clone\))?$/i.test(name) && !/^SettingsWin(?:\(Clone\))?$/i.test(name)) continue;
         const action = [buttonName, ...names].join(" ");
         log(`settings button: ${action.slice(0, 240)}`);
-        if (/cancel|close|back|\bok\b|confirm|accept/i.test(action)) settingsClosing(call(node, "get_gameObject"), action);
+        if (/cancel|close|back|negative|dismiss|\bok\b|confirm|accept/i.test(action)) settingsClosing(call(node, "get_gameObject"), action);
         return;
       }
     } catch (error) {
@@ -6440,14 +6460,15 @@ Il2Cpp.perform(() => {
     }
     const existing = call(root, "Find", Il2Cpp.string("RebornGameData"));
     if (!isNull(existing)) {
-      call(call(existing, "get_gameObject"), "SetActive", true);
+      const go = call(existing, "get_gameObject");
+      if (!call(go, "get_activeSelf")) call(go, "SetActive", true);
       return;
     }
     const labels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
       ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
     });
-    uiPlace(button, 1, 1, 1, 1, -18, -136, 180, 48);
+    uiPlace(button, 1, 1, 1, 1, -18, -74, 180, 48);
     call(uiAdd(button, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
   }
   section("settings game data", () => {
@@ -8337,7 +8358,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {
           }
-          uiPlace(badge, 0.5, 0.5, 0.5, 0.5, 0, -110, Math.min(1100, Math.max(240, width)), 38);
+          uiPlace(badge, 0.5, 0.3, 0.5, 0.5, 0, 0, Math.min(1100, Math.max(240, width)), 38);
           const versionScreen = loadingVersionState();
           call(badge, "SetActive", versionScreen.visible);
           const caption = portVersionCaption();
