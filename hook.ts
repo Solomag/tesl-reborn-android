@@ -4395,8 +4395,12 @@ const chatWindows = new Map();
   // END android-ui: update-notices
 
   // BEGIN android-ui: resource-diagnostics
+  function rememberShopSnapshot(previous, report) {
+    if(!(report.shopImages||[]).some(item=>!/MainMenuLandingWin|Left_Store_BTN/i.test(item.path)))return previous;
+    return {at:report.at,images:report.shopImages,events:report.events.filter(item=>/shop|store|pack|bundle|image|texture|sprite/i.test(item.path))};
+  }
   section("bounded startup resource diagnostics", () => {
-    let next = 0, queued = false;
+    let next = 0, queued = false, lastShop=null;
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
         const now = Date.now();
@@ -4461,6 +4465,23 @@ const chatWindows = new Map();
               report.shopImages.push(item);
             }
           }catch(error){report.shopError=String(error).slice(0,160);}
+          try {
+            const images=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.RawImage").type.object);
+            for(let i=0;i<images.length && report.shopImages.length<64;i++) {
+              const image=images.get(i),go=call(image,"get_gameObject");if(!call(go,"get_activeInHierarchy"))continue;
+              let node=call(go,"get_transform"),path="";
+              for(let depth=0;depth<10 && !isNull(node);depth++,node=call(node,"get_parent"))path=String(call(node,"get_name")?.content||"")+"/"+path;
+              if(!/shop|store|packbundle|product/i.test(path))continue;
+              const item:any={path:path.slice(-400),type:"RawImage"},texture=call(image,"get_texture");
+              item.texture=isNull(texture)?null:String(call(texture,"get_name")?.content||"");
+              if(!isNull(texture)){item.width=Number(call(texture,"get_width"));item.height=Number(call(texture,"get_height"));}
+              report.shopImages.push(item);
+            }
+          }catch(error){report.shopRawError=String(error).slice(0,160);}
+          // Preserve the last actual shop snapshot when navigating to Game Data
+          // to share a report; the main-menu Store shortcut is not a shop view.
+          lastShop=rememberShopSnapshot(lastShop,report);
+          report.lastShop=lastShop;
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`,JSON.stringify(report));
         });
       }
@@ -4469,6 +4490,11 @@ const chatWindows = new Map();
   // END android-ui: resource-diagnostics
 
   // BEGIN android-ui: display-diagnostics
+  function redundantSettingsResolution(values, current, inSettings) {
+    return inSettings && values.length>=3 && values[0]===current.width && values[1]===current.height
+      && typeof values[2]==="boolean" && values[2]===current.fullscreen
+      && (values.length===3 || values.length===4 && values[3]===0);
+  }
   function createDisplayTrace(write) {
     let events=[],last="";
     return (kind,values)=>{
@@ -4515,10 +4541,21 @@ const chatWindows = new Map();
     const seen=new Set();
     for(const method of ucls("UnityEngine.Screen").methods.filter(m=>m.name==="SetResolution" && m.isStatic && m.parameterCount>=2)) {
       const key=method.virtualAddress.toString();if(method.virtualAddress.isNull()||seen.has(key))continue;seen.add(key);
-      Interceptor.attach(method.virtualAddress,{onEnter(args){
+      // The bridge accounts for the legacy static instance slot. Raw args[0]
+      // was that null slot, not the requested width on this Unity player.
+      if(![3,4].includes(method.parameterCount) || method.parameters[2].type.name!=="System.Boolean")continue;
+      method.implementation=function(...values) {
+        const settings=Boolean(root) && Date.now()<watchUntil || resourceSettingsOpen();
+        let skip=false;
+        try {const screen=chatScreen();skip=redundantSettingsResolution(values,{
+          width:screen.width,height:screen.height,fullscreen:Boolean(ucls("UnityEngine.Screen").method("get_fullScreen",0).invoke())
+        },settings);}catch(_){}
         watchUntil=Date.now()+2000;
-        trace("SetResolution",{width:args[0].toInt32(),height:args[1].toInt32(),signature:method.parameters.map(p=>p.type.name).join(",")});
-      }});
+        trace(skip?"SetResolution-skipped":"SetResolution",{width:values[0],height:values[1],fullscreen:values[2],
+          refreshRate:values.length===4?values[3]:null,signature:method.parameters.map(p=>p.type.name).join(",")});
+        if(skip)return;
+        return method.invoke(...values);
+      };
     }
     Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
       try {

@@ -26,3 +26,10 @@ now+=5001;hook.onLeave();assert.equal(reports.length,2);
 now+=900001;c.recordResourceEvent('asset-request','too-late');hook.onLeave();
 assert.equal(reports.length,2,'startup diagnostics stop after three minutes');
 console.log('PASS: bounded startup trace and bundle keys, throttled snapshots, locale/patch identification and URL secret omission');
+
+const shop={at:'shop-time',shopImages:[{path:'ShopWin/Product/Image/',sprite:null}],events:[{path:'Shop/image'},{path:'profile/fetch'}]};
+const saved=c.rememberShopSnapshot(null,shop);
+assert.equal(saved.images[0].sprite,null);assert.equal(saved.events.length,1);
+assert.equal(c.rememberShopSnapshot(saved,{at:'later',shopImages:[{path:'MainMenuLandingWin/Left_Store_BTN/'}],events:[]}),saved);
+assert.equal(c.rememberShopSnapshot(saved,{shopImages:[],events:[]}),saved);
+console.log('PASS: missing shop images remain in the report after leaving the shop for Settings/Game Data');
