@@ -4965,7 +4965,7 @@ Il2Cpp.perform(() => {
       it_it: ["italiano", "italian", "\u0438\u0442\u0430\u043B\u044C\u044F\u043D\u0441\u043A\u0438\u0439"],
       pl_pl: ["polski", "polish", "\u043F\u043E\u043B\u044C\u0441\u043A\u0438\u0439"],
       pt_br: ["portugu\xEAsbrasil", "brazilianportuguese", "portugu\xEAs", "portuguese"],
-      ru_ru: ["\u0440\u0443\u0441\u0441\u043A\u0438\u0439", "russian"],
+      ru_ru: ["\u0440\u0443\u0441\u0441\u043A\u0438\u0439", "\u0440\u0443\u0441\u0441\u043A\u0438\u0439\u044F\u0437\u044B\u043A", "russian"],
       tr_tr: ["t\xFCrk\xE7e", "turkish", "\u0442\u0443\u0440\u0435\u0446\u043A\u0438\u0439"]
     };
     return Object.keys(native).find((code) => native[code].includes(label));
@@ -6283,8 +6283,9 @@ Il2Cpp.perform(() => {
         if (index < 0 || index >= count || count > 32) return;
         const label = String(call(call(options, "get_Item", index), "get_text")?.content || "");
         const code = languageLabel(label);
-        if (!code) throw Error("Unknown language label");
+        if (!code) throw Error("Unknown language label " + JSON.stringify(label.slice(0, 120)));
         if (code === resourceLanguage()) return;
+        log(`native language dropdown: selected ${code}`);
         schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources?language=" + code + "&apply=1")));
       } catch (error) {
         log(`native language dropdown: ${error}`);

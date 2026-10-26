@@ -1463,7 +1463,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       es_es:["español","spanish","испанский"],es_mx:["españollatinoamérica","latinamericanspanish","españolméxico"],
       fr_fr:["français","french","французский"],it_it:["italiano","italian","итальянский"],
       pl_pl:["polski","polish","польский"],pt_br:["portuguêsbrasil","brazilianportuguese","português","portuguese"],
-      ru_ru:["русский","russian"],tr_tr:["türkçe","turkish","турецкий"] };
+      ru_ru:["русский","русскийязык","russian"],tr_tr:["türkçe","turkish","турецкий"] };
     return Object.keys(native).find(code => native[code].includes(label));
   }
 
@@ -2664,8 +2664,9 @@ function uiComponent(go, type) {
         if(index<0 || index>=count || count>32) return;
         const label=String(call(call(options,"get_Item",index),"get_text")?.content||"");
         const code=languageLabel(label);
-        if(!code) throw Error("Unknown language label");
+        if(!code) throw Error("Unknown language label " + JSON.stringify(label.slice(0,120)));
         if(code===resourceLanguage()) return;
+        log(`native language dropdown: selected ${code}`);
         schedule(0,()=>ucls("UnityEngine.Application").method("OpenURL",1).invoke(Il2Cpp.string("teslreborn://resources?language="+code+"&apply=1")));
       } catch(error) {
         log(`native language dropdown: ${error}`);
