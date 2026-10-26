@@ -4,9 +4,9 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 63,
-  "version": "android-63-rollback-apk40-hook39",
-  "bytes": 345685,
-  "sha256": "45d84b87efd5fb72fffdbe078e861a1fe6e714b7c05e0831c160526c9509e26a",
-  "url": "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/45d84b87efd5fb72fffdbe078e861a1fe6e714b7c05e0831c160526c9509e26a.js"
+  "revision": 64,
+  "version": "android-64-apk50-hook49-comparison",
+  "bytes": 364590,
+  "sha256": "d3034ff9f250190fead8274f56dea80932d595f2b2ee051cf4c7e19418f6485c",
+  "url": "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/d3034ff9f250190fead8274f56dea80932d595f2b2ee051cf4c7e19418f6485c.js"
 }
