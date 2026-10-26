@@ -7534,59 +7534,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       historyPoll();
     } });
   });
-  function titleDataByName(name) {
-    const manager = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
-    const titles = manager.field("Config").value.field("Titles").value;
-    const count = Number(call(titles, "get_Count"));
-    for (let i = 0; i < count; i++) {
-      const title = titles.method("get_Item", 1).invoke(i);
-      const id = title.field("ResourceId").value;
-      if (String(id.field("UniqueName").value?.content || "") === name) return title;
-    }
-    return null;
-  }
-  section("match intro title colour", () => {
-    const sequence = cls(img, "SPTESL.SequenceMatchIntro");
-    const execute = sequence.methods.find((m) => m.name === "Execute" && m.parameterCount === 2 && /MatchLogAnimationData$/.test(m.parameters[0].type.name) && /BoardState$/.test(m.parameters[1].type.name));
-    if (!execute) throw Error("SequenceMatchIntro.Execute(data, boardState) not found");
-    log(`titles UI: intro Execute parameters=${execute.parameters.map((p) => p.type.name).join(",")}`);
-    if (execute.parameters.some((p) => p.type.class.isValueType)) throw Error("Intro value-type parameters need a separate ABI adapter");
-    Interceptor.attach(execute.virtualAddress, {
-      onEnter(args) {
-        const start = execute.isStatic ? 0 : 1;
-        this.data = args[start];
-        this.board = args[start + 1];
-      },
-      onLeave() {
-        try {
-          const data = new Il2Cpp.Object(this.data), board = new Il2Cpp.Object(this.board);
-          const players = call(data.field("ActionData").value, "get_MatchIntroPlayers");
-          if (isNull(players)) return;
-          const win = board.field("MatchUI").value.field("MatchIntroWin").value;
-          const network = cls(img, "SPTESL.GameNetworkManager").method("get_Instance").invoke();
-          for (let i = 0, count = Number(call(players, "get_Count")); i < count; i++) {
-            const player = players.method("get_Item", 1).invoke(i);
-            const types = call(player, "get_InventoryTypes");
-            const titleIndex = Number(types.method("IndexOf", 1).invoke(Il2Cpp.string("title")));
-            if (titleIndex < 0) continue;
-            const values = call(player, "get_InventoryValues");
-            const titleName = String(values.method("get_Item", 1).invoke(titleIndex)?.content || "");
-            const title = titleDataByName(titleName);
-            if (isNull(title) || enumVal(title.field("Rarity").value) !== RARITY_LEGENDARY) continue;
-            const own = enumVal(network.method("GetPlayerControllerType", 1).invoke(call(player, "get_PlayerInstanceId"))) === 0;
-            const panel = win.field(own ? "MyInfoPanel" : "UrInfoPanel").value;
-            const banner = panel.field("TitleBanner").value;
-            const resources = cls(img, "UIResourceManager").method("get_Instance").invoke();
-            const sprite = resources.method("GetTitleBannerSprite", 1).invoke(enumBox(cls(img, "SPTESL.CardRarity"), 0));
-            if (!isNull(sprite)) call(banner, "set_overrideSprite", sprite);
-            call(banner, "set_color", rgba(1, 0.75, 0, 1));
-            log("titles UI: match intro legendary banner tinted");
-          }
-        } catch (error) {
-          log(`titles UI: intro tint failed: ${error}`);
-        }
-      }
-    });
+  section("match intro title colour (temporarily disabled)", () => {
+    log("titles UI: match intro tint skipped during battle-entry crash investigation");
   });
   const emojiByName = /* @__PURE__ */ new Map(), emojiByAscii = /* @__PURE__ */ new Map();
   let emojiDefinitions = [], emojiAsset = null, emojiTexture = null, emojiInitAttempted = false;
