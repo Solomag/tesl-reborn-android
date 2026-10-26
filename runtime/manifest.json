@@ -6,8 +6,8 @@
   "abi": "arm64-v8a",
   "revision": 58,
   "version": "android-58-cold-ui-initialization",
-  "bytes": 392071,
-  "sha256": "0c70bf5949a85efece179dd03a3ddb6d5f95f40913660ac09377f53352ba75b4",
+  "bytes": 389737,
+  "sha256": "34268286369eec80e6c1fec8c301c21b14e297d38ca39eb2efbc3d71e1e61d9f",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "ab21b4888276f7f63b20028382422e96781a0eb0a3092d37800b88db65b53f8f"
+  "sourceSha256": "ab5461d9eefe4540befa1c856261088a303f51895fd563d28e0a20d3c7f04148"
 }

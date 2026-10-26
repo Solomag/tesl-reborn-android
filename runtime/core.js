@@ -8699,32 +8699,16 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     return cachedPortCaption = `Reborn ${PLUGIN_VERSION}
 Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
   }
-  const noticeCanvasCalls = /* @__PURE__ */ new Map();
   function noticeCanvasProperty(canvas, name, value) {
-    const signatures = {
-      set_renderMode: ["void", "int", "UnityEngine.RenderMode"],
-      set_sortingOrder: ["void", "int", "System.Int32"],
-      set_scaleFactor: ["void", "float", "System.Single"],
-      get_scaleFactor: ["float", null, ""]
-    };
-    const spec = signatures[name];
-    if (!spec) throw Error("Unsupported notice Canvas property");
     const method = canvas.tryMethod(name, value === void 0 ? 0 : 1);
-    if (method) {
-      if (value === void 0) return method.invoke();
-      const type = method.parameters[0].type.class;
-      return method.invoke(type.isEnum ? enumBox(type, value) : value);
+    if (!method) {
+      const error = new Error(`Notice Canvas managed binding unavailable: ${name}`);
+      error.noticeCanvasUnavailable = true;
+      throw error;
     }
-    let native = noticeCanvasCalls.get(name);
-    if (!native) {
-      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
-      let address = resolve(Memory.allocUtf8String("UnityEngine.Canvas::" + name));
-      if (address.isNull()) address = resolve(Memory.allocUtf8String(`UnityEngine.Canvas::${name}(${spec[2]})`));
-      if (address.isNull()) throw Error("Notice Canvas binding unavailable: " + name);
-      native = new NativeFunction(address, spec[0], value === void 0 ? ["pointer"] : ["pointer", spec[1]]);
-      noticeCanvasCalls.set(name, native);
-    }
-    return value === void 0 ? native(canvas.handle) : native(canvas.handle, value);
+    if (value === void 0) return method.invoke();
+    const type = method.parameters[0].type.class;
+    return method.invoke(type.isEnum ? enumBox(type, value) : value);
   }
   function uiSystemText(go, text, size) {
     let label = null;
@@ -8820,7 +8804,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
   }
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
-    let inheritedCanvas = false;
+    let disabled = false, canvasScale = 1;
     let message = null, shownAt = 0, lastError = "";
     let reportedCaption = "", badgeBackground = null, gradientTexture = null, gradientSprite = null;
     function discard() {
@@ -8839,6 +8823,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
       root = label = canvas = panel = badge = badgeText = null;
     }
     function ensure() {
+      if (disabled) return;
       if (root) {
         try {
           call(root.target, "get_activeSelf");
@@ -8855,38 +8840,10 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
       root = go.ref(false);
       try {
         canvas = uiAdd(go, "UnityEngine.Canvas");
-        inheritedCanvas = false;
-        try {
-          noticeCanvasProperty(canvas, "set_renderMode", 0);
-          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
-          noticeCanvasProperty(canvas, "set_scaleFactor", 1);
-        } catch (_) {
-          const original = canvas;
-          const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
-          let parent = null, order = -Infinity;
-          for (let i = 0; i < values.length; i++) {
-            const candidate = values.get(i);
-            if (candidate.handle.equals(original.handle)) continue;
-            if (!Boolean(call(call(candidate, "get_gameObject"), "get_activeInHierarchy"))) continue;
-            let sorting = 0;
-            try {
-              sorting = Number(call(candidate, "get_sortingOrder"));
-            } catch (_2) {
-            }
-            if (sorting >= order) {
-              parent = candidate;
-              order = sorting;
-            }
-          }
-          if (!parent) throw Error("No active Canvas for update notice fallback");
-          const rect = call(go, "get_transform");
-          rect.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(parent, "get_transform"), false);
-          call(rect, "SetAsLastSibling");
-          uiStretch(uiRect(go));
-          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(original);
-          canvas = parent;
-          inheritedCanvas = true;
-        }
+        noticeCanvasProperty(canvas, "set_renderMode", 0);
+        noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+        noticeCanvasProperty(canvas, "set_scaleFactor", 1);
+        canvasScale = 1;
         panel = uiNew("Banner", call(go, "get_transform"));
         const background = uiAdd(panel, "UnityEngine.UI.Image");
         call(background, "set_color", rgba(0.09, 0.11, 0.14, 0.95));
@@ -8921,9 +8878,10 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
         }
         call(badgeText, "set_alignment", uiEnum(badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "TMPro.TextAlignmentOptions" : "UnityEngine.TextAnchor", badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "Center" : "MiddleCenter"));
         call(badgeText, "set_color", rgba(1, 1, 1, 1));
-        if (!inheritedCanvas) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
+        ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
         call(panel, "SetActive", false);
       } catch (error) {
+        if (error?.noticeCanvasUnavailable) disabled = true;
         discard();
         throw error;
       }
@@ -8934,6 +8892,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
         shownAt = 0;
       },
       tick() {
+        if (disabled) return;
         if (message && shownAt && Date.now() - shownAt >= message.duration) {
           try {
             if (panel) call(panel, "SetActive", false);
@@ -8945,14 +8904,11 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
         try {
           ensure();
           const screen = chatScreen();
-          let scale = Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
-          if (inheritedCanvas) {
-            try {
-              scale = Math.max(0.1, Number(call(canvas, "get_scaleFactor")) || 1);
-            } catch (_) {
-              scale = 1;
-            }
-          } else noticeCanvasProperty(canvas, "set_scaleFactor", scale);
+          const scale = Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
+          if (Math.abs(scale - canvasScale) >= 0.01) {
+            noticeCanvasProperty(canvas, "set_scaleFactor", scale);
+            canvasScale = scale;
+          }
           const width = Math.min(1e3, screen.width / scale - 32);
           let top = 16;
           try {

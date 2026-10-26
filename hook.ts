@@ -4436,28 +4436,16 @@ const chatWindows = new Map();
     return cachedPortCaption = `Reborn ${PLUGIN_VERSION}\nAndroid · APK ${build} · patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
   }
 
-  const noticeCanvasCalls = new Map();
   function noticeCanvasProperty(canvas, name, value?: number) {
-    const signatures = {set_renderMode:["void","int","UnityEngine.RenderMode"],
-      set_sortingOrder:["void","int","System.Int32"],
-      set_scaleFactor:["void","float","System.Single"],get_scaleFactor:["float",null,""]};
-    const spec = signatures[name]; if (!spec) throw Error("Unsupported notice Canvas property");
     const method = canvas.tryMethod(name, value === undefined ? 0 : 1);
-    if (method) {
-      if (value === undefined) return method.invoke();
-      const type = method.parameters[0].type.class;
-      return method.invoke(type.isEnum ? enumBox(type, value) : value);
+    if (!method) {
+      const error: any = new Error(`Notice Canvas managed binding unavailable: ${name}`);
+      error.noticeCanvasUnavailable = true;
+      throw error;
     }
-    let native = noticeCanvasCalls.get(name);
-    if (!native) {
-      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
-      let address = resolve(Memory.allocUtf8String("UnityEngine.Canvas::" + name));
-      if (address.isNull()) address = resolve(Memory.allocUtf8String(`UnityEngine.Canvas::${name}(${spec[2]})`));
-      if (address.isNull()) throw Error("Notice Canvas binding unavailable: " + name);
-      native = new NativeFunction(address, spec[0], value === undefined ? ["pointer"] : ["pointer", spec[1]]);
-      noticeCanvasCalls.set(name, native);
-    }
-    return value === undefined ? native(canvas.handle) : native(canvas.handle, value);
+    if (value === undefined) return method.invoke();
+    const type = method.parameters[0].type.class;
+    return method.invoke(type.isEnum ? enumBox(type, value) : value);
   }
 
   function uiSystemText(go, text, size) {
@@ -4538,7 +4526,7 @@ const chatWindows = new Map();
 
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
-    let inheritedCanvas = false;
+    let disabled = false, canvasScale = 1;
     let message = null, shownAt = 0, lastError = "";
     let reportedCaption = "",badgeBackground=null,gradientTexture=null,gradientSprite=null;
     function discard() {
@@ -4551,6 +4539,7 @@ const chatWindows = new Map();
       root = label = canvas = panel = badge = badgeText = null;
     }
     function ensure() {
+      if (disabled) return;
       if (root) {
         try { call(root.target, "get_activeSelf"); return; }
         catch (_) { discard(); }
@@ -4562,31 +4551,10 @@ const chatWindows = new Map();
       root = go.ref(false);
       try {
         canvas = uiAdd(go, "UnityEngine.Canvas");
-        inheritedCanvas = false;
-        try {
-          noticeCanvasProperty(canvas, "set_renderMode", 0); // Unity ScreenSpaceOverlay.
-          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
-          noticeCanvasProperty(canvas, "set_scaleFactor", 1);
-        } catch (_) {
-          // Some players strip the native binding as well. Put only OUR new
-          // object under an active game Canvas; never clone or move game UI.
-          const original = canvas;
-          const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
-            .invoke(ucls("UnityEngine.Canvas").type.object);
-          let parent = null, order = -Infinity;
-          for(let i=0;i<values.length;i++) {
-            const candidate=values.get(i); if(candidate.handle.equals(original.handle)) continue;
-            if(!Boolean(call(call(candidate,"get_gameObject"),"get_activeInHierarchy"))) continue;
-            let sorting=0;try{sorting=Number(call(candidate,"get_sortingOrder"));}catch(_){}
-            if(sorting>=order) {parent=candidate;order=sorting;}
-          }
-          if(!parent) throw Error("No active Canvas for update notice fallback");
-          const rect=call(go,"get_transform");
-          rect.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(call(parent,"get_transform"),false);
-          call(rect,"SetAsLastSibling"); uiStretch(uiRect(go));
-          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(original);
-          canvas=parent; inheritedCanvas=true;
-        }
+        noticeCanvasProperty(canvas, "set_renderMode", 0); // Unity ScreenSpaceOverlay.
+        noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+        noticeCanvasProperty(canvas, "set_scaleFactor", 1);
+        canvasScale = 1;
         // No CanvasScaler or CanvasGroup: both may lose unused setters in this
         // mobile player. Every graphic is non-raycastable and has no handlers.
         panel = uiNew("Banner", call(go, "get_transform"));
@@ -4617,10 +4585,14 @@ const chatWindows = new Map();
         try{call(badgeText,badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"set_richText":"set_supportRichText",true);}catch(_){}
         call(badgeText,"set_alignment",uiEnum(badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"TMPro.TextAlignmentOptions":"UnityEngine.TextAnchor",badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"Center":"MiddleCenter"));
         call(badgeText, "set_color", rgba(1, 1, 1, 1));
-        if(!inheritedCanvas) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
+        ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
         call(panel, "SetActive", false);
         // No GraphicRaycaster, event handlers or buttons: all taps pass through.
-      } catch (error) { discard(); throw error; }
+      } catch (error) {
+        if ((error as any)?.noticeCanvasUnavailable) disabled = true;
+        discard();
+        throw error;
+      }
     }
     return {
       show(kind, revision, onShown) {
@@ -4628,6 +4600,7 @@ const chatWindows = new Map();
         shownAt = 0;
       },
       tick() {
+        if (disabled) return;
         if (message && shownAt && Date.now() - shownAt >= message.duration) {
           try { if (panel) call(panel, "SetActive", false); } catch (_) { discard(); }
           message = null;
@@ -4635,9 +4608,11 @@ const chatWindows = new Map();
         try {
           ensure();
           const screen = chatScreen();
-          let scale=Math.max(0.1,Math.min(screen.width/1280,screen.height/720));
-          if(inheritedCanvas) {try{scale=Math.max(0.1,Number(call(canvas,"get_scaleFactor"))||1);}catch(_){scale=1;}}
-          else noticeCanvasProperty(canvas, "set_scaleFactor", scale);
+          const scale = Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
+          if (Math.abs(scale - canvasScale) >= 0.01) {
+            noticeCanvasProperty(canvas, "set_scaleFactor", scale);
+            canvasScale = scale;
+          }
           const width = Math.min(1000, screen.width / scale - 32);
           let top = 16;
           try {
