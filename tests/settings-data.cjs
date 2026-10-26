@@ -18,3 +18,16 @@ c.log=()=>{};c.settingsClosing(self,'Cancel');
 assert.notEqual(objects.get('RebornGameData').active,false);
 c.installSettingsDataButton(self);assert.equal(created,1);assert.equal(objects.get('RebornGameData').active,true,'polling leaves the existing child alone during Cancel');
 vm.runInContext('closingSettings.clear()',c);c.installSettingsDataButton(self);assert.equal(created,1);assert.equal(objects.get('RebornGameData').active,true,'reopening reuses the button');
+// Actual Button.Press route: dynamically registered Cancel need not be a SettingsWin method.
+const previousCall=c.call,buttonNode={},fakeButton={},event={};
+c.call=(o,name,...args)=>{
+ if(o===fakeButton&&name==='get_onClick')return event;
+ if(o===fakeButton&&name==='get_transform')return buttonNode;
+ if(o===event&&name==='GetPersistentEventCount')return 1;
+ if(o===event&&name==='GetPersistentMethodName')return {content:'OnClickCancel'};
+ if(o===buttonNode&&name==='get_name')return {content:'CancelButton'};
+ if(o===buttonNode&&name==='get_parent')return root;
+ return previousCall(o,name,...args);
+};
+c.settingsButtonPressed(fakeButton);
+assert(vm.runInContext('closingSettings.has("settings")',c),'real Cancel press blocks reinsertion even when SettingsWin has no Close methods');

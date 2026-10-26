@@ -2707,7 +2707,7 @@ function uiComponent(go, type) {
 
   // BEGIN android-ui: settings-data
   const closingSettings = new Set();
-  function settingsWindowKey(self) { return call(self,"get_gameObject").handle.toString(); }
+  function settingsWindowKey(self) { return (self.class?.type.name === "UnityEngine.GameObject" ? self : call(self,"get_gameObject")).handle.toString(); }
   function settingsClosing(self, reason) {
     const key = settingsWindowKey(self);
     if (closingSettings.size > 128) closingSettings.clear();

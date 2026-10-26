@@ -6,7 +6,7 @@
   "abi": "arm64-v8a",
   "revision": 45,
   "version": "android-45-loading-version-and-settings",
-  "bytes": 357552,
-  "sha256": "2648c029faae4b294e041d8ed227f3f62c2c8ef2a6fe9d5308e2340894ee839e",
-  "url": "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/2648c029faae4b294e041d8ed227f3f62c2c8ef2a6fe9d5308e2340894ee839e.js"
+  "bytes": 357614,
+  "sha256": "ac50d95be658587f497e725d9a85311ce11edcfebf78ab9e946a25e4d49c8201",
+  "url": "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/ac50d95be658587f497e725d9a85311ce11edcfebf78ab9e946a25e4d49c8201.js"
 }

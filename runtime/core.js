@@ -6378,7 +6378,7 @@ Il2Cpp.perform(() => {
   });
   const closingSettings = /* @__PURE__ */ new Set();
   function settingsWindowKey(self) {
-    return call(self, "get_gameObject").handle.toString();
+    return (self.class?.type.name === "UnityEngine.GameObject" ? self : call(self, "get_gameObject")).handle.toString();
   }
   function settingsClosing(self, reason) {
     const key = settingsWindowKey(self);
