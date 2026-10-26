@@ -287,8 +287,23 @@ class BuilderResourcesTest(unittest.TestCase):
             for activity in (setup_activity, scanner):
                 self.assertEqual(
                     activity.get(ANDROID + "theme"),
-                    "@android:style/Theme.Material.NoActionBar",
+                    "@style/TeslRebornSetup",
                 )
+            self.assertEqual(
+                activities[0].get(ANDROID + "theme"), "@style/TeslRebornGame"
+            )
+            for qualifier in ("values", "values-v31"):
+                styles = E.parse(path.parent / "res" / qualifier / "tesl_reborn_windows.xml")
+                for name in ("TeslRebornSetup", "TeslRebornGame"):
+                    alias = styles.find(f"style[@name='{name}']")
+                    self.assertEqual(alias.get("parent"), "@style/" + name + "Base")
+                    if qualifier == "values":
+                        style = styles.find(f"style[@name='{name}Base']")
+                        background = "android:windowBackground"
+                    else:
+                        style = alias
+                        background = "android:windowSplashScreenBackground"
+                    self.assertEqual(style.find(f"item[@name='{background}']").text, "#171b22")
             gate = next(
                 a
                 for a in activities
@@ -309,6 +324,32 @@ class BuilderResourcesTest(unittest.TestCase):
                 .get(ANDROID + "scheme"),
                 "teslreborn",
             )
+
+    def test_starting_window_keeps_game_theme_and_launcher_alias(self):
+        from xml.etree import ElementTree as E
+
+        for activity_theme in ("", 'android:theme="@style/OriginalGame"'):
+            with self.subTest(activity_theme=activity_theme), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "AndroidManifest.xml"
+                path.write_text(
+                    f'''<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="{PACKAGE}">
+                    <application android:theme="@style/OriginalApp">
+                    <activity android:name="Game" {activity_theme} android:screenOrientation="landscape">
+                    <meta-data android:name="android.app.lib_name" android:value="main"/></activity>
+                    <activity-alias android:name=".Launcher" android:targetActivity="Game">
+                    <intent-filter><action android:name="android.intent.action.MAIN"/>
+                    <category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+                    </activity-alias></application></manifest>'''
+                )
+                self.assertEqual(patch_manifest(path), PACKAGE + ".Game")
+                styles = E.parse(path.parent / "res/values/tesl_reborn_windows.xml")
+                game = styles.find("style[@name='TeslRebornGameBase']")
+                self.assertEqual(game.get("parent"), "@style/OriginalGame" if activity_theme else "@style/OriginalApp")
+                app = E.parse(path).find("application")
+                self.assertEqual(app.get(ANDROID + "theme"), "@style/OriginalApp")
+                activity = app.find("activity")
+                self.assertEqual(activity.get(ANDROID + "screenOrientation"), "landscape")
+                self.assertEqual(activity.find("meta-data").get(ANDROID + "value"), "main")
 
     def test_xapk_and_manual_outputs_keep_original_obb(self):
         with tempfile.TemporaryDirectory() as tmp:

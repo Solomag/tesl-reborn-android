@@ -52,6 +52,7 @@ public final class ResourceActivity extends Activity {
   @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xff171b22));
     getWindow().setStatusBarColor(0xff171b22);
     getWindow().setNavigationBarColor(0xff171b22);
     View decor = getWindow().getDecorView();
@@ -182,7 +183,7 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 33\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 34\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -768,8 +769,11 @@ public final class ResourceActivity extends Activity {
       intent.addCategory(Intent.CATEGORY_LAUNCHER);
       intent.setClassName(getPackageName(), setup.getString("gameActivity"));
       intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
       startActivity(intent);
+      overridePendingTransition(0, 0);
       finish();
+      overridePendingTransition(0, 0);
     } catch (Exception e) {
       new AlertDialog.Builder(this).setMessage(e.toString()).setPositiveButton("OK", null).show();
     }

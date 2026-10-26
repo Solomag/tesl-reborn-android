@@ -240,7 +240,6 @@ def main():
                         str(vendor / "apktool.jar"),
                         "d",
                         "-f",
-                        "--only-manifest",
                         "-s",
                         "-p",
                         str(framework),
@@ -255,7 +254,22 @@ def main():
                 assert "org.teslreborn.setup.ScanActivity" in text
                 assert "org.teslreborn.setup.LaunchActivity" in text
                 assert "Theme.NoDisplay" in text
+                assert "@style/TeslRebornSetup" in text
+                assert "@style/TeslRebornGame" in text
                 from xml.etree import ElementTree as ET
+
+                # Inspect compiled/re-decoded resources, not just the input XML.
+                for folder, item_name in (
+                    ("values", "android:windowBackground"),
+                    ("values-v31", "android:windowSplashScreenBackground"),
+                ):
+                    items = [
+                        item.text.lower()
+                        for resource in (decoded / "res" / folder).glob("*.xml")
+                        for item in ET.parse(resource).getroot().iter("item")
+                        if item.get("name") == item_name
+                    ]
+                    assert sum(color in ("#171b22", "#ff171b22") for color in items) >= 2, (folder, items)
 
                 ns = "{http://schemas.android.com/apk/res/android}"
                 application = ET.fromstring(text).find("application")

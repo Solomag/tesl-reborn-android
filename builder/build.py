@@ -27,6 +27,44 @@ ANDROID = "{http://schemas.android.com/apk/res/android}"
 SETUP_ACTIVITY = "org.teslreborn.setup.ResourceActivity"
 
 
+def write_window_themes(decoded, game_parent):
+    """Supply starting-window backgrounds before any Activity code can run."""
+    common = {
+        "android:windowBackground": "#171b22",
+        "android:colorBackground": "#171b22",
+        "android:statusBarColor": "#171b22",
+        "android:navigationBarColor": "#171b22",
+        "android:windowLightStatusBar": "false",
+        "android:windowLightNavigationBar": "false",
+    }
+    for qualifier in ("values", "values-v31"):
+        resources = ET.Element("resources")
+        for name, parent in (
+            ("TeslRebornSetup", "@android:style/Theme.Material.NoActionBar"),
+            ("TeslRebornGame", game_parent),
+        ):
+            if qualifier == "values":
+                base = ET.SubElement(
+                    resources, "style", {"name": name + "Base", "parent": parent}
+                )
+                for key, value in common.items():
+                    ET.SubElement(base, "item", {"name": key}).text = value
+                if name == "TeslRebornSetup":
+                    ET.SubElement(
+                        base, "item", {"name": "android:windowAnimationStyle"}
+                    ).text = "@null"
+            style = ET.SubElement(
+                resources, "style", {"name": name, "parent": "@style/" + name + "Base"}
+            )
+            if qualifier == "values-v31":
+                ET.SubElement(
+                    style, "item", {"name": "android:windowSplashScreenBackground"}
+                ).text = "#171b22"
+        path = decoded / "res" / qualifier / "tesl_reborn_windows.xml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ET.ElementTree(resources).write(path, encoding="utf-8", xml_declaration=True)
+
+
 def data_root():
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
@@ -100,6 +138,30 @@ def patch_manifest(path):
         original = PACKAGE + original
     elif "." not in original:
         original = PACKAGE + "." + original
+
+    def activity_name(component):
+        name = component.get(ANDROID + "name", "")
+        if name.startswith("."):
+            return PACKAGE + name
+        return name if "." in name else PACKAGE + "." + name
+
+    game = next(
+        (
+            component
+            for component in application.findall("activity")
+            if activity_name(component) == original
+        ),
+        None,
+    )
+    if game is None:
+        raise ValueError("Original game Activity declaration not found")
+    game_parent = (
+        game.get(ANDROID + "theme")
+        or application.get(ANDROID + "theme")
+        or "@android:style/Theme.Material.NoActionBar"
+    )
+    write_window_themes(path.parent, game_parent)
+    game.set(ANDROID + "theme", "@style/TeslRebornGame")
     application.set(ANDROID + "usesCleartextTraffic", "true")
     if not any(
         e.get(ANDROID + "name") == "android.permission.INTERNET"
@@ -122,7 +184,7 @@ def patch_manifest(path):
             ANDROID + "name": SETUP_ACTIVITY,
             ANDROID + "exported": "true",
             ANDROID + "launchMode": "singleTop",
-            ANDROID + "theme": "@android:style/Theme.Material.NoActionBar",
+            ANDROID + "theme": "@style/TeslRebornSetup",
             ANDROID + "label": "TESL Reborn",
             ANDROID + "configChanges": "keyboard|keyboardHidden|orientation|screenSize",
         },
@@ -169,7 +231,7 @@ def patch_manifest(path):
             ANDROID + "hardwareAccelerated": "true",
             ANDROID + "exported": "false",
             ANDROID + "process": ":resources",
-            ANDROID + "theme": "@android:style/Theme.Material.NoActionBar",
+            ANDROID + "theme": "@style/TeslRebornSetup",
         },
     )
     tree.write(path, encoding="utf-8", xml_declaration=True)
@@ -652,7 +714,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=33,
+                        androidBuild=34,
                     ),
                     indent=2,
                 ),
