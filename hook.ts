@@ -2446,20 +2446,23 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         schedule(50,()=>poll(job));
       }catch(error){report("store-error",job.path);log(`store image failure: ${error}`);finish(job);}
     }
-    move.implementation=function() {
-      const path=String(this.field("imageUrl").value?.content||"");
-      if(!rebornStoreImagePath(path))return move.invokeRaw(this.handle);
-      const value=Number(this.field(state.name).value);
-      if(value===0) {
-        this.field(state.name).value=1052;this.field(current.name).value=null;
-        const job={key:this.handle.toString(),ref:this.ref(false),path,deadline:Date.now()+20000,started:false};
-        jobs.set(job.key,job);schedule(0,()=>poll(job));
-      }
-      return Number(this.field(state.name).value)===1052;
-    };
-    const dispose=iterator.tryMethod("Dispose",0);
-    if(dispose && !dispose.virtualAddress.isNull())Interceptor.attach(dispose.virtualAddress,{onEnter(args){
-      const job=jobs.get(args[0].toString());if(job)finish(job);
+    // Intercept the factory itself: Unity may dispatch IEnumerator.MoveNext
+    // through a cached interface thunk rather than the replaced method body.
+    const factory=owner.methods.find(m=>m.name==="LoadStoreImageCoroutine" && m.isStatic && m.parameterCount===4);
+    if(!factory || factory.virtualAddress.isNull())throw Error("Store image factory unavailable");
+    Interceptor.attach(factory.virtualAddress,{onLeave(ret){
+      if(ret.isNull())return;
+      try {
+        const self=new Il2Cpp.Object(ret),path=String(self.field("imageUrl").value?.content||"");
+        if(!rebornStoreImagePath(path))return;
+        // Return a valid, completed IEnumerator. Our independently rooted job
+        // owns asset delivery; Unity disposing the empty iterator must not cancel it.
+        self.field(state.name).value=-1;self.field(current.name).value=null;
+        if(jobs.size>=64){report("store-busy",path);return;}
+        const key=self.handle.toString();if(jobs.has(key))return;
+        const job={key,ref:self.ref(false),path,deadline:Date.now()+20000,started:false};
+        jobs.set(key,job);report("store-queued",path);schedule(0,()=>poll(job));
+      }catch(error){log(`store image factory failure: ${error}`);}
     }});
     log(`store image: direct Sprite/png loading via ${iterator.name}`);
   });
@@ -2735,6 +2738,116 @@ function uiComponent(go, type) {
     schedule(0,check);
   });
   // END android-ui: localized-language-state
+
+  // BEGIN android-ui: deck-search
+  function deckSearchMatches(name,query) {
+    const normalize=value=>String(value||"").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g,"").trim();
+    return normalize(name).includes(normalize(query));
+  }
+  section("mobile deck picker search",()=>{
+    const picker=cls(img,"DeckPickerWin"),tile=cls(img,"DeckTile"),records=new Map();
+    const find=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+    let next=0;
+    function cleanup(record) {
+      for(const ref of record.hidden.values()){try{call(ref.target,"SetActive",true);}catch(_){}ref.free();}
+      try {call(record.grid.target,"set_offsetMax",vec2(record.offset.x,record.offset.y));ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(record.bar.target);}catch(_){}
+      for(const name of ["self","input","bar","grid"])record[name].free();
+    }
+    function install(self) {
+      const go=call(self,"get_gameObject"),parent=call(go,"get_transform"),grid=self.field("_grid").value;
+      const gridRect=call(grid,"get_transform"),old=call(gridRect,"get_offsetMax"),offset={x:Number(old.field("x").value),y:Number(old.field("y").value)};
+      const stale=call(parent,"Find",Il2Cpp.string("RebornDeckSearch"));
+      if(!isNull(stale))ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(stale,"get_gameObject"));
+      const bar=uiNew("RebornDeckSearch",parent);uiPlace(bar,.5,1,.5,1,0,-10,420,52);
+      const image=uiAdd(bar,"UnityEngine.UI.Image");call(image,"set_color",rgba(.08,.08,.08,.96));
+      const textGO=uiNew("Text",call(bar,"get_transform"));uiStretch(uiRect(textGO));
+      call(uiRect(textGO),"set_offsetMin",vec2(12,4));call(uiRect(textGO),"set_offsetMax",vec2(-62,-4));
+      const label=uiText(textGO,"",22),input=uiAdd(bar,"TMPro.TMP_InputField");
+      call(input,"set_textViewport",uiRect(textGO));call(input,"set_textComponent",label);call(input,"set_targetGraphic",image);
+      const placeholderGO=uiNew("Placeholder",call(bar,"get_transform"));uiStretch(uiRect(placeholderGO));
+      call(uiRect(placeholderGO),"set_offsetMin",vec2(12,4));call(uiRect(placeholderGO),"set_offsetMax",vec2(-62,-4));
+      const labels={en_us:"Search decks…",ru_ru:"Поиск колод…",de_de:"Decks suchen…",es_es:"Buscar mazos…",es_mx:"Buscar mazos…",fr_fr:"Rechercher un deck…",it_it:"Cerca mazzi…",pl_pl:"Szukaj talii…",pt_br:"Buscar decks…",tr_tr:"Deste ara…"};
+      const hint=uiText(placeholderGO,labels[resourceLanguage()]||labels.en_us,20);call(hint,"set_color",rgba(.65,.65,.65,1));call(input,"set_placeholder",hint);
+      call(input,"set_characterLimit",100);
+      const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"×",-4,-4,46,()=>{call(input,"set_text",Il2Cpp.string(""));});uiPlace(clear,1,.5,1,.5,-4,0,46,44);
+      // Reserve space only when the grid uses stretched vertical anchors.
+      const min=call(gridRect,"get_anchorMin"),max=call(gridRect,"get_anchorMax");
+      if(Number(min.field("y").value)!==Number(max.field("y").value))call(gridRect,"set_offsetMax",vec2(Number(old.field("x").value),Number(old.field("y").value)-72));
+      return {self:self.ref(false),input:input.ref(false),bar:bar.ref(false),grid:gridRect.ref(false),offset,hidden:new Map()};
+    }
+    Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
+      if(Date.now()<next)return;next=Date.now()+250;
+      schedule(0,()=>{
+        const live=new Set();
+        try {
+          const values=find.invoke(picker.type.object);
+          for(let i=0;i<values.length;i++) {
+            const self=values.get(i),go=call(self,"get_gameObject");if(!call(go,"get_activeInHierarchy"))continue;
+            const key=self.handle.toString();live.add(key);
+            let record=records.get(key);if(!record){record=install(self);records.set(key,record);log("deck search: installed");}
+            const query=String(call(record.input.target,"get_text")?.content||"");
+            const tiles=go.method("GetComponentsInChildren").overload("System.Type","System.Boolean").invoke(tile.type.object,true);
+            for(let j=0;j<tiles.length;j++) {
+              const item=tiles.get(j),child=call(item,"get_gameObject"),id=child.handle.toString();
+              if(!call(child,"get_activeSelf") && !record.hidden.has(id))continue;
+              const name=String(call(item.field("DeckNameText").value,"get_text")?.content||"");
+              const show=deckSearchMatches(name,query),hidden=record.hidden.get(id);
+              if(!show&&!hidden){record.hidden.set(id,child.ref(false));call(child,"SetActive",false);}
+              else if(show&&hidden){call(child,"SetActive",true);hidden.free();record.hidden.delete(id);}
+            }
+          }
+        }catch(error){log(`deck search: ${error}`);}
+        for(const [key,record] of records)if(!live.has(key)){cleanup(record);records.delete(key);}
+      });
+    }});
+  });
+  // END android-ui: deck-search
+
+  // BEGIN android-ui: matching-friends
+  section("friends while matchmaking",()=>{
+    const seeking=cls(img,"MatchSeekingWin"),friends=cls(img,"FriendsWin");
+    const records=new Map();
+    function restore(record) {
+      try {const node=call(record.friend.target,"get_transform");
+        node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(record.parent.target,true);
+        call(node,"SetSiblingIndex",record.sibling);
+      }catch(_){}
+      for(const key of ["friend","parent"])record[key].free();
+    }
+    const show=seeking.method("Show");
+    Interceptor.attach(show.virtualAddress,{onEnter(args){this.self=args[0];},onLeave(){
+      const ref=new Il2Cpp.Object(this.self).ref(false);schedule(0,()=>{try{
+        const self=ref.target,go=call(self,"get_gameObject"),root=call(go,"get_transform");
+        if(!call(go,"get_activeInHierarchy")||!isNull(call(root,"Find",Il2Cpp.string("RebornMatchingFriends"))))return;
+        const labels={ru_ru:"Друзья",de_de:"Freunde",es_es:"Amigos",es_mx:"Amigos",fr_fr:"Amis",it_it:"Amici",pl_pl:"Znajomi",pt_br:"Amigos",tr_tr:"Arkadaşlar"};
+        const button=uiLabeledButton("RebornMatchingFriends",root,labels[resourceLanguage()]||"Friends",-18,-18,150,()=>{
+          const key=go.handle.toString();let record=records.get(key);
+          if(!record){
+            const values=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(friends.type.object);
+            let chosen=null;
+            for(let i=0;i<values.length;i++){const value=values.get(i);if(call(call(value,"get_gameObject"),"get_activeInHierarchy")){chosen=value;break;}}
+            if(!chosen){log("matching friends: no active FriendsWin");return;}
+            const node=call(chosen,"get_transform"),parent=call(node,"get_parent");
+            if(isNull(parent))return;
+            record={friend:chosen.ref(false),parent:parent.ref(false),sibling:Number(call(node,"GetSiblingIndex"))};records.set(key,record);
+            // Keep the original geometry and event wiring; place the native panel
+            // above this modal under the same parent, not at desktop-only paths.
+            node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(call(root,"get_parent"),true);
+            call(node,"SetAsLastSibling");
+          }
+          call(record.friend.target,"ToggleFriendsPanel");
+        });uiPlace(button,0,0,0,0,18,18,150,52);
+        log("matching friends: installed");
+      }catch(error){log(`matching friends: ${error}`);}finally{ref.free();}});
+    }});
+    for(const name of ["OnDisable","OnDestroy","HandleOnCancelSearch"]) {
+      const method=seeking.tryMethod(name,0);if(!method||method.virtualAddress.isNull())continue;
+      Interceptor.attach(method.virtualAddress,{onEnter(args){const key=String(call(new Il2Cpp.Object(args[0]),"get_gameObject").handle),record=records.get(key);
+        if(record){records.delete(key);schedule(0,()=>restore(record));}
+      }});
+    }
+  });
+  // END android-ui: matching-friends
 
   // BEGIN android-ui: native-language-dropdown
   section("native Settings language selection", () => {
@@ -4197,6 +4310,26 @@ const chatWindows = new Map();
   }
 
   let cachedPortCaption = "";
+  let splashVersionAnchor={x:.5,y:.30},splashAnchorReady=false;
+  function locateSplashVersion() {
+    if(splashAnchorReady)return splashVersionAnchor;
+    try {
+      const type=cls(img,"SplashWin"),values=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(type.type.object);
+      for(let i=0;i<values.length;i++) {
+        const self=values.get(i);if(!call(call(self,"get_gameObject"),"get_activeInHierarchy"))continue;
+        const logo=self.field("_logoImage").value,rect=call(logo,"get_rectTransform"),bounds=call(rect,"get_rect");
+        const point=unityStruct("UnityEngine.Vector3",{x:Number(bounds.field("m_XMin").value)+Number(bounds.field("m_Width").value)/2,
+          y:Number(bounds.field("m_YMin").value)-12,z:0});
+        const world=call(rect,"TransformPoint",point),canvas=call(logo,"get_canvas");
+        let camera=null;try{camera=call(canvas,"get_worldCamera");}catch(_){}
+        const screen=ucls("UnityEngine.RectTransformUtility").method("WorldToScreenPoint",2).invoke(camera,world),size=chatScreen();
+        const x=Number(screen.field("x").value)/size.width,y=Number(screen.field("y").value)/size.height;
+        if(x>.1&&x<.9&&y>.1&&y<.9){splashVersionAnchor={x,y};splashAnchorReady=true;log("loading version: anchored below native SplashWin logo");}
+        break;
+      }
+    }catch(_){}
+    return splashVersionAnchor;
+  }
   function portVersionCaption() {
     if (cachedPortCaption) return cachedPortCaption;
     let build = "legacy";
@@ -4205,7 +4338,7 @@ const chatWindows = new Map();
       if (Number.isSafeInteger(setup.androidBuild)) build = String(setup.androidBuild);
     } catch (_) {}
     const revision = globalThis.TeslRebornUpdater?.current()?.revision;
-    return cachedPortCaption = `Reborn API ${PLUGIN_VERSION} · APK ${build} · patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
+    return cachedPortCaption = `Reborn ${PLUGIN_VERSION.replace(/-beta$/, "")} · APK ${build} · patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
   }
 
   const noticeCanvasCalls = new Map();
@@ -4400,7 +4533,8 @@ const chatWindows = new Map();
             const safe = ucls("UnityEngine.Screen").method("get_safeArea", 0).invoke();
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {}
-          uiPlace(badge,0.5,0.30,0.5,0.5,0,0,Math.min(1100,Math.max(240,width)),38);
+          const badgeAnchor=locateSplashVersion();
+          uiPlace(badge,badgeAnchor.x,badgeAnchor.y,0.5,1,0,0,Math.min(1100,Math.max(240,width)),38);
           const versionScreen=loadingVersionState();
           call(badge,"SetActive",versionScreen.visible);
           const caption = portVersionCaption();

@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 53,
-  "version": "android-53-store-scheduler-and-settings-surface",
-  "bytes": 371454,
-  "sha256": "cee16148e35d434b2dafd8b8d09af371e92e85b4c54e6eaa8f3ac7410aedf0e9",
+  "revision": 54,
+  "version": "android-54-deck-search-friends-splash-and-store",
+  "bytes": 382573,
+  "sha256": "c38a045157efc75ac5c20e986d4587ec1c8f60130915cdd0e524bdc4a4952d0d",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "abbc7fb93a5a2bab11bf01804b7f84a6945b8a17c9cd70176a8b6e722c8520fc"
+  "sourceSha256": "1861593e6baff774d1cd478bc2b852203e523c9719043b414d812c0fb051f484"
 }
