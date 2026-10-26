@@ -3924,6 +3924,221 @@ const chatWindows = new Map();
 // END android-ui: chat-window
 
 
+  // BEGIN android-ui: update-notices
+  function createUpdateNotices(updater, io) {
+    let downloadStarted = false, lastStatus = "";
+    const saved = io.readNotice() || {}, current = updater.current();
+    const previous = io.readStatus()?.previous;
+    const priorRevision = Number(saved.revision || previous?.revision || 0);
+    if (Number.isSafeInteger(current?.revision) && current.revision > priorRevision) {
+      if (priorRevision > 0) io.emit("applied", current.revision);
+      io.writeNotice({ revision: current.revision });
+    }
+    function poll() {
+      const status = updater.status();
+      if (status === lastStatus) return;
+      lastStatus = status;
+      if (status === "restart-required") {
+        downloadStarted = false;
+        io.emit("restart", 0);
+      } else if (status === "update-error" && downloadStarted) {
+        downloadStarted = false;
+        io.emit("error", 0);
+      }
+    }
+    return {
+      poll,
+      check(get) {
+        let requests = 0;
+        try {
+          updater.check((url, callback) => {
+            // The stable API 1 loader fetches the manifest first, then the
+            // validated payload. This also works in already installed APKs.
+            if (++requests === 2) {
+              downloadStarted = true;
+              io.emit("downloading", 0);
+            }
+            get(url, (status, body) => { callback(status, body); poll(); });
+          });
+        } finally { poll(); }
+      }
+    };
+  }
+
+  function updateNoticeText(kind, revision, language) {
+    const messages = {
+      en: {
+        downloading: "Downloading a Reborn update. You can keep playing.",
+        restart: "Reborn update downloaded and verified. Restart the game when convenient to apply it.",
+        applied: `Reborn update ${revision} applied.`,
+        error: "Reborn update could not be downloaded or verified. You can keep playing; it will retry on the next launch."
+      },
+      ru: {
+        downloading: "Скачивается обновление Reborn. Можно продолжать играть.",
+        restart: "Обновление Reborn скачано и проверено. Перезапустите игру, когда будет удобно, чтобы применить его.",
+        applied: `Обновление Reborn ${revision} применено.`,
+        error: "Не удалось скачать или проверить обновление Reborn. Можно играть дальше; повторим при следующем запуске."
+      },
+      de: {
+        downloading: "Ein Reborn-Update wird heruntergeladen. Du kannst weiterspielen.",
+        restart: "Reborn-Update heruntergeladen und geprüft. Starte das Spiel neu, wenn es dir passt, um es anzuwenden.",
+        applied: `Reborn-Update ${revision} angewendet.`,
+        error: "Reborn-Update konnte nicht geladen oder geprüft werden. Du kannst weiterspielen; neuer Versuch beim nächsten Start."
+      },
+      es: {
+        downloading: "Descargando una actualización de Reborn. Puedes seguir jugando.",
+        restart: "Actualización de Reborn descargada y verificada. Reinicia el juego cuando quieras para aplicarla.",
+        applied: `Actualización ${revision} de Reborn aplicada.`,
+        error: "No se pudo descargar o verificar la actualización de Reborn. Puedes seguir jugando; se reintentará al iniciar."
+      },
+      fr: {
+        downloading: "Téléchargement d’une mise à jour Reborn. Vous pouvez continuer à jouer.",
+        restart: "Mise à jour Reborn téléchargée et vérifiée. Redémarrez le jeu quand vous le souhaitez pour l’appliquer.",
+        applied: `Mise à jour Reborn ${revision} appliquée.`,
+        error: "Impossible de télécharger ou vérifier la mise à jour Reborn. Vous pouvez jouer ; nouvel essai au prochain lancement."
+      },
+      it: {
+        downloading: "Download di un aggiornamento Reborn. Puoi continuare a giocare.",
+        restart: "Aggiornamento Reborn scaricato e verificato. Riavvia il gioco quando vuoi per applicarlo.",
+        applied: `Aggiornamento Reborn ${revision} applicato.`,
+        error: "Impossibile scaricare o verificare l’aggiornamento Reborn. Puoi giocare; nuovo tentativo al prossimo avvio."
+      },
+      pl: {
+        downloading: "Pobieranie aktualizacji Reborn. Możesz grać dalej.",
+        restart: "Aktualizacja Reborn pobrana i zweryfikowana. Uruchom grę ponownie w dogodnym momencie, aby ją zastosować.",
+        applied: `Aktualizacja Reborn ${revision} zastosowana.`,
+        error: "Nie udało się pobrać lub sprawdzić aktualizacji Reborn. Możesz grać dalej; ponowimy próbę przy następnym uruchomieniu."
+      },
+      pt: {
+        downloading: "Baixando uma atualização do Reborn. Você pode continuar jogando.",
+        restart: "Atualização do Reborn baixada e verificada. Reinicie o jogo quando quiser para aplicá-la.",
+        applied: `Atualização ${revision} do Reborn aplicada.`,
+        error: "Não foi possível baixar ou verificar a atualização do Reborn. Você pode jogar; nova tentativa na próxima inicialização."
+      },
+      tr: {
+        downloading: "Reborn güncellemesi indiriliyor. Oynamaya devam edebilirsiniz.",
+        restart: "Reborn güncellemesi indirildi ve doğrulandı. Uygulamak için uygun olduğunuzda oyunu yeniden başlatın.",
+        applied: `Reborn ${revision} güncellemesi uygulandı.`,
+        error: "Reborn güncellemesi indirilemedi veya doğrulanamadı. Oynamaya devam edebilirsiniz; sonraki açılışta yeniden denenecek."
+      }
+    };
+    return (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
+  }
+
+  function createUpdateBanner() {
+    let root = null, label = null, canvas = null, panel = null;
+    let message = null, shownAt = 0, lastError = "";
+    function discard() {
+      if (root) {
+        try { ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(root.target); } catch (_) {}
+        root.free();
+      }
+      root = label = canvas = panel = null;
+    }
+    function ensure() {
+      if (root) {
+        try { call(root.target, "get_activeSelf"); return; }
+        catch (_) { discard(); }
+      }
+      // The first frame may precede the game's fonts. Keep the message queued
+      // and retry later instead of delaying authentication or failing startup.
+      uiFont();
+      const go = newWith(ucls("UnityEngine.GameObject"), Il2Cpp.string("RebornUpdateNotice"),
+        Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [ucls("UnityEngine.RectTransform").type.object]));
+      root = go.ref(false);
+      try {
+        canvas = uiAdd(go, "UnityEngine.Canvas");
+        call(canvas, "set_renderMode", uiEnum("UnityEngine.RenderMode", "ScreenSpaceOverlay"));
+        call(canvas, "set_sortingOrder", 32760);
+        const scaler = uiAdd(go, "UnityEngine.UI.CanvasScaler");
+        const scaleMode = ucls("UnityEngine.UI.CanvasScaler").nested("ScaleMode");
+        call(scaler, "set_uiScaleMode", enumBox(scaleMode, enumVal(scaleMode.field("ScaleWithScreenSize").value)));
+        call(scaler, "set_referenceResolution", vec2(1280, 720));
+        call(scaler, "set_matchWidthOrHeight", 0.5);
+        const group = uiAdd(go, "UnityEngine.CanvasGroup");
+        call(group, "set_interactable", false);
+        call(group, "set_blocksRaycasts", false);
+        panel = uiNew("Banner", call(go, "get_transform"));
+        const background = uiAdd(panel, "UnityEngine.UI.Image");
+        call(background, "set_color", rgba(0.09, 0.11, 0.14, 0.95));
+        call(background, "set_raycastTarget", false);
+        const text = uiNew("Message", call(panel, "get_transform"));
+        uiStretch(uiRect(text));
+        call(uiRect(text), "set_offsetMin", vec2(16, 10));
+        call(uiRect(text), "set_offsetMax", vec2(-16, -10));
+        label = uiText(text, "", 22);
+        call(label, "set_enableAutoSizing", true);
+        call(label, "set_fontSizeMin", 18);
+        call(label, "set_fontSizeMax", 22);
+        call(label, "set_enableWordWrapping", true);
+        ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
+        call(go, "SetActive", false);
+        // No GraphicRaycaster, event handlers or buttons: all taps pass through.
+      } catch (error) { discard(); throw error; }
+    }
+    return {
+      show(kind, revision) {
+        message = { kind, revision, duration: kind === "restart" ? 10000 : 6000 };
+        shownAt = 0;
+      },
+      tick() {
+        if (!message) return;
+        if (shownAt && Date.now() - shownAt >= message.duration) {
+          try { if (root) call(root.target, "SetActive", false); } catch (_) { discard(); }
+          message = null;
+          return;
+        }
+        try {
+          ensure();
+          const screen = chatScreen(), scale = Math.max(0.1, Number(call(canvas, "get_scaleFactor")) || 1);
+          const width = Math.min(1000, screen.width / scale - 32);
+          let top = 16;
+          try {
+            const safe = ucls("UnityEngine.Screen").method("get_safeArea", 0).invoke();
+            top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
+          } catch (_) {}
+          uiPlace(panel, 0.5, 1, 0.5, 1, 0, -top, Math.max(240, width), 92);
+          call(label, "set_text", Il2Cpp.string(updateNoticeText(message.kind, message.revision, resourceLanguage())));
+          call(root.target, "SetActive", true);
+          if (!shownAt) shownAt = Date.now();
+          lastError = "";
+        } catch (error) {
+          const detail = String(error);
+          if (detail !== lastError) { log(`update notice: ${detail}`); lastError = detail; }
+        }
+      }
+    };
+  }
+
+  function installUpdateNotices(updater) {
+    const banner = createUpdateBanner();
+    const noticeFile = `${persistentPath()}/tesl-reborn-update-notice.json`;
+    const read = path => { try { return JSON.parse(readTextFile(path) || "null"); } catch (_) { return null; } };
+    const notices = createUpdateNotices(updater, {
+      readNotice: () => read(noticeFile),
+      readStatus: () => read(`${persistentPath()}/tesl-reborn-update-status.json`),
+      writeNotice: value => {
+        try { if (writeTextFile(noticeFile + ".part", JSON.stringify(value))) atomicRename(noticeFile + ".part", noticeFile); } catch (_) {}
+      },
+      emit: (kind, revision) => banner.show(kind, revision)
+    });
+    let nextPoll = 0, queued = false;
+    Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+      onLeave() {
+        if (queued || Date.now() < nextPoll) return;
+        queued = true; nextPoll = Date.now() + 250;
+        schedule(0, () => {
+          queued = false;
+          try { notices.poll(); banner.tick(); } catch (error) { log(`update notice poll: ${error}`); }
+        });
+      }
+    });
+    // Public HTTPS requests need no account token. Never wait for this check
+    // before starting login, loading resources or entering a match.
+    schedule(1000, () => notices.check((url, callback) => httpGet(url, false, callback, true)));
+  }
+  // END android-ui: update-notices
+
   section("Reborn Android updater and diagnostics", () => {
     const uriClass = ucls("System.Uri");
     log(`HTTP URI assembly: ${uriClass.image.name}`);
@@ -3931,7 +4146,11 @@ const chatWindows = new Map();
     const updater = globalThis.TeslRebornUpdater;
     if (updater) {
       updater.ready();
-      schedule(10000, () => updater.check((url, cb) => httpGet(url, false, cb, true)));
+      try { installUpdateNotices(updater); }
+      catch (error) {
+        log(`update notices unavailable: ${error}`);
+        schedule(1000, () => updater.check((url, cb) => httpGet(url, false, cb, true)));
+      }
     }
   });
 
