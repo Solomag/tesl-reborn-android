@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "format": "tesl-reborn-hook-v1",
+  "loaderApi": 1,
+  "gameVersionCode": 11009,
+  "abi": "arm64-v8a",
+  "revision": 63,
+  "version": "android-63-rollback-apk40-hook39",
+  "bytes": 345685,
+  "sha256": "45d84b87efd5fb72fffdbe078e861a1fe6e714b7c05e0831c160526c9509e26a",
+  "url": "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/45d84b87efd5fb72fffdbe078e861a1fe6e714b7c05e0831c160526c9509e26a.js"
+}

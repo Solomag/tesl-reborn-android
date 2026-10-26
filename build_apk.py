@@ -8,7 +8,7 @@ A leftover patched_classes.dex is used only with an explicit --prebuilt-dex.
 Usage: python3 build_apk.py [base.apk] [out.apk] [--prebuilt-dex] [--allow-stale-hook]
                             [--ks FILE --ks-alias NAME --ks-pass PASS [--ks-key-pass PASS]]
 """
-import argparse, json, os, shutil, subprocess, sys, zipfile, lief
+import argparse, hashlib, json, re, os, shutil, subprocess, sys, zipfile, lief
 
 HERE     = os.path.dirname(os.path.abspath(__file__))
 GADGET   = os.path.join(HERE, "gadget.so")
@@ -44,13 +44,29 @@ tools = ["zipalign", "java"] + ([] if args.prebuilt_dex else ["baksmali", "smali
 absent = [t for t in tools if not shutil.which(t)]
 if absent:
     sys.exit("not on PATH: " + ", ".join(absent))
-if (os.path.isfile(HOOK_TS) and os.path.getmtime(HOOK_TS) > os.path.getmtime(HOOK_JS)
-        and not args.allow_stale_hook):
-    sys.exit("hook.ts is newer than hook.js: run rebuild_hook.sh (or pass --allow-stale-hook)")
+if not args.allow_stale_hook:
+    metadata = os.path.join(HERE, "runtime", "manifest.json")
+    with open(metadata, encoding="utf-8") as f:
+        release = json.load(f)
+    with open(HOOK_TS, "rb") as f:
+        source_hash = hashlib.sha256(f.read()).hexdigest()
+    with open(HOOK_JS, encoding="utf-8") as f:
+        match = re.search(r"const embedded = (.*);\n  const packageName", f.read())
+    embedded = json.loads(match.group(1)) if match else {}
+    if release.get("sourceSha256") != source_hash or embedded.get("meta", {}).get("sha256") != release["sha256"] or hashlib.sha256(embedded.get("code", "").encode()).hexdigest() != release["sha256"]:
+        sys.exit("Hook is stale or inconsistent: run npm run build (or explicitly use --allow-stale-hook)")
 if args.ks and not (args.ks_alias and args.ks_pass):
     sys.exit("--ks needs --ks-alias and --ks-pass")
 
 lief.logging.disable()
+emoji_resources = {
+    "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
+    "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa",
+}
+for name, expected in emoji_resources.items():
+    path = os.path.join(HERE, "resources", "emojis", name)
+    if not os.path.isfile(path) or hashlib.sha256(open(path, "rb").read()).hexdigest() != expected:
+        sys.exit("Missing or invalid emoji resources. Run: python3 tools/prepare_emojis.py")
 shutil.rmtree(WORK, ignore_errors=True); os.makedirs(WORK)
 
 # Rebuild patched_classes.dex from the committed smali source + the game's base dex.
@@ -100,6 +116,8 @@ extra = {
     f"{ABI}/libhook.js.so":       HOOK_JS,
     "classes.dex":                PATCHED_DEX,
 }
+for name in emoji_resources:
+    extra[f"assets/tesl-reborn/emojis/{name}"] = os.path.join(HERE, "resources", "emojis", name)
 with zipfile.ZipFile(BASE) as zin, zipfile.ZipFile(unsigned, "w", zipfile.ZIP_DEFLATED) as zout:
     for item in zin.infolist():
         n = item.filename
@@ -109,7 +127,7 @@ with zipfile.ZipFile(BASE) as zin, zipfile.ZipFile(unsigned, "w", zipfile.ZIP_DE
             continue                       # replaced below
         zout.writestr(item, zin.read(n), compress_type=item.compress_type)
     for name, path in extra.items():
-        zout.write(path, name, compress_type=zipfile.ZIP_DEFLATED)
+        zout.write(path, name, compress_type=zipfile.ZIP_STORED if name.startswith("assets/tesl-reborn/emojis/") else zipfile.ZIP_DEFLATED)
 
 # 4) align + sign: without --ks uber-apk-signer uses its one fixed, public debug keystore, so every build from every user carries the same key
 aligned = os.path.join(WORK, "aligned.apk")

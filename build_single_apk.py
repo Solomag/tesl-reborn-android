@@ -64,7 +64,7 @@ def append_to_apk(src, dst, extra):
             while left:
                 raw = fin.read(min(stream, left))
                 if not raw:
-                    raise IOError("%s ended before its central directory" % src)
+                    raise IOError("APK ended before its central directory")
                 fout.write(raw)
                 left -= len(raw)
             added = []
@@ -72,17 +72,22 @@ def append_to_apk(src, dst, extra):
                 offset = fout.tell()
                 raw_name = name.encode("utf-8")
                 size = os.path.getsize(path)
+                # Keep newly stored payload entries aligned too, not only the
+                # existing native libraries. A valid local extra field pads
+                # the data offset without changing preserved entry offsets.
+                padding = (-offset - 30 - len(raw_name) - 4) % 4
+                extra_field = struct.pack("<HH", 0xffff, padding) + b"\0" * padding
                 # a local file header, the data is stored without a compression
                 fout.write(struct.pack("<IHHHHHIIIHH", 0x04034b50, 20, 0, 0, 0, 0,
-                                       0, size, size, len(raw_name), 0) +
-                           raw_name)
+                                       0, size, size, len(raw_name), len(extra_field)) +
+                           raw_name + extra_field)
                 crc = 0
                 done = 0
                 with open(path, "rb") as data:
                     while done < size:
                         raw = data.read(min(stream, size - done))
                         if not raw:
-                            raise IOError("%s shrank while it was read" % path)
+                            raise IOError("Payload source shrank during packing")
                         crc = zlib.crc32(raw, crc)
                         fout.write(raw)
                         done += len(raw)

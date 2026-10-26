@@ -25,9 +25,9 @@ when Unity removes the entry again.
 
 Usage:
 
-    python3 restore_cache.py [--push] [--serial <device serial>]
+    python3 restore_cache.py [--push] [--serial 38081FDJG00CE2]
 
-Without "--push" the cache is only written to ./cache/Shared.  The exit code is not zero when bundles are missing in the Windows game (--allow-missing keeps 0).
+Without "--push" the cache is only written to ./cache/Shared.
 """
 
 import argparse
@@ -68,8 +68,8 @@ DEVICE_CACHE = ("/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/
 PACKAGE = "com.bethsoft.theelderscrollslegends"
 
 ANDROID = BuildTarget.Android.value        # the build target of the player
-LANGUAGES = {"en_us": 0, "de_de": 1, "es_es": 2, "fr_fr": 3, "it_it": 4,
-             "pl_pl": 5, "pt_br": 6, "ru_ru": 7, "tr_tr": 8}
+LANGUAGES = {"en_us": 0, "de_de": 1, "es_es": 2, "es_mx": 3, "fr_fr": 4,
+             "it_it": 5, "pl_pl": 6, "pt_br": 7, "ru_ru": 8, "tr_tr": 9}
 
 
 def patch_platform(src, dst):
@@ -78,20 +78,22 @@ def patch_platform(src, dst):
     bundles = [f for f in env.files.values() if isinstance(f, BundleFile)]
     if len(bundles) != 1:
         raise ValueError("%s holds %d bundles, expected 1" % (src, len(bundles)))
+    out = None
     patched = 0
-    for sub in bundles[0].files.values():
-        if hasattr(sub, "_m_target_platform"):
-            sub._m_target_platform = ANDROID
-            sub.target_platform = BuildTarget(ANDROID)
-            patched += 1
-    if not patched:
-        raise ValueError("%s: no sub-file has _m_target_platform, did UnityPy change?" % src)
-    out = bundles[0].save(packer="original")
+    for f in bundles:
+        if isinstance(f, BundleFile):
+            for sub in f.files.values():
+                if hasattr(sub, "_m_target_platform"):
+                    patched += 1
+                    sub._m_target_platform = ANDROID
+                    sub.target_platform = BuildTarget(ANDROID)
+            out = f.save(packer="original")
+    if out is None or patched == 0:
+        raise ValueError("%s does not contain a bundle" % src)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    # a temp name first, so __info never points at a truncated __data
-    with open(dst + ".tmp", "wb") as f:
+    with open(dst + ".part", "wb") as f:
         f.write(out)
-    os.replace(dst + ".tmp", dst)
+    os.replace(dst + ".part", dst)
     return len(out)
 
 
@@ -100,10 +102,8 @@ def main():
     ap.add_argument("--push", action="store_true",
                     help="copy the cache to the device")
     ap.add_argument("--serial", default=None, help="the device to use")
-    ap.add_argument("--language", default="en_us", choices=sorted(LANGUAGES),
-                    help="the language of the audio bundles")
-    ap.add_argument("--allow-missing", action="store_true",
-                    help="exit 0 even when bundles are missing in the Windows game")
+    ap.add_argument("--language", default="en_us", choices=LANGUAGES,
+                    help="the language of the audio bundles (en_us, de_de, ...)")
     ap.add_argument("--assets", default=None,
                     help="the StreamingAssets folder of the Windows game")
     args = ap.parse_args()
@@ -118,8 +118,7 @@ def main():
         sys.exit("versions.json is missing, copy it from the device:\n"
                  "  adb shell cat /sdcard/Android/data/%s/files/versions.json > versions.json"
                  % PACKAGE)
-    with open(VERSIONS) as f:
-        versions = json.load(f)
+    versions = json.load(open(VERSIONS))
     entries = versions["_entries"] if isinstance(versions, dict) else versions
 
     loc_code = LANGUAGES[args.language]
@@ -127,18 +126,25 @@ def main():
               if e["StorageMode"] == 0
               and (e["LocCode"] == loc_code or "filemanifest" in e["BundleName"])]
 
+    for entry in wanted:
+        candidate = os.path.realpath(os.path.join(WINDOWS_ASSETS, entry["BundleName"]))
+        if os.path.commonpath([candidate, WINDOWS_ASSETS]) != WINDOWS_ASSETS:
+            sys.exit("BundleName leaves the assets folder: %s" % entry["BundleName"])
+
+    # Do not silently produce an incomplete language pack with exit status 0.
+    missing = [e["BundleName"] for e in wanted
+               if not os.path.isfile(os.path.join(WINDOWS_ASSETS, e["BundleName"]))]
+    if missing:
+        for name in missing:
+            print("missing in the Windows game:", name, file=sys.stderr)
+        sys.exit("Incomplete source assets; no bundles were restored")
+
     now = int(time.time())
     total = 0
-    written = 0
-    missing = 0
     for e in wanted:
-        # the name comes from versions.json and must stay inside the assets folder (the bundles may be links, so only the folder is resolved)
-        src = os.path.normpath(os.path.join(WINDOWS_ASSETS, e["BundleName"]))
-        if os.path.commonpath([src, WINDOWS_ASSETS]) != WINDOWS_ASSETS:
-            sys.exit("BundleName leaves the assets folder: %s" % e["BundleName"])
+        src = os.path.join(WINDOWS_ASSETS, e["BundleName"])
         if not os.path.exists(src):
             print("missing in the Windows game:", e["BundleName"])
-            missing += 1
             continue
         name = os.path.basename(e["BundleName"])
         entry = os.path.join(CACHE, name, e["BundleHash"])
@@ -146,13 +152,9 @@ def main():
         total += patch_platform(src, os.path.join(entry, "__data"))
         # the time of the last use, Unity removes the entries that are older
         # than the expiration delay of the cache
-        with open(os.path.join(entry, "__info"), "w") as f:
-            f.write("-1\n%d\n1\n__data\n" % now)
-        written += 1
-    print("%d bundles, %.0f MB, %d missing" % (written, total / 1e6, missing))
-    if missing and not args.allow_missing:
-        sys.exit("%d bundles are missing in the Windows game (--allow-missing to accept)"
-                 % missing)
+        open(os.path.join(entry, "__info"), "wb").write(
+            ("-1\n%d\n1\n__data\n" % now).encode("ascii"))
+    print("%d bundles, %.0f MB" % (len(wanted), total / 1e6))
 
     if args.push:
         cmd = ["adb"]

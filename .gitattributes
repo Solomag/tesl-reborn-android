@@ -1,5 +1,5 @@
 * text=auto eol=lf
-# hook.js is a length-prefixed Frida bundle: its byte counts break when git converts LF to CRLF, so it is never converted.
+# Keep the generated hook byte-exact on Windows.
 hook.js -text
 *.sh text eol=lf
 *.py text eol=lf

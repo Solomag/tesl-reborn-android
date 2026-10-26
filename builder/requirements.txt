@@ -1,0 +1,4 @@
+UnityPy==1.25.4
+lief==0.17.6
+qrcode[pil]==8.2
+pyinstaller==6.22.3
