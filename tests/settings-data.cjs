@@ -31,3 +31,8 @@ c.call=(o,name,...args)=>{
 };
 c.settingsButtonPressed(fakeButton);
 assert(vm.runInContext('closingSettings.has("settings")',c),'real Cancel press blocks reinsertion even when SettingsWin has no Close methods');
+
+// Device APK strips UnityEvent.GetPersistentEventCount: Cancel must still route.
+event.tryMethod=()=>null;event.class={hierarchy:function*(){yield {fields:[]};}};
+vm.runInContext('closingSettings.clear()',c);c.settingsButtonPressed(fakeButton);
+assert(vm.runInContext('closingSettings.has("settings")',c),'stripped event introspection must not disable button-name routing');
