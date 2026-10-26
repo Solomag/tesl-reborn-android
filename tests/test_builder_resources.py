@@ -308,6 +308,12 @@ class BuilderResourcesTest(unittest.TestCase):
             self.assertEqual(transition.get(ANDROID + "screenOrientation"), "sensorLandscape")
             self.assertEqual(transition.get(ANDROID + "theme"), "@style/TeslRebornTransition")
             self.assertEqual(transition.find("intent-filter/data").get(ANDROID + "host"), "language")
+            provider = tree.find("application/provider")
+            self.assertEqual(provider.get(ANDROID + "exported"), "false")
+            self.assertEqual(provider.get(ANDROID + "grantUriPermissions"), "true")
+            self.assertEqual(provider.get(ANDROID + "process"), ":resources")
+            self.assertEqual(provider.get(ANDROID + "authorities"), PACKAGE + ".tesl-reborn-diagnostics")
+            self.assertTrue(any(a.get(ANDROID + "name").endswith("DiagnosticsActivity") and a.get(ANDROID + "process") == ":resources" for a in activities))
             gate = next(
                 a
                 for a in activities

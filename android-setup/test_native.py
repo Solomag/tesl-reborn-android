@@ -66,6 +66,29 @@ public class InstallerTest {
     return;
   }
   if(a[2].equals("preview")) {
+    File de=new File(root,"diag-external"),dp=new File(root,"diag-private");de.mkdirs();dp.mkdirs();
+    File logs=new File(dp,"tesl-reborn-logs");logs.mkdirs();
+    String sensitive="DO_NOT_SHARE";
+    PackInstaller.writeJson(new File(de,"tesl-login.json"),new JSONObject().put("password",sensitive));
+    PackInstaller.writeJson(new File(de,"tesl-reborn-update-status.json"),new JSONObject().put("version","test").put("password","escaped\\\""+sensitive));
+    try(OutputStream out=new FileOutputStream(new File(logs,"current.log"))) {
+      out.write(("request body: "+new JSONObject().put("password",sensitive)+"\\nexception "+new JSONObject().put("token",sensitive)).getBytes("UTF-8"));
+    }
+    try(OutputStream out=new FileOutputStream(new File(de,"tesl-reborn-resource-status.json"))) {out.write(new byte[256*1024+1]);}
+    File report=new File(root,"diagnostic-reports/report-"+String.join("",Collections.nCopies(32,"a"))+".zip");
+    DiagnosticsArchive.write(de,dp,report,"{\\\"version\\\":40}","Authorization: Bearer "+sensitive+"\\nhttps://example.com/a?token="+sensitive);
+    try(java.util.zip.ZipFile zip=new java.util.zip.ZipFile(report)) {
+      if(zip.getEntry("tesl-login.json")!=null||zip.getEntry("tesl-reborn-resource-status.json")!=null)throw new AssertionError("Forbidden/oversized file exported");
+      if(zip.getEntry("logs/current.log")==null)throw new AssertionError("Private logs missing");
+      java.util.Enumeration<? extends java.util.zip.ZipEntry> all=zip.entries();
+      while(all.hasMoreElements()) {
+        java.util.zip.ZipEntry item=all.nextElement();String value;
+        try(InputStream input=zip.getInputStream(item)){value=new String(PackInstaller.read(input,1024*1024),"UTF-8");}
+        if(value.contains(sensitive))throw new AssertionError("Secret exported in "+item.getName());
+      }
+    }
+    DiagnosticsArchive.reportFile(report.getParentFile(),report.getName());
+    try {DiagnosticsArchive.reportFile(report.getParentFile(),"../../tesl-login.json");throw new AssertionError("Report traversal");}catch(FileNotFoundException good){}
     final long[] elapsed={0}; final int[] probes={0};
     RestartWaiter.await(new int[]{100,200},1000,pid->{probes[0]++;return elapsed[0]<150;},ms->{elapsed[0]+=ms;},()->elapsed[0]);
     if(elapsed[0]!=150||probes[0]<8)throw new AssertionError("Restart did not wait for every old process");
@@ -196,6 +219,7 @@ def main():
                 str(ROOT / "android-setup/src/org/teslreborn/setup/CornerTaps.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/UpdateConfig.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/RestartWaiter.java"),
+                str(ROOT / "android-setup/src/org/teslreborn/setup/DiagnosticsArchive.java"),
                 str(
                     ROOT / "android-setup/src/org/teslreborn/setup/ConnectionLink.java"
                 ),

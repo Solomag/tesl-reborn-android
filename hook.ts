@@ -34,8 +34,11 @@ function redactLog(message) {
     .replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, '[REDACTED-JWT]');
 }
 
+let portLog = null;
+try { portLog = createNativePortLog(redactLog); } catch (_) {}
 const log = (m: string) => {
   m = redactLog(m);
+  portLog?.(m);
   console.log(`${TAG} ${m}`);
   try { androidLogWrite?.(4, tagPtr, Memory.allocUtf8String(m.length > 900 ? m.slice(0, 900) + "..." : m)); } catch (_) {}
 };
@@ -4237,6 +4240,34 @@ const chatWindows = new Map();
     });
   });
   // END android-ui: resource-diagnostics
+
+  // BEGIN android-ui: unity-error-log
+  let unityLogCallbackRef = null;
+  section("persistent Unity errors", () => {
+    const application = ucls("UnityEngine.Application");
+    const subscribe = application.tryMethod("add_logMessageReceivedThreaded", 1);
+    if (subscribe && !subscribe.virtualAddress.isNull()) {
+      const delegate = Il2Cpp.delegate(subscribe.parameters[0].type.class, (message, stack, value) => {
+        const kind = enumVal(value);
+        if ([0,1,2,4].includes(kind)) log(`Unity ${kind}: ${message?.content || ""}\n${stack?.content || ""}`);
+      });
+      unityLogCallbackRef = delegate.ref(false);
+      subscribe.invoke(delegate);
+      return;
+    }
+    const callback = application.tryMethod("CallLogCallback", 4);
+    if (!callback || !callback.isStatic || callback.virtualAddress.isNull()) return;
+    Interceptor.attach(callback.virtualAddress, { onEnter(args) {
+      const kind = args[2].toInt32();
+      if (![0,1,2,4].includes(kind)) return;
+      try {
+        const message = args[0].isNull() ? "" : new Il2Cpp.String(args[0]).content || "";
+        const stack = args[1].isNull() ? "" : new Il2Cpp.String(args[1]).content || "";
+        log(`Unity ${kind}: ${message}\n${stack}`);
+      } catch (_) {}
+    }});
+  });
+  // END android-ui: unity-error-log
 
   section("Reborn Android updater and diagnostics", () => {
     const uriClass = ucls("System.Uri");

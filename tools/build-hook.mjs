@@ -10,7 +10,7 @@ if (imports?.length !== 1) throw Error('Expected exactly one bridge import');
 const code = transformSync(source.replace(/^import "frida-il2cpp-bridge";$/m, ''), {
   loader: 'ts', target: 'es2020', legalComments: 'inline'
 }).code;
-const core = '// TESL-REBORN-ANDROID-CORE v1\n' + readFileSync('runtime/il2cpp-bridge.js', 'utf8') + '\n// hook.ts\n' + code;
+const core = '// TESL-REBORN-ANDROID-CORE v1\n' + readFileSync('runtime/port-log.js', 'utf8') + '\n' + readFileSync('runtime/il2cpp-bridge.js', 'utf8') + '\n// hook.ts\n' + code;
 const old = JSON.parse(readFileSync('runtime/manifest.json', 'utf8'));
 const meta = { ...old, sourceSha256: createHash('sha256').update(source).digest('hex'), bytes: Buffer.byteLength(core), sha256: createHash('sha256').update(core).digest('hex') };
 writeFileSync('runtime/core.js', core);

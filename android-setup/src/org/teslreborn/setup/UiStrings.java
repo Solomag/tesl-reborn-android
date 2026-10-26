@@ -7,6 +7,90 @@ final class UiStrings {
   private static final Map<String, String[]> TEXT = new HashMap<>();
 
   static {
+    TEXT.put("Diagnostics", new String[] {
+      "Diagnostics",
+      "Diagnose",
+      "Diagnóstico",
+      "Diagnóstico",
+      "Diagnostic",
+      "Diagnostica",
+      "Diagnostyka",
+      "Diagnóstico",
+      "Диагностика",
+      "Tanılama"
+    });
+    TEXT.put("Share diagnostic report", new String[] {
+      "Share diagnostic report",
+      "Diagnosebericht teilen",
+      "Compartir informe de diagnóstico",
+      "Compartir informe de diagnóstico",
+      "Partager le rapport de diagnostic",
+      "Condividi rapporto diagnostico",
+      "Udostępnij raport diagnostyczny",
+      "Compartilhar relatório de diagnóstico",
+      "Поделиться отчётом об ошибках",
+      "Tanılama raporunu paylaş"
+    });
+    TEXT.put("Share logs and version details.", new String[] {
+      "Share logs and version details.",
+      "Protokolle und Versionsdetails teilen.",
+      "Comparte registros y versiones.",
+      "Comparte registros y versiones.",
+      "Partager les journaux et les versions.",
+      "Condividi registri e versioni.",
+      "Udostępnij dzienniki i wersje.",
+      "Compartilhe logs e versões.",
+      "Отправить журнал ошибок и сведения о версиях.",
+      "Günlükleri ve sürüm bilgilerini paylaş."
+    });
+    TEXT.put("Preparing diagnostic report…", new String[] {
+      "Preparing diagnostic report…",
+      "Diagnosebericht wird erstellt…",
+      "Preparando informe…",
+      "Preparando informe…",
+      "Préparation du rapport…",
+      "Preparazione del rapporto…",
+      "Przygotowywanie raportu…",
+      "Preparando relatório…",
+      "Подготовка отчёта…",
+      "Rapor hazırlanıyor…"
+    });
+    TEXT.put("Report ready. Choose where to share it.", new String[] {
+      "Report ready. Choose where to share it.",
+      "Bericht fertig. Ziel zum Teilen auswählen.",
+      "Informe listo. Elige dónde compartirlo.",
+      "Informe listo. Elige dónde compartirlo.",
+      "Rapport prêt. Choisissez une application.",
+      "Rapporto pronto. Scegli dove condividerlo.",
+      "Raport gotowy. Wybierz aplikację.",
+      "Relatório pronto. Escolha onde compartilhar.",
+      "Отчёт готов. Выберите, куда его отправить.",
+      "Rapor hazır. Paylaşılacak uygulamayı seçin."
+    });
+    TEXT.put("Could not share report.", new String[] {
+      "Could not share report.",
+      "Bericht konnte nicht geteilt werden.",
+      "No se pudo compartir el informe.",
+      "No se pudo compartir el informe.",
+      "Impossible de partager le rapport.",
+      "Impossibile condividere il rapporto.",
+      "Nie udało się udostępnić raportu.",
+      "Não foi possível compartilhar o relatório.",
+      "Не удалось отправить отчёт.",
+      "Rapor paylaşılamadı."
+    });
+    TEXT.put("Could not prepare report.", new String[] {
+      "Could not prepare report.",
+      "Bericht konnte nicht erstellt werden.",
+      "No se pudo preparar el informe.",
+      "No se pudo preparar el informe.",
+      "Impossible de préparer le rapport.",
+      "Impossibile preparare il rapporto.",
+      "Nie udało się przygotować raportu.",
+      "Não foi possível preparar o relatório.",
+      "Не удалось подготовить отчёт.",
+      "Rapor hazırlanamadı."
+    });
     TEXT.put(
         "Automatic patch updates",
         new String[] {

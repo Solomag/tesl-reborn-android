@@ -224,6 +224,17 @@ def patch_manifest(path):
         {ANDROID + "name": "android.hardware.camera", ANDROID + "required": "false"},
     )
     activity.set(ANDROID + "process", ":resources")
+    ET.SubElement(application, "activity", {
+        ANDROID + "name": "org.teslreborn.setup.DiagnosticsActivity",
+        ANDROID + "exported": "true", ANDROID + "process": ":resources",
+        ANDROID + "theme": "@style/TeslRebornSetup", ANDROID + "label": "TESL Reborn diagnostics",
+    })
+    ET.SubElement(application, "provider", {
+        ANDROID + "name": "org.teslreborn.setup.DiagnosticsProvider",
+        ANDROID + "authorities": PACKAGE + ".tesl-reborn-diagnostics",
+        ANDROID + "exported": "false", ANDROID + "grantUriPermissions": "true",
+        ANDROID + "process": ":resources",
+    })
     transition = ET.SubElement(application, "activity", {
         ANDROID + "name": "org.teslreborn.setup.LanguageActivity",
         ANDROID + "exported": "true",
@@ -679,7 +690,7 @@ def build(
         )
         setup = dict(
             schema=1,
-            androidBuild=38,
+            androidBuild=40,
             obb=obb_meta,
             defaultLanguage=default_language,
             hookFeed=hook_feed(),
@@ -729,7 +740,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=38,
+                        androidBuild=40,
                     ),
                     indent=2,
                 ),

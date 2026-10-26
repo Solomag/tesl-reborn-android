@@ -275,6 +275,10 @@ def main():
 
                 ns = "{http://schemas.android.com/apk/res/android}"
                 application = ET.fromstring(text).find("application")
+                provider = application.find("provider")
+                assert provider.get(ns + "exported") == "false"
+                assert provider.get(ns + "grantUriPermissions") == "true"
+                assert provider.get(ns + "process") == ":resources"
                 launchers = [
                     a
                     for a in application.findall("activity")

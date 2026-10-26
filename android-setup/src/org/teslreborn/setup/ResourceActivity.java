@@ -57,6 +57,7 @@ public class ResourceActivity extends Activity {
   @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    DiagnosticsActivity.installShortcut(this);
     int background = this instanceof LanguageActivity ? 0xff000000 : 0xff171b22;
     getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(background));
     getWindow().setStatusBarColor(background);
@@ -77,7 +78,7 @@ public class ResourceActivity extends Activity {
       }
       PackInstaller.writeJson(new File(root, "tesl-reborn-setup.json"), new JSONObject()
           .put("api", 1).put("debugInput", "android-key-events")
-          .put("androidBuild", setup.optInt("androidBuild", 38)).put("languageTransition", true));
+          .put("androidBuild", setup.optInt("androidBuild", 40)).put("languageTransition", true));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       uiCode = getPreferences(0).getString("uiLanguage", "en_us");
@@ -96,6 +97,7 @@ public class ResourceActivity extends Activity {
       else if (setup.getJSONArray("embeddedPacks").length() > 0 && !ready()) installEmbedded();
 
     } catch (Exception e) {
+      DiagnosticsArchive.nativeError(getFilesDir(), e);
       new AlertDialog.Builder(this)
           .setTitle("Game data setup")
           .setMessage(e.toString())
@@ -189,7 +191,7 @@ public class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 38\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 40\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -306,6 +308,7 @@ public class ResourceActivity extends Activity {
         () ->
             advanced.setVisibility(
                 advanced.getVisibility() == View.GONE ? View.VISIBLE : View.GONE));
+    button(box, "Share diagnostic report", () -> startActivity(new Intent(this, DiagnosticsActivity.class)));
     addDiagnosticsAndUpdates(advanced);
     box.addView(advanced);
     launch = button(box, "Launch game", () -> launchGame());
@@ -567,6 +570,7 @@ public class ResourceActivity extends Activity {
           try {
             task.run();
           } catch (Exception e) {
+            DiagnosticsArchive.nativeError(getFilesDir(), e);
             failure = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
           }
           final String error = failure;
@@ -768,7 +772,7 @@ public class ResourceActivity extends Activity {
           getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2)
               .putString("language", chosen).commit();
           PackInstaller.writeJson(new File(root, "tesl-reborn-handoff.json"), new JSONObject()
-              .put("androidBuild", 38).put("language", code).put("verified", true)
+              .put("androidBuild", 40).put("language", code).put("verified", true)
               .put("at", System.currentTimeMillis()));
           runOnUiThread(() -> startGame());
         });
