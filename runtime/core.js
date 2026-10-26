@@ -3667,6 +3667,7 @@ const BATTLE_CRASH_KEEP_SECTIONS = /* @__PURE__ */ new Set([
   "cache never expires",
   "main thread scheduler",
   "payload from the apk",
+  "auto login",
   "Reborn Android updater and diagnostics"
 ]);
 function section(name, fn) {

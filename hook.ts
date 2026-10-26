@@ -143,7 +143,7 @@ const BATTLE_CRASH_KEEP_SECTIONS = new Set([
   "error tracing: ErrorHandler.OnError", "error tracing: websocket transport", "error tracing: socket.io manager",
   "bundles: desktop behaviour", "storage modes from local versions.json", "versions.json load",
   "cache never expires", "main thread scheduler", "payload from the apk",
-  "Reborn Android updater and diagnostics",
+  "auto login", "Reborn Android updater and diagnostics",
 ]);
 function section(name: string, fn: () => void) {
   if (BATTLE_CRASH_DIAGNOSTIC && !BATTLE_CRASH_KEEP_SECTIONS.has(name)) {
