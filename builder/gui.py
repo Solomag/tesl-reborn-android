@@ -9,6 +9,7 @@ import re
 import socket
 import sys
 import threading
+from datetime import datetime, timezone
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from tkinter import font as tkfont
@@ -212,8 +213,11 @@ class BuilderWindow:
         self.result = None
         self.running = False
         self.server_starting = False
+        self.connection_popup = None
         self.qr = None
         self.appdir = application_directory()
+        self.expert = tk.BooleanVar(value=False)
+        self.saved_language_selection = None
         self.public_url = tk.StringVar()
         self.cert = tk.StringVar()
         self.key = tk.StringVar()
@@ -235,8 +239,10 @@ class BuilderWindow:
         self.ui_locale.current(0)
         self.ui_locale.pack(side="left", padx=8)
         self.ui_locale.bind(
-            "<<ComboboxSelected>>", lambda event: self.translate_ui(root)
+            "<<ComboboxSelected>>", lambda event: self.translate_ui(self.window)
         )
+        ttk.Checkbutton(uirow, text="Expert mode", variable=self.expert,
+                        command=self.expert_changed).pack(side="right")
         self.translated_widgets = {}
         self.game = tk.StringVar()
         games = steam_games()
@@ -294,18 +300,22 @@ class BuilderWindow:
         self.default.current(1)
         self.default.pack(side="left", padx=8)
         self.output_options = options
-        ttk.Button(root, text="Expert mode…", command=self.expert_options).pack(
-            anchor="w"
-        )
+        self.expert_row = ttk.Frame(root)
+        ttk.Checkbutton(self.expert_row, text="APK only (keep installed game data)",
+                        variable=self.apk_only, command=self.apk_only_changed).pack(side="left")
+        ttk.Button(self.expert_row, text="Advanced connection…",
+                   command=self.network_options).pack(side="right")
+        self.expert_hint = ttk.Label(root, wraplength=790,
+            text="APK only: installed game data is kept. No languages, OBB or data ZIP are built.")
         self.build_button = ttk.Button(root, text="Build", command=self.start_build)
         self.build_button.pack(fill="x", pady=8)
         transfer = ttk.LabelFrame(root, text="Transfer game data to phone", padding=6)
         transfer.pack(fill="x")
         row = ttk.Frame(transfer)
         row.pack(fill="x")
-        ttk.Button(
-            row, text="Open a previous build…", command=self.choose_catalog
-        ).pack(side="left")
+        self.previous_button = ttk.Button(
+            row, text="Transfer an existing build…", command=self.choose_catalog)
+        self.previous_button.pack(side="left")
 
         self.ip_var = tk.StringVar()
         self.ip = ttk.Combobox(
@@ -313,13 +323,11 @@ class BuilderWindow:
         )
         self.ip.current(0)
 
-        ttk.Button(row, text="Start transfer", command=self.start_server).pack(
-            side="left", padx=8
-        )
-        ttk.Button(row, text="Stop", command=self.stop_server).pack(side="left")
-        ttk.Button(
-            transfer, text="Advanced connection…", command=self.network_options
-        ).pack(anchor="w", pady=3)
+        self.start_button = ttk.Button(row, text="Start transfer", command=self.start_server)
+        self.start_button.pack(side="left", padx=8)
+        self.stop_button = ttk.Button(row, text="Stop", command=self.stop_server)
+        self.connect_button = ttk.Button(row, text="Show QR / connection", command=self.show_connection)
+        ttk.Label(transfer, text="Reuse an output folder to transfer it again without rebuilding.").pack(anchor="w")
         self.connection = tk.StringVar(
             value="Build first, then start transfer. Scan the QR with your phone camera to install, or from TESL Reborn for game data. Use the same Wi-Fi or Tailscale."
         )
@@ -328,10 +336,6 @@ class BuilderWindow:
         )
         self.qr_label = ttk.Label(transfer)
         self.qr_label.pack(side="right")
-        self.copy_button = ttk.Button(
-            transfer, text="Copy connection details", command=self.copy_connection
-        )
-        self.copy_button.pack(anchor="w")
         ttk.Label(
             transfer,
             text="Transfer stops 60 seconds after the phone is ready, or after 15 minutes idle.",
@@ -357,9 +361,21 @@ class BuilderWindow:
                 visit(child)
 
         visit(parent)
+        index = self.default.current()
+        self.default.configure(values=[self.tr("Phone system language"), *NAMES.values()])
+        if index >= 0:
+            self.default.current(index)
         self.build_button.configure(
             text=self.tr("Build APK only") if self.apk_only.get() else self.tr("Build")
         )
+        if self.server and not self.server.stopped.is_set():
+            self.connection.set(self.connection_details())
+        elif self.server_starting:
+            self.connection.set(self.tr("Checking files and starting transfer…"))
+        elif self.server:
+            self.connection.set(self.tr("Transfer stopped."))
+        else:
+            self.connection.set(self.tr("Build first, then start transfer. Scan the QR with your phone camera to install, or from TESL Reborn for game data. Use the same Wi-Fi or Tailscale."))
 
     def tr(self, key):
         translations = json.loads(
@@ -367,42 +383,36 @@ class BuilderWindow:
         )
         return translations.get(key, {}).get(list(NAMES)[self.ui_locale.current()], key)
 
-    def expert_options(self):
-        dialog = tk.Toplevel(self.window)
-        dialog.title(self.tr("Expert mode…"))
-        dialog.transient(self.window)
+    def expert_changed(self):
+        if self.expert.get():
+            self.expert_row.pack(fill="x", before=self.build_button)
+        else:
+            self.apk_only.set(False)
+            self.apk_only_changed()
+            self.expert_row.pack_forget()
 
-        def changed():
-            state = ["disabled"] if self.apk_only.get() else ["!disabled"]
-            for widget in self.language_checks + list(
-                self.output_options.winfo_children()
-            ):
-                widget.state(state)
-            self.default.configure(
-                state="disabled" if self.apk_only.get() else "readonly"
-            )
-            self.build_button.configure(
-                text=(
-                    self.tr("Build APK only")
-                    if self.apk_only.get()
-                    else self.tr("Build")
-                )
-            )
-
-        ttk.Checkbutton(
-            dialog,
-            text=self.tr("APK only (keep installed game data)"),
-            variable=self.apk_only,
-            command=changed,
-        ).pack(padx=16, pady=12)
-        ttk.Label(
-            dialog,
-            text=self.tr(
-                "Build only the APK? Game data must already be installed on the phone. No language packs, OBB or data ZIP will be produced."
-            ),
-            wraplength=450,
-        ).pack(padx=16, pady=8)
-        ttk.Button(dialog, text=self.tr("Done"), command=dialog.destroy).pack(pady=8)
+    def apk_only_changed(self):
+        only = self.apk_only.get()
+        if only and self.saved_language_selection is None:
+            self.saved_language_selection = (
+                {code: value.get() for code, value in self.languages.items()}, self.default.current())
+            for value in self.languages.values():
+                value.set(False)
+            self.default.set("")
+        elif not only and self.saved_language_selection is not None:
+            values, index = self.saved_language_selection
+            for code, selected in values.items():
+                self.languages[code].set(selected)
+            self.default.current(index)
+            self.saved_language_selection = None
+        for widget in self.language_checks + list(self.output_options.winfo_children()):
+            widget.state(["disabled"] if only else ["!disabled"])
+        self.default.configure(state="disabled" if only else "readonly")
+        self.build_button.configure(text=self.tr("Build APK only") if only else self.tr("Build"))
+        if only:
+            self.expert_hint.pack(anchor="w", before=self.build_button)
+        else:
+            self.expert_hint.pack_forget()
 
     def path_row(self, parent, label, variable, directory, filetypes=None):
         row = ttk.Frame(parent)
@@ -425,7 +435,7 @@ class BuilderWindow:
 
     def choose_game(self):
         path = filedialog.askdirectory(
-            title="Select the PC game folder or StreamingAssets"
+            title=self.tr("Select the PC game folder or StreamingAssets")
         )
         if path:
             self.game.set(path)
@@ -450,7 +460,7 @@ class BuilderWindow:
                 raise ValueError("Select at least one language")
             default = (
                 "system"
-                if self.default.current() == 0
+                if self.apk_only.get() or self.default.current() == 0
                 else list(LANGUAGES)[self.default.current() - 1]
             )
             if (
@@ -492,7 +502,7 @@ class BuilderWindow:
         threading.Thread(target=work, daemon=True).start()
 
     def choose_catalog(self):
-        path = filedialog.askdirectory(title="Select a previous build folder")
+        path = filedialog.askdirectory(title=self.tr("Select an existing output folder"))
         if path:
             folder = Path(path)
             if (
@@ -552,7 +562,18 @@ class BuilderWindow:
             return
 
         self.server_starting = True
-        self.connection.set("Checking files and starting transfer…")
+        self.start_button.state(["disabled"])
+        self.previous_button.state(["disabled"])
+        self.connection.set(self.tr("Checking files and starting transfer…"))
+
+        def transfer_log(message):
+            self.log(message)
+            try:
+                target = root.parent if root.name == "resources" else root
+                with (target / "transfer.log").open("a", encoding="utf-8") as stream:
+                    stream.write(datetime.now(timezone.utc).isoformat() + " " + str(message) + "\n")
+            except OSError:
+                pass
 
         def start():
             try:
@@ -562,7 +583,7 @@ class BuilderWindow:
                         (
                             ResourceServer(
                                 root,
-                                log=self.log,
+                                log=transfer_log,
                                 port=port,
                                 cert=cert,
                                 key=key,
@@ -587,7 +608,7 @@ class BuilderWindow:
 
     def network_options(self):
         dialog = tk.Toplevel(self.window)
-        dialog.title("Advanced connection")
+        dialog.title(self.tr("Advanced connection…"))
         dialog.geometry("700x280")
         ttk.Label(
             dialog,
@@ -628,9 +649,11 @@ class BuilderWindow:
             text="Leave these fields empty for Wi-Fi or Tailscale.",
         ).pack(anchor="w", padx=8)
         ttk.Button(dialog, text="Done", command=dialog.destroy).pack(pady=8)
+        self.translate_ui(dialog)
 
     def stop_server(self):
         if self.server:
+            self.stop_button.state(["disabled"])
             threading.Thread(target=self.server.stop, daemon=True).start()
 
     def copy_connection(self):
@@ -638,6 +661,37 @@ class BuilderWindow:
             return
         self.window.clipboard_clear()
         self.window.clipboard_append(self.connection.get())
+
+    def connection_details(self):
+        return self.tr("Install / connect: {link}\nAddress: {url}\nConnection code: {code}").format(
+            link=self.server.connection_url(self.transfer_url), url=self.transfer_url, code=self.server.token)
+
+    def show_connection(self):
+        if not self.server or self.server.stopped.is_set():
+            return
+        if self.connection_popup and self.connection_popup.winfo_exists():
+            self.connection_popup.lift()
+            return
+        popup = tk.Toplevel(self.window)
+        self.connection_popup = popup
+        popup.title(self.tr("Connect your phone"))
+        ttk.Label(popup,
+            text="Scan with your phone camera to install the APK, or scan inside TESL Reborn to download game data.",
+            padding=12, wraplength=370).pack()
+        try:
+            import qrcode
+            from PIL import ImageTk
+            large = ImageTk.PhotoImage(qrcode.make(self.server.connection_url(self.transfer_url)).resize((360, 360)))
+            label = ttk.Label(popup, image=large)
+            label.image = large
+            label.pack(padx=12)
+        except ImportError:
+            self.log("QR unavailable; enter the address and code manually.")
+        ttk.Label(popup, textvariable=self.connection, padding=12, wraplength=440).pack()
+        ttk.Button(popup, text="Copy connection details", command=self.copy_connection).pack(pady=4)
+        ttk.Label(popup, text="Keep this builder open until the phone is ready.", padding=12).pack()
+        ttk.Button(popup, text="Close", command=popup.destroy).pack(pady=8)
+        self.translate_ui(popup)
 
     def poll(self):
         try:
@@ -661,64 +715,28 @@ class BuilderWindow:
                 elif kind == "server":
                     self.server_starting = False
                     self.server, public = value
-                    url = (
-                        public.rstrip("/") + "/"
-                        if public
-                        else f"http://{self.ip.get()}:{self.server.port}/"
-                    )
-                    self.connection.set(
-                        f"Install / connect: {self.server.connection_url(url)}\nAddress: {url}\nConnection code: {self.server.token}"
-                    )
-                    try:
-                        import qrcode
-                        from PIL import ImageTk
-
-                        image = qrcode.make(self.server.connection_url(url)).resize(
-                            (160, 160)
-                        )
-                        self.qr = ImageTk.PhotoImage(image)
-                        self.qr_label.configure(image=self.qr)
-                        popup = tk.Toplevel(self.window)
-                        popup.title("Connect your phone")
-                        ttk.Label(
-                            popup,
-                            text="Scan with your phone camera to install the APK, or scan inside TESL Reborn to download game data.",
-                            padding=12,
-                            wraplength=370,
-                        ).pack()
-                        large = ImageTk.PhotoImage(
-                            qrcode.make(self.server.connection_url(url)).resize(
-                                (360, 360)
-                            )
-                        )
-                        label = ttk.Label(popup, image=large)
-                        label.image = large
-                        label.pack(padx=12)
-                        ttk.Label(
-                            popup, text=f"{url}\nCode: {self.server.token}", padding=12
-                        ).pack()
-                        ttk.Label(
-                            popup,
-                            text="Keep this builder open until the phone is ready.",
-                            padding=12,
-                        ).pack()
-                        ttk.Button(popup, text="Close", command=popup.destroy).pack(
-                            pady=8
-                        )
-                    except ImportError:
-                        self.log("QR unavailable; enter the address and code manually.")
+                    self.transfer_url = public.rstrip("/") + "/" if public else f"http://{self.ip.get()}:{self.server.port}/"
+                    self.connection.set(self.connection_details())
+                    self.stop_button.state(["!disabled"])
+                    self.stop_button.pack(side="left")
+                    self.connect_button.pack(side="left", padx=8)
+                    self.show_connection()
                 elif kind == "server-error":
                     self.server_starting = False
+                    self.start_button.state(["!disabled"])
+                    self.previous_button.state(["!disabled"])
                     messagebox.showerror("Transfer", value)
         except queue.Empty:
             pass
-        if (
-            self.server
-            and not self.server_starting
-            and self.server.stopped.is_set()
-            and self.connection.get() != "Transfer stopped."
-        ):
-            self.connection.set("Transfer stopped.")
+        if self.server and not self.server_starting and self.server.stopped.is_set():
+            self.connection.set(self.tr("Transfer stopped."))
+            self.stop_button.pack_forget()
+            self.connect_button.pack_forget()
+            self.start_button.state(["!disabled"])
+            self.previous_button.state(["!disabled"])
+            if self.connection_popup and self.connection_popup.winfo_exists():
+                self.connection_popup.destroy()
+            self.connection_popup = None
             self.qr_label.configure(image="")
             self.qr = None
         self.window.after(100, self.poll)

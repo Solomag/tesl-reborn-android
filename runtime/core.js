@@ -39,7 +39,11 @@ function createNativePortLog(redact) {
   mkdir(Memory.allocUtf8String(directory), 0o700);
   const move = (from, to) => rename(Memory.allocUtf8String(directory + '/' + from), Memory.allocUtf8String(directory + '/' + to));
   return createPortLog({
-    rotate() { move('previous.log','older.log'); move('current.log','previous.log'); },
+    rotate() {
+      for (let i=9;i>=4;i--) move(`previous-${i-1}.log`,`previous-${i}.log`);
+      move('older.log','previous-3.log');
+      move('previous.log','older.log'); move('current.log','previous.log');
+    },
     append(text) {
       const file = new File(directory + '/current.log', 'ab');
       try { file.write(text); file.flush(); } finally { file.close(); }
@@ -4969,13 +4973,18 @@ Il2Cpp.perform(() => {
       if (keys.length === 0) return 0;
       const stringClass = Il2Cpp.corlib.class("System.String");
       const dictionary = Il2Cpp.corlib.class("System.Collections.Generic.Dictionary`2").inflate(stringClass, stringClass).new();
-      for (const key of keys) {
-        dictionary.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(String(json[key])));
+      const retained = dictionary.ref(false);
+      try {
+        for (const key of keys) {
+          retained.target.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(String(json[key])));
+        }
+        const fixes = TRANSLATIONS[selected] || TRANSLATIONS[shortLanguage(selected)] || {};
+        for (const key of Object.keys(fixes))
+          retained.target.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
+        manager.field("_localizedData").value = retained.target;
+      } finally {
+        retained.free();
       }
-      const fixes = TRANSLATIONS[selected] || TRANSLATIONS[shortLanguage(selected)] || {};
-      for (const key of Object.keys(fixes))
-        dictionary.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
-      manager.field("_localizedData").value = dictionary;
       return keys.length;
     } catch (e) {
       log(`could not restore the localization: ${e}`);
@@ -5030,7 +5039,7 @@ Il2Cpp.perform(() => {
       en_us: ["english", "englishus", "\u0430\u043D\u0433\u043B\u0438\u0439\u0441\u043A\u0438\u0439"],
       de_de: ["deutsch", "german", "\u043D\u0435\u043C\u0435\u0446\u043A\u0438\u0439"],
       es_es: ["espa\xF1ol", "spanish", "\u0438\u0441\u043F\u0430\u043D\u0441\u043A\u0438\u0439"],
-      es_mx: ["espa\xF1ollatinoam\xE9rica", "latinamericanspanish", "espa\xF1olm\xE9xico"],
+      es_mx: ["espa\xF1olmexicano", "espa\xF1ollatinoam\xE9rica", "latinamericanspanish", "espa\xF1olm\xE9xico"],
       fr_fr: ["fran\xE7ais", "french", "\u0444\u0440\u0430\u043D\u0446\u0443\u0437\u0441\u043A\u0438\u0439"],
       it_it: ["italiano", "italian", "\u0438\u0442\u0430\u043B\u044C\u044F\u043D\u0441\u043A\u0438\u0439"],
       pl_pl: ["polski", "polish", "\u043F\u043E\u043B\u044C\u0441\u043A\u0438\u0439"],
@@ -5322,9 +5331,9 @@ Il2Cpp.perform(() => {
           let entries = countOf(data);
           const selection = resourceLanguage() || code;
           if (entries === 0 || lastLanguage !== code || lastRestored !== selection || lastRestoredDictionary !== String(data?.handle)) {
-            lastRestored = selection;
             const restored = restoreLocalization(manager, code);
             if (restored > 0) {
+              lastRestored = selection;
               log(`localization: restored ${restored} strings for ${selection}; Unity locale ${code}`);
             }
             data = manager.field("_localizedData").value;
@@ -6366,8 +6375,25 @@ Il2Cpp.perform(() => {
     };
     globalThis.__teslNativeLanguageCallback = true;
   });
+  const closingSettings = /* @__PURE__ */ new Set();
+  function settingsWindowKey(self) {
+    return call(self, "get_gameObject").handle.toString();
+  }
+  function settingsClosing(self, reason) {
+    const key = settingsWindowKey(self);
+    if (closingSettings.size > 128) closingSettings.clear();
+    closingSettings.add(key);
+    const root = call(self, "get_transform"), child = call(root, "Find", Il2Cpp.string("RebornGameData"));
+    if (!isNull(child)) call(call(child, "get_gameObject"), "SetActive", false);
+    if (resourceSettingsWindow && resourceSettingsWindow.target.handle.toString() === key) {
+      resourceSettingsWindow.free();
+      resourceSettingsWindow = null;
+    }
+    log(`settings UI: ${reason}; custom control suspended`);
+  }
   function installSettingsDataButton(self) {
     if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
+    if (closingSettings.has(settingsWindowKey(self))) return;
     const root = call(self, "get_transform");
     const rootName = String(call(root, "get_name")?.content || "");
     const typeName = String(self.class?.name || "");
@@ -6394,7 +6420,11 @@ Il2Cpp.perform(() => {
       if (resourceSettingsWindow) resourceSettingsWindow.free();
       resourceSettingsWindow = window.ref(false);
     }
-    if (!isNull(call(root, "Find", Il2Cpp.string("RebornGameData")))) return;
+    const existing = call(root, "Find", Il2Cpp.string("RebornGameData"));
+    if (!isNull(existing)) {
+      call(call(existing, "get_gameObject"), "SetActive", true);
+      return;
+    }
     const labels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
       ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
@@ -6408,6 +6438,12 @@ Il2Cpp.perform(() => {
       Interceptor.attach(method.virtualAddress, {
         onEnter(args) {
           this.self = args[0];
+          if (method.name === "Show" || method.name === "OnEnable") {
+            try {
+              closingSettings.delete(settingsWindowKey(new Il2Cpp.Object(this.self)));
+            } catch (_) {
+            }
+          }
         },
         onLeave() {
           const retained = new Il2Cpp.Object(this.self).ref(false);
@@ -6423,6 +6459,19 @@ Il2Cpp.perform(() => {
         }
       });
       hooks++;
+    }
+    const closeAddresses = /* @__PURE__ */ new Set();
+    for (const owner of classes) for (const method of owner.methods.filter((m) => /^(?:(?:On|Handle)?(?:Cancel|Close|Hide)(?:Button)?(?:Click|Clicked|Pressed)?|OnDisable|OnDestroy)$/i.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+      const key = method.virtualAddress.toString();
+      if (closeAddresses.has(key)) continue;
+      closeAddresses.add(key);
+      Interceptor.attach(method.virtualAddress, { onEnter(args) {
+        try {
+          settingsClosing(new Il2Cpp.Object(args[0]), owner.name + "." + method.name);
+        } catch (error) {
+          log(`settings UI close trace: ${error}`);
+        }
+      } });
     }
     let last = 0;
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
@@ -6459,7 +6508,7 @@ Il2Cpp.perform(() => {
       } catch (_) {
       }
     } });
-    log(`settings game data: ${hooks} window hooks and prefab fallback`);
+    log(`settings game data: ${hooks} window hooks, ${closeAddresses.size} close hooks and prefab fallback`);
   });
   section("settings and language diagnostics", () => {
     let lastPoll = 0, lastRequest = "";
@@ -8063,21 +8112,71 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     const revision = globalThis.TeslRebornUpdater?.current()?.revision;
     return cachedPortCaption = `Reborn API ${PLUGIN_VERSION} \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
   }
+  const noticeCanvasCalls = /* @__PURE__ */ new Map();
+  function noticeCanvasProperty(canvas, name, value) {
+    const signatures = {
+      set_renderMode: ["void", "int", "UnityEngine.RenderMode"],
+      set_sortingOrder: ["void", "int", "System.Int32"],
+      set_scaleFactor: ["void", "float", "System.Single"],
+      get_scaleFactor: ["float", null, ""]
+    };
+    const spec = signatures[name];
+    if (!spec) throw Error("Unsupported notice Canvas property");
+    const method = canvas.tryMethod(name, value === void 0 ? 0 : 1);
+    if (method) {
+      if (value === void 0) return method.invoke();
+      const type = method.parameters[0].type.class;
+      return method.invoke(type.isEnum ? enumBox(type, value) : value);
+    }
+    let native = noticeCanvasCalls.get(name);
+    if (!native) {
+      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+      let address = resolve(Memory.allocUtf8String("UnityEngine.Canvas::" + name));
+      if (address.isNull()) address = resolve(Memory.allocUtf8String(`UnityEngine.Canvas::${name}(${spec[2]})`));
+      if (address.isNull()) throw Error("Notice Canvas binding unavailable: " + name);
+      native = new NativeFunction(address, spec[0], value === void 0 ? ["pointer"] : ["pointer", spec[1]]);
+      noticeCanvasCalls.set(name, native);
+    }
+    return value === void 0 ? native(canvas.handle) : native(canvas.handle, value);
+  }
   function uiSystemText(go, text, size) {
-    const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
-    if (isNull(font)) throw Error("Built-in notice font is unavailable");
-    const label = uiAdd(go, "UnityEngine.UI.Text");
-    call(label, "set_font", font);
-    call(label, "set_fontSize", size);
-    call(label, "set_raycastTarget", false);
-    call(label, "set_supportRichText", false);
-    call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleCenter"));
-    call(label, "set_color", rgba(1, 1, 1, 1));
-    call(label, "set_text", Il2Cpp.string(text));
-    return label;
+    let label = null;
+    try {
+      const type = ucls("UnityEngine.UI.Text");
+      if (!type.tryMethod("set_font", 1)) throw Error("Legacy Text setters stripped");
+      const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
+      if (isNull(font)) throw Error("Built-in notice font is unavailable");
+      label = uiAdd(go, "UnityEngine.UI.Text");
+      call(label, "set_font", font);
+      call(label, "set_fontSize", size);
+      call(label, "set_raycastTarget", false);
+      call(label, "set_supportRichText", false);
+      call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleCenter"));
+      call(label, "set_color", rgba(1, 1, 1, 1));
+      call(label, "set_text", Il2Cpp.string(text));
+      return label;
+    } catch (_) {
+      if (label) try {
+        ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(label);
+      } catch (_2) {
+      }
+      return uiText(go, text, size);
+    }
+  }
+  function noticeTextLayout(label, right = false) {
+    const tmp = label.class.type.name === "TMPro.TextMeshProUGUI";
+    call(label, "set_alignment", uiEnum(
+      tmp ? "TMPro.TextAlignmentOptions" : "UnityEngine.TextAnchor",
+      right ? tmp ? "Right" : "MiddleRight" : tmp ? "Center" : "MiddleCenter"
+    ));
+    if (!right) {
+      const options = tmp ? [["set_enableAutoSizing", true], ["set_fontSizeMin", 18], ["set_fontSizeMax", 22]] : [["set_resizeTextForBestFit", true], ["set_resizeTextMinSize", 18], ["set_resizeTextMaxSize", 22]];
+      for (const [name, value] of options) label.tryMethod(String(name), 1)?.invoke(value);
+    }
   }
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
+    let inheritedCanvas = false;
     let message = null, shownAt = 0, lastError = "";
     let reportedCaption = "";
     function discard() {
@@ -8107,16 +8206,38 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       root = go.ref(false);
       try {
         canvas = uiAdd(go, "UnityEngine.Canvas");
-        call(canvas, "set_renderMode", uiEnum("UnityEngine.RenderMode", "ScreenSpaceOverlay"));
-        call(canvas, "set_sortingOrder", 32760);
-        const scaler = uiAdd(go, "UnityEngine.UI.CanvasScaler");
-        const scaleMode = ucls("UnityEngine.UI.CanvasScaler").nested("ScaleMode");
-        call(scaler, "set_uiScaleMode", enumBox(scaleMode, enumVal(scaleMode.field("ScaleWithScreenSize").value)));
-        call(scaler, "set_referenceResolution", vec2(1280, 720));
-        call(scaler, "set_matchWidthOrHeight", 0.5);
-        const group = uiAdd(go, "UnityEngine.CanvasGroup");
-        call(group, "set_interactable", false);
-        call(group, "set_blocksRaycasts", false);
+        inheritedCanvas = false;
+        try {
+          noticeCanvasProperty(canvas, "set_renderMode", 0);
+          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+          noticeCanvasProperty(canvas, "set_scaleFactor", 1);
+        } catch (_) {
+          const original = canvas;
+          const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+          let parent = null, order = -Infinity;
+          for (let i = 0; i < values.length; i++) {
+            const candidate = values.get(i);
+            if (candidate.handle.equals(original.handle)) continue;
+            if (!Boolean(call(call(candidate, "get_gameObject"), "get_activeInHierarchy"))) continue;
+            let sorting = 0;
+            try {
+              sorting = Number(call(candidate, "get_sortingOrder"));
+            } catch (_2) {
+            }
+            if (sorting >= order) {
+              parent = candidate;
+              order = sorting;
+            }
+          }
+          if (!parent) throw Error("No active Canvas for update notice fallback");
+          const rect = call(go, "get_transform");
+          rect.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(parent, "get_transform"), false);
+          call(rect, "SetAsLastSibling");
+          uiStretch(uiRect(go));
+          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(original);
+          canvas = parent;
+          inheritedCanvas = true;
+        }
         panel = uiNew("Banner", call(go, "get_transform"));
         const background = uiAdd(panel, "UnityEngine.UI.Image");
         call(background, "set_color", rgba(0.09, 0.11, 0.14, 0.95));
@@ -8126,14 +8247,12 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         call(uiRect(text), "set_offsetMin", vec2(16, 10));
         call(uiRect(text), "set_offsetMax", vec2(-16, -10));
         label = uiSystemText(text, "", 22);
-        call(label, "set_resizeTextForBestFit", true);
-        call(label, "set_resizeTextMinSize", 18);
-        call(label, "set_resizeTextMaxSize", 22);
+        noticeTextLayout(label);
         badge = uiNew("PortVersion", call(go, "get_transform"));
         badgeText = uiSystemText(badge, "", 16);
-        call(badgeText, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleRight"));
+        noticeTextLayout(badgeText, true);
         call(badgeText, "set_color", rgba(0.7, 0.7, 0.7, 1));
-        ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
+        if (!inheritedCanvas) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
         call(panel, "SetActive", false);
       } catch (error) {
         discard();
@@ -8156,7 +8275,15 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         }
         try {
           ensure();
-          const screen = chatScreen(), scale = Math.max(0.1, Number(call(canvas, "get_scaleFactor")) || 1);
+          const screen = chatScreen();
+          let scale = Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
+          if (inheritedCanvas) {
+            try {
+              scale = Math.max(0.1, Number(call(canvas, "get_scaleFactor")) || 1);
+            } catch (_) {
+              scale = 1;
+            }
+          } else noticeCanvasProperty(canvas, "set_scaleFactor", scale);
           const width = Math.min(1e3, screen.width / scale - 32);
           let top = 16;
           try {
@@ -8287,6 +8414,31 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
             }
           } catch (error) {
             report.error = String(error).slice(0, 160);
+          }
+          try {
+            report.menu = [];
+            const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+            const owners = img.classes.filter((c) => /^(?:MainMenu|MainMenuNavManager|MainMenuNavComponent|SettingsWin)$/.test(c.name) && Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"));
+            for (const owner of owners) {
+              const values = find.invoke(owner.type.object);
+              for (let i = 0; i < Math.min(values.length, 16) && report.menu.length < 32; i++) {
+                const component = values.get(i), go = call(component, "get_gameObject"), root = call(go, "get_transform");
+                const item = {
+                  type: owner.type.name,
+                  name: String(call(go, "get_name")?.content || "").slice(0, 120),
+                  active: Boolean(call(go, "get_activeInHierarchy")),
+                  children: Number(call(root, "get_childCount")),
+                  nodes: []
+                };
+                for (let j = 0; j < Math.min(item.children, 12); j++) {
+                  const child = call(call(root, "GetChild", j), "get_gameObject");
+                  item.nodes.push({ name: String(call(child, "get_name")?.content || "").slice(0, 120), active: Boolean(call(child, "get_activeInHierarchy")) });
+                }
+                report.menu.push(item);
+              }
+            }
+          } catch (error) {
+            report.menuError = String(error).slice(0, 160);
           }
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`, JSON.stringify(report));
         });

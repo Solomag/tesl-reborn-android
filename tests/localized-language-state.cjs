@@ -65,8 +65,17 @@ assert.equal(opened.at(-1),'teslreborn://language?language=ru_ru&apply=1','only 
 console.log('PASS: device locale mismatch, actual enum IDs, settings/default getter, complete dictionary refresh and original language dropdown callback');
 
 const from=hook.indexOf('  function restoreLocalization('),to=hook.indexOf('  // ---------------------------------------------------------------------',from);
-const restored=new Map(),slot={value:null};const dictionary={method:()=>({invoke:(key,value)=>restored.set(key,value)})};
+let pinned=false,installed=null;
+const restored=new Map(),slot={get value(){return installed;},set value(value){assert(pinned,'manager receives a still-rooted complete table');installed=value;}};
+const dictionary={ref:()=>{pinned=true;return{target:dictionary,free:()=>{pinned=false;}};},method:()=>({invoke:(key,value)=>{assert(pinned,'dictionary must survive GC during string allocation');restored.set(key,value);}})};
 const context={isNull:x=>x==null,resourceLanguage:()=> 'en_us',shortLanguage:x=>x.slice(0,2),persistentPath:()=>'/files',readTextFile:()=>JSON.stringify({menu:'Settings'}),
  Il2Cpp:{string:x=>x,corlib:{class:()=>({inflate:()=>({new:()=>dictionary})})}},TRANSLATIONS:{en:{pluginKey:'Plugin label'}},log:()=>{}};
 vm.createContext(context);vm.runInContext(transformSync(hook.slice(from,to),{loader:'ts'}).code,context);
-assert.equal(context.restoreLocalization({field:()=>slot},'en'),1);assert.equal(restored.get('menu'),'Settings');assert.equal(restored.get('pluginKey'),'Plugin label');assert.equal(slot.value,dictionary);
+assert.equal(context.restoreLocalization({field:()=>slot},'en'),1);assert.equal(restored.get('menu'),'Settings');assert.equal(restored.get('pluginKey'),'Plugin label');assert.equal(slot.value,dictionary);assert.equal(pinned,false,"temporary handle is released after manager ownership");
+
+for(const [label,code] of Object.entries({'English':'en_us','Deutsch':'de_de','Español':'es_es','Español Mexicano':'es_mx','Français':'fr_fr','Italiano':'it_it','Polski':'pl_pl','Português':'pt_br','Русский язык':'ru_ru','Türkçe':'tr_tr'})) {
+ assert.equal(c.languageLabel(label),code); labels[1]=label; selected=code==='en_us'?'ru_ru':'en_us';
+ hooks.select.onEnter();handler.implementation.call(self,1);hooks.select.onLeave();
+ assert.equal(opened.at(-1),'teslreborn://language?language='+code+'&apply=1');
+}
+assert.equal(original.length,1,'all native menu labels suppress the original logout handler');

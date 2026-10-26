@@ -38,7 +38,11 @@ function createNativePortLog(redact) {
   mkdir(Memory.allocUtf8String(directory), 0o700);
   const move = (from, to) => rename(Memory.allocUtf8String(directory + '/' + from), Memory.allocUtf8String(directory + '/' + to));
   return createPortLog({
-    rotate() { move('previous.log','older.log'); move('current.log','previous.log'); },
+    rotate() {
+      for (let i=9;i>=4;i--) move(`previous-${i-1}.log`,`previous-${i}.log`);
+      move('older.log','previous-3.log');
+      move('previous.log','older.log'); move('current.log','previous.log');
+    },
     append(text) {
       const file = new File(directory + '/current.log', 'ab');
       try { file.write(text); file.flush(); } finally { file.close(); }

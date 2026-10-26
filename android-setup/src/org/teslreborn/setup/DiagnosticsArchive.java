@@ -11,7 +11,7 @@ public final class DiagnosticsArchive {
     "tesl-reborn-update-status.json", "tesl-reborn-setup.json", "tesl-reborn-handoff.json",
     "tesl-reborn-ui-status.json", "tesl-reborn-update-notice.json", "tesl-reborn-resource-status.json"
   };
-  private static final String[] LOGS = {"current.log", "previous.log", "older.log", "native.log", "native-previous.log"};
+  private static final String[] LOGS = {"current.log", "previous.log", "older.log", "previous-3.log", "previous-4.log", "previous-5.log", "previous-6.log", "previous-7.log", "previous-8.log", "previous-9.log", "native.log", "native-previous.log"};
   private static final int LIMIT = 256 * 1024;
 
   public static String redact(String value) {

@@ -135,12 +135,46 @@ class BuilderServerTest(unittest.TestCase):
         )
         self.assertEqual(status, 206)
         self.assertEqual(data, apk.read_bytes()[4:11])
+        self.assertTrue(any("APK #1: start" in entry for entry in self.logs))
+        self.assertTrue(any("file sent" in entry for entry in self.logs))
+        self.assertTrue(any("resume/range" in entry for entry in self.logs))
+        self.assertTrue(any("range sent" in entry for entry in self.logs))
+        self.assertNotIn(self.server.token, "\n".join(self.logs))
         self.assertEqual(self.request(page + "/../catalog.json")[0], 401)
         self.assertEqual(self.request("/connect/wrong/tesl-reborn.apk")[0], 401)
         self.assertEqual(
             self.request(page, {"Origin": "https://other.example"})[0], 403
         )
         self.assertEqual(self.request("/catalog.json")[0], 401)
+        self.assertNotIn(self.server.token, "\n".join(self.logs))
+
+    def test_interrupted_apk_is_logged_and_can_resume(self):
+        import socket
+        import struct
+        import time
+        self.server.stop()
+        apk = self.root / "large.apk"
+        with apk.open("wb") as stream:
+            stream.truncate(32 * 1024 * 1024)
+        self.server = ResourceServer(self.root, host="127.0.0.1", apk=apk, log=self.logs.append).start()
+        path = self.server.connect_path + "/tesl-reborn.apk"
+        sock = socket.create_connection(("127.0.0.1", self.server.port), timeout=5)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        sock.sendall(("GET " + path + " HTTP/1.1\r\nHost: localhost\r\n\r\n").encode())
+        self.assertTrue(sock.recv(1024))
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        sock.close()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not any("interrupted" in line for line in self.logs):
+            time.sleep(.02)
+        self.assertTrue(any("interrupted" in line for line in self.logs), self.logs)
+        status, _, data = self.request(path, {"Range": "bytes=1024-2047"})
+        self.assertEqual(status, 206)
+        self.assertEqual(data, bytes(1024))
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not any("range sent" in line for line in self.logs):
+            time.sleep(.02)
+        self.assertTrue(any("range sent" in line for line in self.logs))
         self.assertNotIn(self.server.token, "\n".join(self.logs))
 
     def test_browser_can_download_apk_from_offline_xapk_without_extracting_it(self):

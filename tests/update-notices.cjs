@@ -72,7 +72,10 @@ assert(context.updateNoticeText('restart',36,'unknown').startsWith('Reborn'));
 let clock=1000, fontReady=false, screen={width:3120,height:1440};
 const objects=[],calls=[],placements=[],logs=[];
 function object(name) {
- const value={name,active:true,dead:false};
+ const value={name,active:true,dead:false,class:{type:{name:"UnityEngine.UI.Text"}}};
+ value.tryMethod=(method)=>({parameters:[{type:{class:{isEnum:false}}}],invoke:(...args)=>{calls.push([value,method,...args]);}});
+ value.handle={equals:other=>other===value.handle};
+ value.method=method=>({overload:()=>({invoke:(...args)=>calls.push([value,method,...args])})});
  value.ref=()=>({target:value,free:()=>calls.push([value,'free'])});
  objects.push(value);return value;
 }
@@ -87,10 +90,11 @@ const r={Date:class extends Date {static now(){return clock;}},PLUGIN_VERSION:'1
  call:(value,method,...args)=>{
   if(value.dead)throw Error('destroyed native object');
   calls.push([value,method,...args]);
-  if(method==='get_activeSelf')return value.active;
+  if(method==='get_activeSelf'||method==='get_activeInHierarchy')return value.active;
+  if(method==='get_sortingOrder')return 100;
   if(method==='SetActive'){value.active=args[0];return;}
   if(method==='get_scaleFactor')return 2;
-  if(method==='get_transform')return value;
+  if(method==='get_transform'||method==='get_gameObject')return value;
   if(method==='get_yMax')return screen.height-40;
  }};
 // Screen.safeArea is optional in older Unity builds: emulate its absence.
@@ -102,14 +106,14 @@ assert(objects.filter(o=>o.name==='RebornUpdateNotice').every(o=>o.dead),'partia
 banner.show('restart',0);fontReady=true;clock=9000;banner.tick();
 const root=objects.find(o=>o.name==='RebornUpdateNotice'&&!o.dead);assert(root.active);
 assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('APK 38 · patch 37')),'loaded version is persistently visible');
-assert(calls.some(([o,m,v])=>m==='set_blocksRaycasts'&&v===false));
-assert(calls.some(([o,m,v])=>m==='set_interactable'&&v===false));
+assert(!objects.some(o=>o.name==='UnityEngine.CanvasGroup'));
+assert(!objects.some(o=>o.name==='UnityEngine.UI.CanvasScaler'));
 assert(calls.some(([o,m,v])=>m==='set_raycastTarget'&&v===false));
 assert(calls.some(([o,m])=>o===root&&m==='DontDestroyOnLoad'));
 assert(calls.some(([o,m,v])=>m==='set_text'&&v.includes('скачано и проверено')));
 assert(!calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('Скачивается')),'completion replaces a queued stale download notice');
 clock=18000;screen={width:1440,height:3120};banner.tick();assert(root.active,'timeout starts when the UI is actually drawn');
-assert(placements.at(-1)[7]<=screen.width/2-32,'banner follows resolution changes');
+assert(placements.at(-1)[7]<=1280-32,'banner follows resolution changes');
 clock=19000;banner.tick();assert.equal(root.active,true,'version footer remains visible after the notification disappears');
 assert.equal(objects.filter(o=>o.name==='Banner').at(-1).active,false);
 let displayed=0;banner.show('applied',36,()=>displayed++);banner.tick();assert.equal(displayed,0);
@@ -131,3 +135,23 @@ assert.equal(scheduled.length,1);assert.equal(scheduled[0].delay,1000);
 scheduled[0].fn();assert.equal(transport.length,1);
 assert.equal(transport[0].auth,false);assert.equal(transport[0].update,true);
 console.log('PASS: API 1 update notices, verified-only completion, once-only activation, offline silence, font retry, noninteractive scene-persistent UI and automatic expiry');
+
+// Replay the missing managed Canvas setter found in the phone report.
+const nativeCalls=[];r.Memory={allocUtf8String:s=>s};r.Il2Cpp.module={getExportByName:()=> 'resolver'};
+r.NativeFunction=function(address,ret,args){if(address==='resolver')return name=>({name,isNull:()=>false});return (...values)=>nativeCalls.push({name:address.name,values});};
+const stripped={handle:'canvas-object',tryMethod:()=>null};
+r.noticeCanvasProperty(stripped,'set_renderMode',0);r.noticeCanvasProperty(stripped,'set_sortingOrder',32760);r.noticeCanvasProperty(stripped,'set_scaleFactor',1.5);
+assert.deepEqual(nativeCalls.map(x=>x.name),['UnityEngine.Canvas::set_renderMode','UnityEngine.Canvas::set_sortingOrder','UnityEngine.Canvas::set_scaleFactor']);
+assert.deepEqual(nativeCalls[0].values,['canvas-object',0]);
+r.Memory={allocUtf8String:s=>s};
+
+// Both stripped managed metadata and missing icalls must remain usable by
+// parenting only our object under an existing Canvas, without cloning game UI.
+const oldUcls=r.ucls,gameCanvas=object('ExistingGameCanvas');
+r.ucls=name=>name==='UnityEngine.Resources'?{method:()=>({overload:()=>({invoke:()=>({length:1,get:()=>gameCanvas})})})}:oldUcls(name);
+r.noticeCanvasProperty=()=>{throw Error('native binding stripped');};
+const callStart=calls.length,fallback=r.createUpdateBanner();fallback.show('applied',41);fallback.tick();
+assert(calls.slice(callStart).some(([o,m,parent])=>o.name==='RebornUpdateNotice'&&m==='SetParent'&&parent===gameCanvas));
+assert(!calls.slice(callStart).some(([o,m])=>o===gameCanvas&&['Destroy','SetParent','DontDestroyOnLoad'].includes(m)));
+assert(!calls.slice(callStart).some(([o,m])=>m==='DontDestroyOnLoad'),'scene-owned fallback must not detach a game hierarchy');
+assert(calls.slice(callStart).some(([o,m,text])=>m==='set_text'&&String(text).includes('APK 38 · patch 37')));
