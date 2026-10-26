@@ -5,7 +5,7 @@ assert(!c.deckSearchMatches('Archer','mage'));assert(c.deckSearchMatches('Ｆｏ
 console.log('PASS: deck names filter by case-insensitive Unicode substring, strip rich text and reset on empty query');
 
 const setters=[];
-c.uiAdd=(go,type)=>({type,method:()=>({parameters:[{type:{class:{}}}]})});
+c.uiAdd=(go,type)=>({type,ref(){return {target:this,free(){}}},method:()=>({parameters:[{type:{class:{}}}]})});
 c.ucls=()=>({type:{object:{}},method:()=>({overload:()=>({invoke:()=>({font:true})})})});
 c.isNull=x=>x==null;c.Il2Cpp={string:x=>x};c.uiEnum=()=> 'MiddleLeft';c.enumBox=(_,v)=>v;c.rgba=(...values)=>values;
 c.call=(obj,name,value)=>{setters.push([obj,name,value]);if(name==='set_textComponent')assert.equal(value.type,'UnityEngine.UI.Text');};
@@ -16,3 +16,9 @@ assert(setters.some(([o,k,v])=>k==='set_alignment'&&v==='MiddleLeft'));
 assert(setters.some(([o,k,v])=>k==='set_supportRichText'&&v===false));
 assert(setters.some(([o,k,v])=>k==='set_lineType'&&v===0));
 console.log('PASS: actual search text/input constructors use the same legacy Unity family, visible font/color, centred single-line text and literal query text');
+
+let tick=1000;const gate=c.uiRetryGate(()=>tick);
+assert.equal(gate.allow(),false);tick+=499;assert.equal(gate.allow(),false);tick++;assert(gate.allow());gate.fail();
+assert(!gate.allow());tick+=1000;assert(gate.allow());gate.fail();tick+=1999;assert(!gate.allow());tick++;assert(gate.allow());gate.fail();tick+=100000;assert(!gate.allow());
+const reopened=c.uiRetryGate(()=>tick);assert(!reopened.allow());tick+=500;assert(reopened.allow());
+console.log('PASS: cold UI settles before creation, failures back off, retries stop at three and reopening recovers without process restart');

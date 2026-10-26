@@ -4258,9 +4258,13 @@ Il2Cpp.perform(() => {
     return hex;
   }
   function newWith(klass, ...args) {
-    const o = klass.alloc();
-    o.method(".ctor", args.length).invoke(...args);
-    return o;
+    const o = klass.alloc(), root = o.ref(false);
+    try {
+      o.method(".ctor", args.length).invoke(...args);
+      return o;
+    } finally {
+      root.free();
+    }
   }
   function isNull(o) {
     return !o || !o.handle || o.handle.isNull();
@@ -4594,26 +4598,36 @@ Il2Cpp.perform(() => {
     const record = rememberDeckTile(tile);
     if (record.container && record.label) return true;
     let container = null;
+    const roots = [];
+    const hold = (value) => {
+      if (!isNull(value)) roots.push(value.ref(false));
+      return value;
+    };
     try {
-      const nameText = tile.field("DeckNameText").value;
+      hold(tile);
+      const nameText = hold(tile.field("DeckNameText").value);
       if (isNull(nameText)) return false;
-      const parent = call(tile, "get_transform");
+      const ancestry = Array.from(nameText.class.hierarchy()).map((c) => c.type.name);
+      const isTmp = ancestry.includes("TMPro.TextMeshProUGUI") || ancestry.includes("TMPro.TMP_Text");
+      const isLegacy = ancestry.includes("UnityEngine.UI.Text");
+      if (!isTmp && !isLegacy) throw Error(`Unsupported deck-name renderer: ${nameText.class.type.name}`);
+      const parent = hold(call(tile, "get_transform"));
       if (isNull(parent)) return false;
       const rectType = ucls("UnityEngine.RectTransform");
       const gameObject = ucls("UnityEngine.GameObject");
       const layer = Number(call(call(parent, "get_gameObject"), "get_layer"));
       const makeUiObject = (name, parentTransform) => {
-        const go = newWith(
+        const go = hold(newWith(
           gameObject,
           Il2Cpp.string(name),
           Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [rectType.type.object])
-        );
+        ));
         call(go, "set_layer", layer);
         call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parentTransform, false);
         return go;
       };
-      const rectOf = (go) => go.method("GetComponent").overload("System.Type").invoke(rectType.type.object);
-      const addComponent = (go, type) => go.method("AddComponent").overload("System.Type").invoke(ucls(type).type.object);
+      const rectOf = (go) => hold(go.method("GetComponent").overload("System.Type").invoke(rectType.type.object));
+      const addComponent = (go, type) => hold(go.method("AddComponent").overload("System.Type").invoke(ucls(type).type.object));
       const stretch = (rect) => {
         call(rect, "set_anchorMin", vec2(0, 0));
         call(rect, "set_anchorMax", vec2(1, 1));
@@ -4622,7 +4636,7 @@ Il2Cpp.perform(() => {
       };
       container = makeUiObject("WinLossRatioContainer", parent);
       call(container, "SetActive", false);
-      const containerTransform = call(container, "get_transform");
+      const containerTransform = hold(call(container, "get_transform"));
       const containerRect = rectOf(container);
       call(containerRect, "set_anchorMin", vec2(1, 0));
       call(containerRect, "set_anchorMax", vec2(1, 0));
@@ -4634,15 +4648,11 @@ Il2Cpp.perform(() => {
       const backgroundImage = addComponent(background, "UnityEngine.UI.Image");
       call(backgroundImage, "set_color", rgba(0, 0, 0, 0.7));
       call(backgroundImage, "set_raycastTarget", false);
-      const ancestry = Array.from(nameText.class.hierarchy()).map((c) => c.type.name);
-      const isTmp = ancestry.includes("TMPro.TextMeshProUGUI") || ancestry.includes("TMPro.TMP_Text");
-      const isLegacy = ancestry.includes("UnityEngine.UI.Text");
-      if (!isTmp && !isLegacy) throw Error(`Unsupported deck-name renderer: ${nameText.class.type.name}`);
       const labelObject = makeUiObject("WinLossRatioLabel", containerTransform);
       stretch(rectOf(labelObject));
       const renderer = isTmp ? "TMPro.TextMeshProUGUI" : "UnityEngine.UI.Text";
       const label = addComponent(labelObject, renderer);
-      const font = call(nameText, "get_font");
+      const font = hold(call(nameText, "get_font"));
       if (isNull(font)) throw Error("DeckNameText has no font");
       call(label, "set_font", font);
       call(label, "set_fontSize", 16);
@@ -4683,6 +4693,8 @@ Il2Cpp.perform(() => {
       if (deckUiFailures <= 3 || deckUiFailures % 25 === 0)
         log(`stats UI: creation failed (${deckUiFailures}): ${detail}`);
       return false;
+    } finally {
+      for (const root of roots.reverse()) root.free();
     }
   }
   function updateDeckTileLabel(tile) {
@@ -6165,9 +6177,14 @@ Il2Cpp.perform(() => {
       Il2Cpp.string(name),
       Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [ucls("UnityEngine.RectTransform").type.object])
     );
-    call(go, "set_layer", Number(call(call(parent, "get_gameObject"), "get_layer")));
-    call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parent, false);
-    return go;
+    const root = go.ref(false);
+    try {
+      call(go, "set_layer", Number(call(call(parent, "get_gameObject"), "get_layer")));
+      call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parent, false);
+      return go;
+    } finally {
+      root.free();
+    }
   }
   function uiRect(go) {
     return uiComponent(go, "UnityEngine.RectTransform");
@@ -6224,34 +6241,43 @@ Il2Cpp.perform(() => {
   function uiFont() {
     if (uiFontHandle) return uiFontHandle.target;
     const objects = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("TMPro.TextMeshProUGUI").type.object);
-    let fallback = null;
-    for (let i = 0; i < objects.length; i++) {
-      const font = call(objects.get(i), "get_font");
-      if (isNull(font)) continue;
-      fallback = fallback || font;
-      try {
-        if (/Merriweather/i.test(String(call(font, "get_name")?.content))) {
-          fallback = font;
-          break;
+    const root = objects.object.ref(false);
+    try {
+      let fallback = null;
+      for (let i = 0; i < objects.length; i++) {
+        const font = call(objects.get(i), "get_font");
+        if (isNull(font)) continue;
+        fallback = fallback || font;
+        try {
+          if (/Merriweather/i.test(String(call(font, "get_name")?.content))) {
+            fallback = font;
+            break;
+          }
+        } catch (_) {
         }
-      } catch (_) {
       }
+      if (!fallback) fallback = ucls("TMPro.TMP_FontAsset").method("get_defaultFontAsset").invoke();
+      if (isNull(fallback)) throw Error("No loaded TMP font");
+      uiFontHandle = fallback.ref(false);
+      return fallback;
+    } finally {
+      root.free();
     }
-    if (!fallback) fallback = ucls("TMPro.TMP_FontAsset").method("get_defaultFontAsset").invoke();
-    if (isNull(fallback)) throw Error("No loaded TMP font");
-    uiFontHandle = fallback.ref(false);
-    return fallback;
   }
   function uiText(go, text, size = 20) {
-    const label = uiAdd(go, "TMPro.TextMeshProUGUI");
-    call(label, "set_font", uiFont());
-    call(label, "set_fontSize", size);
-    call(label, "set_enableAutoSizing", false);
-    call(label, "set_raycastTarget", false);
-    call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Center"));
-    call(label, "set_color", rgba(1, 1, 1, 1));
-    call(label, "set_text", Il2Cpp.string(text));
-    return label;
+    const label = uiAdd(go, "TMPro.TextMeshProUGUI"), root = label.ref(false);
+    try {
+      call(label, "set_font", uiFont());
+      call(label, "set_fontSize", size);
+      call(label, "set_enableAutoSizing", false);
+      call(label, "set_raycastTarget", false);
+      call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Center"));
+      call(label, "set_color", rgba(1, 1, 1, 1));
+      call(label, "set_text", Il2Cpp.string(text));
+      return label;
+    } finally {
+      root.free();
+    }
   }
   function uiButton(go, graphic, action) {
     const button = uiAdd(go, "UnityEngine.UI.Button");
@@ -6472,34 +6498,65 @@ Il2Cpp.perform(() => {
     }
     schedule(0, poll);
   }
+  function uiRetryGate(now, limit = 3) {
+    let first = null, next = 0, failures = 0;
+    return {
+      allow() {
+        if (first === null) {
+          first = now();
+          return false;
+        }
+        return failures < limit && now() - first >= 500 && now() >= next;
+      },
+      fail() {
+        failures++;
+        next = now() + Math.min(5e3, 1e3 * failures);
+      },
+      success() {
+        failures = 0;
+        next = 0;
+      },
+      count() {
+        return failures;
+      }
+    };
+  }
   function deckSearchText(go, text, size) {
-    const label = uiAdd(go, "UnityEngine.UI.Text");
-    const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
-    if (isNull(font)) throw Error("Deck search font unavailable");
-    call(label, "set_font", font);
-    call(label, "set_fontSize", size);
-    call(label, "set_resizeTextForBestFit", false);
-    call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleLeft"));
-    call(label, "set_supportRichText", false);
-    call(label, "set_color", rgba(1, 1, 1, 1));
-    call(label, "set_raycastTarget", false);
-    call(label, "set_text", Il2Cpp.string(text));
-    return label;
+    const label = uiAdd(go, "UnityEngine.UI.Text"), root = label.ref(false);
+    try {
+      const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
+      if (isNull(font)) throw Error("Deck search font unavailable");
+      call(label, "set_font", font);
+      call(label, "set_fontSize", size);
+      call(label, "set_resizeTextForBestFit", false);
+      call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleLeft"));
+      call(label, "set_supportRichText", false);
+      call(label, "set_color", rgba(1, 1, 1, 1));
+      call(label, "set_raycastTarget", false);
+      call(label, "set_text", Il2Cpp.string(text));
+      return label;
+    } finally {
+      root.free();
+    }
   }
   function deckSearchInput(go, label, image) {
-    const input = uiAdd(go, "UnityEngine.UI.InputField");
-    call(input, "set_textComponent", label);
-    call(input, "set_targetGraphic", image);
-    call(input, "set_lineType", enumBox(input.method("set_lineType", 1).parameters[0].type.class, 0));
-    call(input, "set_characterLimit", 100);
-    return input;
+    const input = uiAdd(go, "UnityEngine.UI.InputField"), root = input.ref(false);
+    try {
+      call(input, "set_textComponent", label);
+      call(input, "set_targetGraphic", image);
+      call(input, "set_lineType", enumBox(input.method("set_lineType", 1).parameters[0].type.class, 0));
+      call(input, "set_characterLimit", 100);
+      return input;
+    } finally {
+      root.free();
+    }
   }
   function deckSearchMatches(name, query) {
     const normalize = (value) => String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g, "").trim();
     return normalize(name).includes(normalize(query));
   }
   section("mobile deck picker search", () => {
-    const picker = cls(img, "DeckPickerWin"), tile = cls(img, "DeckTile"), records = /* @__PURE__ */ new Map();
+    const picker = cls(img, "DeckPickerWin"), tile = cls(img, "DeckTile"), records = /* @__PURE__ */ new Map(), retries = /* @__PURE__ */ new Map();
     const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
     let next = 0;
     function cleanup(record) {
@@ -6518,92 +6575,152 @@ Il2Cpp.perform(() => {
       for (const name of ["self", "input", "bar", "grid"]) record[name].free();
     }
     function install(self) {
-      const go = call(self, "get_gameObject"), parent = call(go, "get_transform"), grid = self.field("_grid").value;
-      let gridRect = call(grid, "get_transform");
+      const roots = [];
+      let bar = null, gridRect = null, offset = null, committed = false, phase = "root";
+      const hold = (value) => {
+        if (!isNull(value)) roots.push(value.ref(false));
+        return value;
+      };
+      const create = (...args) => hold(uiNew(...args));
       try {
-        const scroll = grid.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.UI.ScrollRect").type.object);
-        if (!isNull(scroll)) {
-          const viewport2 = call(scroll, "get_viewport");
-          if (!isNull(viewport2)) gridRect = viewport2;
+        hold(self);
+        const go = hold(call(self, "get_gameObject")), parent = hold(call(go, "get_transform")), grid = hold(self.field("_grid").value);
+        if (isNull(grid)) throw Error("Deck grid not initialized");
+        gridRect = hold(call(grid, "get_transform"));
+        try {
+          const scroll = grid.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.UI.ScrollRect").type.object);
+          if (!isNull(scroll)) {
+            const viewport2 = call(scroll, "get_viewport");
+            if (!isNull(viewport2)) gridRect = hold(viewport2);
+          }
+        } catch (_) {
         }
-      } catch (_) {
+        const old = call(gridRect, "get_offsetMax");
+        offset = { x: Number(old.field("x").value), y: Number(old.field("y").value) };
+        const stale = call(parent, "Find", Il2Cpp.string("RebornDeckSearch"));
+        if (!isNull(stale)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(stale, "get_gameObject"));
+        phase = "create bar";
+        bar = create("RebornDeckSearch", parent);
+        call(bar, "SetActive", false);
+        uiPlace(bar, 0.5, 1, 0.5, 1, 0, -6, 760, 68);
+        const image = hold(uiAdd(bar, "UnityEngine.UI.Image"));
+        call(image, "set_color", rgba(0.08, 0.08, 0.08, 0.96));
+        loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/input-frame", image, () => {
+          call(image, "set_type", enumBox(image.method("set_type", 1).parameters[0].type.class, 1));
+        });
+        const viewport = create("TextViewport", call(bar, "get_transform"));
+        uiStretch(uiRect(viewport));
+        call(uiRect(viewport), "set_offsetMin", vec2(18, 6));
+        call(uiRect(viewport), "set_offsetMax", vec2(-96, -6));
+        const textGO = create("Text", call(viewport, "get_transform"));
+        uiStretch(uiRect(textGO));
+        phase = "text/input";
+        const label = hold(deckSearchText(textGO, "", 32)), input = hold(deckSearchInput(bar, label, image));
+        const placeholderGO = create("Placeholder", call(viewport, "get_transform"));
+        uiStretch(uiRect(placeholderGO));
+        const labels = { en_us: "Search decks\u2026", ru_ru: "\u041F\u043E\u0438\u0441\u043A \u043A\u043E\u043B\u043E\u0434\u2026", de_de: "Decks suchen\u2026", es_es: "Buscar mazos\u2026", es_mx: "Buscar mazos\u2026", fr_fr: "Rechercher un deck\u2026", it_it: "Cerca mazzi\u2026", pl_pl: "Szukaj talii\u2026", pt_br: "Buscar decks\u2026", tr_tr: "Deste ara\u2026" };
+        phase = "placeholder";
+        const hint = hold(deckSearchText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30));
+        call(hint, "set_color", rgba(0.65, 0.65, 0.65, 1));
+        call(input, "set_placeholder", hint);
+        phase = "clear button";
+        const clear = uiLabeledButton("Clear", call(bar, "get_transform"), "X", -8, -8, 100, () => {
+          call(input, "set_text", Il2Cpp.string(""));
+        });
+        uiPlace(clear, 1, 0.5, 1, 0.5, -8, 0, 76, 56);
+        const clearText = call(call(clear, "get_transform"), "Find", Il2Cpp.string("Label"));
+        if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_fontSize", 32);
+        loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon", uiComponent(clear, "UnityEngine.UI.Image"), () => {
+          if (!isNull(clearText)) call(call(clearText, "get_gameObject"), "SetActive", false);
+        });
+        call(gridRect, "set_offsetMax", vec2(offset.x, offset.y - 82));
+        call(bar, "SetActive", true);
+        const record = { self: self.ref(false), input: input.ref(false), bar: bar.ref(false), grid: gridRect.ref(false), offset, hidden: /* @__PURE__ */ new Map() };
+        committed = true;
+        return record;
+      } catch (error) {
+        throw Error(`${phase}: ${error}`);
+      } finally {
+        if (!committed) {
+          if (offset && gridRect) try {
+            call(gridRect, "set_offsetMax", vec2(offset.x, offset.y));
+          } catch (_) {
+          }
+          if (bar) try {
+            ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(bar);
+          } catch (_) {
+          }
+        }
+        for (const root of roots.reverse()) root.free();
       }
-      const old = call(gridRect, "get_offsetMax"), offset = { x: Number(old.field("x").value), y: Number(old.field("y").value) };
-      const stale = call(parent, "Find", Il2Cpp.string("RebornDeckSearch"));
-      if (!isNull(stale)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(stale, "get_gameObject"));
-      const bar = uiNew("RebornDeckSearch", parent);
-      uiPlace(bar, 0.5, 1, 0.5, 1, 0, -6, 760, 68);
-      const image = uiAdd(bar, "UnityEngine.UI.Image");
-      call(image, "set_color", rgba(0.08, 0.08, 0.08, 0.96));
-      loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/input-frame", image, () => {
-        call(image, "set_type", enumBox(image.method("set_type", 1).parameters[0].type.class, 1));
-      });
-      const viewport = uiNew("TextViewport", call(bar, "get_transform"));
-      uiStretch(uiRect(viewport));
-      call(uiRect(viewport), "set_offsetMin", vec2(18, 6));
-      call(uiRect(viewport), "set_offsetMax", vec2(-96, -6));
-      const textGO = uiNew("Text", call(viewport, "get_transform"));
-      uiStretch(uiRect(textGO));
-      const label = deckSearchText(textGO, "", 32), input = deckSearchInput(bar, label, image);
-      const placeholderGO = uiNew("Placeholder", call(viewport, "get_transform"));
-      uiStretch(uiRect(placeholderGO));
-      const labels = { en_us: "Search decks\u2026", ru_ru: "\u041F\u043E\u0438\u0441\u043A \u043A\u043E\u043B\u043E\u0434\u2026", de_de: "Decks suchen\u2026", es_es: "Buscar mazos\u2026", es_mx: "Buscar mazos\u2026", fr_fr: "Rechercher un deck\u2026", it_it: "Cerca mazzi\u2026", pl_pl: "Szukaj talii\u2026", pt_br: "Buscar decks\u2026", tr_tr: "Deste ara\u2026" };
-      const hint = deckSearchText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30);
-      call(hint, "set_color", rgba(0.65, 0.65, 0.65, 1));
-      call(input, "set_placeholder", hint);
-      const clear = uiLabeledButton("Clear", call(bar, "get_transform"), "X", -8, -8, 100, () => {
-        call(input, "set_text", Il2Cpp.string(""));
-      });
-      uiPlace(clear, 1, 0.5, 1, 0.5, -8, 0, 76, 56);
-      const clearText = call(call(clear, "get_transform"), "Find", Il2Cpp.string("Label"));
-      if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_fontSize", 32);
-      loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon", uiComponent(clear, "UnityEngine.UI.Image"), () => {
-        if (!isNull(clearText)) call(call(clearText, "get_gameObject"), "SetActive", false);
-      });
-      call(gridRect, "set_offsetMax", vec2(offset.x, offset.y - 82));
-      return { self: self.ref(false), input: input.ref(false), bar: bar.ref(false), grid: gridRect.ref(false), offset, hidden: /* @__PURE__ */ new Map() };
     }
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
       if (Date.now() < next) return;
       next = Date.now() + 250;
       schedule(0, () => {
         const live = /* @__PURE__ */ new Set();
+        let scanned = false;
         try {
-          const values = find.invoke(picker.type.object);
-          for (let i = 0; i < values.length; i++) {
-            const self = values.get(i), go = call(self, "get_gameObject");
-            if (!call(go, "get_activeInHierarchy")) continue;
-            const key = self.handle.toString();
-            live.add(key);
-            let record = records.get(key);
-            if (!record) {
-              record = install(self);
-              records.set(key, record);
-              log("deck search: installed");
-            }
-            const query = String(call(record.input.target, "get_text")?.content || "");
-            const tiles = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tile.type.object, true);
-            for (let j = 0; j < tiles.length; j++) {
-              const item = tiles.get(j), child = call(item, "get_gameObject"), id = child.handle.toString();
-              if (!call(child, "get_activeSelf") && !record.hidden.has(id)) continue;
-              const name = String(call(item.field("DeckNameText").value, "get_text")?.content || "");
-              const show = deckSearchMatches(name, query), hidden = record.hidden.get(id);
-              if (!show && !hidden) {
-                record.hidden.set(id, child.ref(false));
-                call(child, "SetActive", false);
-              } else if (show && hidden) {
-                call(child, "SetActive", true);
-                hidden.free();
-                record.hidden.delete(id);
+          const values = find.invoke(picker.type.object), arrayRoot = values.object.ref(false);
+          try {
+            for (let i = 0; i < values.length; i++) {
+              const self = values.get(i), go = call(self, "get_gameObject");
+              if (!call(go, "get_activeInHierarchy")) continue;
+              const key = self.handle.toString();
+              live.add(key);
+              let record = records.get(key);
+              if (!record) {
+                let gate = retries.get(key);
+                if (!gate) {
+                  gate = uiRetryGate(() => Date.now());
+                  retries.set(key, gate);
+                }
+                if (!gate.allow()) continue;
+                try {
+                  record = install(self);
+                  records.set(key, record);
+                  gate.success();
+                  log("deck search: installed");
+                } catch (error) {
+                  gate.fail();
+                  log(`deck search: initialization attempt ${gate.count()}/3: ${error}`);
+                  continue;
+                }
+              }
+              const query = String(call(record.input.target, "get_text")?.content || "");
+              const tiles = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tile.type.object, true), tilesRoot = tiles.object.ref(false);
+              try {
+                for (let j = 0; j < tiles.length; j++) {
+                  const item = tiles.get(j), child = call(item, "get_gameObject"), id = child.handle.toString();
+                  if (!call(child, "get_activeSelf") && !record.hidden.has(id)) continue;
+                  const name = String(call(item.field("DeckNameText").value, "get_text")?.content || "");
+                  const show = deckSearchMatches(name, query), hidden = record.hidden.get(id);
+                  if (!show && !hidden) {
+                    record.hidden.set(id, child.ref(false));
+                    call(child, "SetActive", false);
+                  } else if (show && hidden) {
+                    call(child, "SetActive", true);
+                    hidden.free();
+                    record.hidden.delete(id);
+                  }
+                }
+              } finally {
+                tilesRoot.free();
               }
             }
+            scanned = true;
+          } finally {
+            arrayRoot.free();
           }
         } catch (error) {
           log(`deck search: ${error}`);
         }
-        for (const [key, record] of records) if (!live.has(key)) {
-          cleanup(record);
-          records.delete(key);
+        if (scanned) {
+          for (const [key, record] of records) if (!live.has(key)) {
+            cleanup(record);
+            records.delete(key);
+          }
+          for (const key of retries.keys()) if (!live.has(key)) retries.delete(key);
         }
       });
     } });
