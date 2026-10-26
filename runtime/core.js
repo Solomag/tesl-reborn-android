@@ -6030,8 +6030,8 @@ Il2Cpp.perform(() => {
       try {
         const self = job.ref.target;
         self.field(state.name).value = -1;
-        self.field(current.name).value = null;
-        self.field(operation.name).value = null;
+        self.field(current.name).value = ptr(0);
+        self.field(operation.name).value = ptr(0);
       } catch (_) {
       }
       job.ref.free();
@@ -6084,7 +6084,7 @@ Il2Cpp.perform(() => {
         const self = new Il2Cpp.Object(ret), path = String(self.field("imageUrl").value?.content || "");
         if (!rebornStoreImagePath(path)) return;
         self.field(state.name).value = -1;
-        self.field(current.name).value = null;
+        self.field(current.name).value = ptr(0);
         if (jobs.size >= 64) {
           report("store-busy", path);
           return;
@@ -6453,36 +6453,46 @@ Il2Cpp.perform(() => {
     }
     function install(self) {
       const go = call(self, "get_gameObject"), parent = call(go, "get_transform"), grid = self.field("_grid").value;
-      const gridRect = call(grid, "get_transform"), old = call(gridRect, "get_offsetMax"), offset = { x: Number(old.field("x").value), y: Number(old.field("y").value) };
+      let gridRect = call(grid, "get_transform");
+      try {
+        const scroll = grid.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.UI.ScrollRect").type.object);
+        if (!isNull(scroll)) {
+          const viewport = call(scroll, "get_viewport");
+          if (!isNull(viewport)) gridRect = viewport;
+        }
+      } catch (_) {
+      }
+      const old = call(gridRect, "get_offsetMax"), offset = { x: Number(old.field("x").value), y: Number(old.field("y").value) };
       const stale = call(parent, "Find", Il2Cpp.string("RebornDeckSearch"));
       if (!isNull(stale)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(stale, "get_gameObject"));
       const bar = uiNew("RebornDeckSearch", parent);
-      uiPlace(bar, 0.5, 1, 0.5, 1, 0, -10, 420, 52);
+      uiPlace(bar, 0.5, 1, 0.5, 1, 0, -6, 760, 88);
       const image = uiAdd(bar, "UnityEngine.UI.Image");
       call(image, "set_color", rgba(0.08, 0.08, 0.08, 0.96));
       const textGO = uiNew("Text", call(bar, "get_transform"));
       uiStretch(uiRect(textGO));
-      call(uiRect(textGO), "set_offsetMin", vec2(12, 4));
-      call(uiRect(textGO), "set_offsetMax", vec2(-62, -4));
-      const label = uiText(textGO, "", 22), input = uiAdd(bar, "TMPro.TMP_InputField");
+      call(uiRect(textGO), "set_offsetMin", vec2(18, 8));
+      call(uiRect(textGO), "set_offsetMax", vec2(-116, -8));
+      const label = uiText(textGO, "", 32), input = uiAdd(bar, "TMPro.TMP_InputField");
       call(input, "set_textViewport", uiRect(textGO));
       call(input, "set_textComponent", label);
       call(input, "set_targetGraphic", image);
       const placeholderGO = uiNew("Placeholder", call(bar, "get_transform"));
       uiStretch(uiRect(placeholderGO));
-      call(uiRect(placeholderGO), "set_offsetMin", vec2(12, 4));
-      call(uiRect(placeholderGO), "set_offsetMax", vec2(-62, -4));
+      call(uiRect(placeholderGO), "set_offsetMin", vec2(18, 8));
+      call(uiRect(placeholderGO), "set_offsetMax", vec2(-116, -8));
       const labels = { en_us: "Search decks\u2026", ru_ru: "\u041F\u043E\u0438\u0441\u043A \u043A\u043E\u043B\u043E\u0434\u2026", de_de: "Decks suchen\u2026", es_es: "Buscar mazos\u2026", es_mx: "Buscar mazos\u2026", fr_fr: "Rechercher un deck\u2026", it_it: "Cerca mazzi\u2026", pl_pl: "Szukaj talii\u2026", pt_br: "Buscar decks\u2026", tr_tr: "Deste ara\u2026" };
-      const hint = uiText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 20);
+      const hint = uiText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30);
       call(hint, "set_color", rgba(0.65, 0.65, 0.65, 1));
       call(input, "set_placeholder", hint);
       call(input, "set_characterLimit", 100);
-      const clear = uiLabeledButton("Clear", call(bar, "get_transform"), "\xD7", -4, -4, 46, () => {
+      const clear = uiLabeledButton("Clear", call(bar, "get_transform"), "X", -8, -8, 100, () => {
         call(input, "set_text", Il2Cpp.string(""));
       });
-      uiPlace(clear, 1, 0.5, 1, 0.5, -4, 0, 46, 44);
-      const min = call(gridRect, "get_anchorMin"), max = call(gridRect, "get_anchorMax");
-      if (Number(min.field("y").value) !== Number(max.field("y").value)) call(gridRect, "set_offsetMax", vec2(Number(old.field("x").value), Number(old.field("y").value) - 72));
+      uiPlace(clear, 1, 0.5, 1, 0.5, -8, 0, 100, 72);
+      const clearText = call(call(clear, "get_transform"), "Find", Il2Cpp.string("Label"));
+      if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_fontSize", 32);
+      call(gridRect, "set_offsetMax", vec2(offset.x, offset.y - 106));
       return { self: self.ref(false), input: input.ref(false), bar: bar.ref(false), grid: gridRect.ref(false), offset, hidden: /* @__PURE__ */ new Map() };
     }
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
@@ -6530,17 +6540,58 @@ Il2Cpp.perform(() => {
       });
     } });
   });
+  function matchingFriendsPose(node) {
+    const result = {};
+    for (const name of ["anchorMin", "anchorMax", "pivot", "anchoredPosition", "sizeDelta"]) {
+      const value = call(node, "get_" + name);
+      result[name] = { x: Number(value.field("x").value), y: Number(value.field("y").value) };
+    }
+    return result;
+  }
   section("friends while matchmaking", () => {
-    const seeking = cls(img, "MatchSeekingWin"), friends = cls(img, "FriendsWin");
-    const records = /* @__PURE__ */ new Map();
+    const seeking = cls(img, "MatchSeekingWin"), friends = cls(img, "FriendsWin"), records = /* @__PURE__ */ new Map();
+    const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
     function restore(record) {
+      for (const item of record.items) {
+        try {
+          const node = call(item.ref.target, "get_transform");
+          node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(item.parent.target, true);
+          call(node, "SetSiblingIndex", item.sibling);
+          if (item.pose) for (const name of Object.keys(item.pose)) call(node, "set_" + name, vec2(item.pose[name].x, item.pose[name].y));
+          if (item.button) {
+            call(item.button.target, "set_interactable", item.interactable);
+            item.button.free();
+          }
+          call(item.ref.target, "SetActive", item.active);
+        } catch (_) {
+        } finally {
+          item.ref.free();
+          item.parent.free();
+        }
+      }
+    }
+    function move(go, parent, button = null) {
+      const node = call(go, "get_transform"), original = call(node, "get_parent");
+      if (isNull(original)) throw Error("Friends UI has no parent");
+      const item = { ref: go.ref(false), parent: original.ref(false), sibling: Number(call(node, "GetSiblingIndex")), active: Boolean(call(go, "get_activeSelf")), pose: null, button: null, interactable: false };
       try {
-        const node = call(record.friend.target, "get_transform");
-        node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(record.parent.target, true);
-        call(node, "SetSiblingIndex", record.sibling);
+        item.pose = matchingFriendsPose(node);
       } catch (_) {
       }
-      for (const key of ["friend", "parent"]) record[key].free();
+      if (button) {
+        item.button = button.ref(false);
+        item.interactable = Boolean(call(button, "get_interactable"));
+        call(button, "set_interactable", true);
+      }
+      try {
+        node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parent, true);
+        call(node, "SetAsLastSibling");
+        call(go, "SetActive", true);
+      } catch (error) {
+        restore({ items: [item] });
+        throw error;
+      }
+      return item;
     }
     const show = seeking.method("Show");
     Interceptor.attach(show.virtualAddress, { onEnter(args) {
@@ -6548,39 +6599,49 @@ Il2Cpp.perform(() => {
     }, onLeave() {
       const ref = new Il2Cpp.Object(this.self).ref(false);
       schedule(0, () => {
+        let record = null, key = "";
         try {
-          const self = ref.target, go = call(self, "get_gameObject"), root = call(go, "get_transform");
-          if (!call(go, "get_activeInHierarchy") || !isNull(call(root, "Find", Il2Cpp.string("RebornMatchingFriends")))) return;
-          const labels = { ru_ru: "\u0414\u0440\u0443\u0437\u044C\u044F", de_de: "Freunde", es_es: "Amigos", es_mx: "Amigos", fr_fr: "Amis", it_it: "Amici", pl_pl: "Znajomi", pt_br: "Amigos", tr_tr: "Arkada\u015Flar" };
-          const button = uiLabeledButton("RebornMatchingFriends", root, labels[resourceLanguage()] || "Friends", -18, -18, 150, () => {
-            const key = go.handle.toString();
-            let record = records.get(key);
-            if (!record) {
-              const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(friends.type.object);
-              let chosen = null;
-              for (let i = 0; i < values.length; i++) {
-                const value = values.get(i);
-                if (call(call(value, "get_gameObject"), "get_activeInHierarchy")) {
-                  chosen = value;
-                  break;
-                }
+          const go = call(ref.target, "get_gameObject"), root = call(go, "get_transform");
+          key = go.handle.toString();
+          if (!call(go, "get_activeInHierarchy")) return;
+          if (records.has(key)) {
+            restore(records.get(key));
+            records.delete(key);
+          }
+          const old = call(root, "Find", Il2Cpp.string("RebornMatchingFriends"));
+          if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
+          let button = null, score = -1;
+          for (const name of ["MainMenuOverlayView", "MainMenuWin", "OverlayMenu"]) try {
+            const values = find.invoke(cls(img, name).type.object);
+            for (let i = 0; i < values.length; i++) {
+              const value = values.get(i).field("_friendsBtn").value;
+              if (isNull(value)) continue;
+              const owner = call(value, "get_gameObject"), rank = call(owner, "get_activeInHierarchy") ? 2 : call(owner, "get_activeSelf") ? 1 : 0;
+              if (rank > score) {
+                button = value;
+                score = rank;
               }
-              if (!chosen) {
-                log("matching friends: no active FriendsWin");
-                return;
-              }
-              const node = call(chosen, "get_transform"), parent = call(node, "get_parent");
-              if (isNull(parent)) return;
-              record = { friend: chosen.ref(false), parent: parent.ref(false), sibling: Number(call(node, "GetSiblingIndex")) };
-              records.set(key, record);
-              node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(root, "get_parent"), true);
-              call(node, "SetAsLastSibling");
             }
-            call(record.friend.target, "ToggleFriendsPanel");
-          });
-          uiPlace(button, 0, 0, 0, 0, 18, 18, 150, 52);
-          log("matching friends: installed");
+          } catch (_) {
+          }
+          if (!button) throw Error("Original _friendsBtn unavailable");
+          const windows = find.invoke(friends.type.object);
+          let friend = null;
+          for (let i = 0; i < windows.length; i++) {
+            const value = windows.get(i);
+            if (call(call(value, "get_gameObject"), "get_activeInHierarchy")) {
+              friend = value;
+              break;
+            }
+          }
+          if (!friend) throw Error("Active FriendsWin unavailable");
+          record = { items: [] };
+          record.items.push(move(call(friend, "get_gameObject"), call(root, "get_parent")));
+          record.items.push(move(call(button, "get_gameObject"), root, button));
+          records.set(key, record);
+          log("matching friends: original button enabled; native click handlers preserved");
         } catch (error) {
+          if (record) restore(record);
           log(`matching friends: ${error}`);
         } finally {
           ref.free();
@@ -6591,10 +6652,14 @@ Il2Cpp.perform(() => {
       const method = seeking.tryMethod(name, 0);
       if (!method || method.virtualAddress.isNull()) continue;
       Interceptor.attach(method.virtualAddress, { onEnter(args) {
-        const key = String(call(new Il2Cpp.Object(args[0]), "get_gameObject").handle), record = records.get(key);
-        if (record) {
-          records.delete(key);
-          schedule(0, () => restore(record));
+        try {
+          const key = call(new Il2Cpp.Object(args[0]), "get_gameObject").handle.toString(), record = records.get(key);
+          if (record) {
+            records.delete(key);
+            schedule(0, () => restore(record));
+          }
+        } catch (error) {
+          log(`matching friends restore: ${error}`);
         }
       } });
     }
@@ -8449,7 +8514,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     } catch (_) {
     }
     const revision = globalThis.TeslRebornUpdater?.current()?.revision;
-    return cachedPortCaption = `Reborn ${PLUGIN_VERSION.replace(/-beta$/, "")} \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
+    return cachedPortCaption = `Reborn ${PLUGIN_VERSION}
+Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
   }
   const noticeCanvasCalls = /* @__PURE__ */ new Map();
   function noticeCanvasProperty(canvas, name, value) {
@@ -8574,7 +8640,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let inheritedCanvas = false;
     let message = null, shownAt = 0, lastError = "";
-    let reportedCaption = "";
+    let reportedCaption = "", badgeBackground = null, gradientTexture = null, gradientSprite = null;
     function discard() {
       if (root) {
         try {
@@ -8583,6 +8649,11 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         }
         root.free();
       }
+      for (const asset of [gradientSprite, gradientTexture]) if (asset) try {
+        ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(asset);
+      } catch (_) {
+      }
+      gradientTexture = gradientSprite = badgeBackground = null;
       root = label = canvas = panel = badge = badgeText = null;
     }
     function ensure() {
@@ -8645,9 +8716,32 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         label = uiSystemText(text, "", 22);
         noticeTextLayout(label);
         badge = uiNew("PortVersion", call(go, "get_transform"));
-        badgeText = uiSystemText(badge, "", 24);
+        badgeBackground = uiAdd(badge, "UnityEngine.UI.Image");
+        call(badgeBackground, "set_raycastTarget", false);
+        call(badgeBackground, "set_color", rgba(0, 0, 0, 0.8));
+        try {
+          gradientTexture = ucls("UnityEngine.Texture2D").alloc();
+          gradientTexture.method(".ctor").overload("System.Int32", "System.Int32").invoke(420, 1);
+          for (let x = 0; x < 420; x++) {
+            const t = x / 419;
+            gradientTexture.method("SetPixel").overload("System.Int32", "System.Int32", "UnityEngine.Color").invoke(x, 0, rgba(0, 0, 0, Math.min(1, Math.min(t, 1 - t) * 3)));
+          }
+          gradientTexture.method("Apply").overload().invoke();
+          gradientSprite = ucls("UnityEngine.Sprite").method("Create").overload("UnityEngine.Texture2D", "UnityEngine.Rect", "UnityEngine.Vector2", "System.Single").invoke(gradientTexture, unityStruct("UnityEngine.Rect", { m_XMin: 0, m_YMin: 0, m_Width: 420, m_Height: 1 }), vec2(0.5, 0.5), 100);
+          call(badgeBackground, "set_sprite", gradientSprite);
+          call(badgeBackground, "set_color", rgba(1, 1, 1, 1));
+        } catch (error) {
+          log(`loading version: gradient fallback: ${error}`);
+        }
+        const badgeLabel = uiNew("RebornPluginVersion", call(badge, "get_transform"));
+        uiStretch(uiRect(badgeLabel));
+        badgeText = uiSystemText(badgeLabel, "", 30);
+        try {
+          call(badgeText, badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "set_richText" : "set_supportRichText", true);
+        } catch (_) {
+        }
         call(badgeText, "set_alignment", uiEnum(badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "TMPro.TextAlignmentOptions" : "UnityEngine.TextAnchor", badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "Center" : "MiddleCenter"));
-        call(badgeText, "set_color", rgba(1, 0.91, 0.68, 1));
+        call(badgeText, "set_color", rgba(1, 1, 1, 1));
         if (!inheritedCanvas) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
         call(panel, "SetActive", false);
       } catch (error) {
@@ -8688,11 +8782,11 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
           } catch (_) {
           }
           const badgeAnchor = locateSplashVersion();
-          uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(1100, Math.max(240, width)), 38);
+          uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(760, Math.max(240, width)), 88);
           const versionScreen = loadingVersionState();
           call(badge, "SetActive", versionScreen.visible);
           const caption = portVersionCaption();
-          call(badgeText, "set_text", Il2Cpp.string(caption));
+          call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android") + "</size>"));
           const signature = caption + ":" + versionScreen.visible + ":" + versionScreen.scene;
           if (signature !== reportedCaption) {
             reportedCaption = signature;

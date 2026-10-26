@@ -169,3 +169,5 @@ assert(versionPlacements.length);assert(versionPlacements.every(p=>p[1]===0.5&&p
 assert(r.startupVersionVisible('',false),'a missing first splash cannot hide the version mid-loading');
 assert(!r.startupVersionVisible('',true),'real menu readiness hides the version even when Scene.get_name is stripped');
 assert(!r.startupVersionVisible('Battle',false));
+
+assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('Reborn 1.3.1-beta\n')&&String(v).includes('Android')),'original Reborn version and Android version have separate lines');
