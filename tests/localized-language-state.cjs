@@ -44,7 +44,9 @@ const c={section:(_,f)=>f(),img:{classes:[{name:'LanguageSelectDropdown',tryMeth
  Interceptor:{attach:(address,h)=>hooks[address]=h},ucls:name=>name==='UnityEngine.UI.Dropdown'?{tryMethod:()=>({virtualAddress:{isNull:()=>false,toString:()=>"select"}})}:name==='UnityEngine.Application'?{method:()=>({invoke:value=>opened.push(value)})}:{tryMethod:()=>null},
  call:(o,name,...args)=>{if(name==='get_options'){if(!o.options)throw Error('component');return{};}if(name==='get_Count')return labels.length;if(name==='get_Item')return {text:labels[args[0]]};if(name==='get_text')return {content:o.text};},
  isNull:x=>x==null,resourceLanguage:()=>selected,schedule:(_,f)=>f(),Il2Cpp:{string:x=>x},log:value=>logs.push(value)};
-vm.createContext(c);vm.runInContext(labelCode,c);vm.runInContext(native,c);handler.implementation.call(self,0);assert.equal(original.length,1,'programmatic initialization is preserved');
+vm.createContext(c);vm.runInContext(labelCode,c);
+vm.runInContext(transformSync(hook.slice(hook.indexOf('  function languageSetupUri('),hook.indexOf('  function resourceSettingsOpen(')),{loader:'ts'}).code,c);
+vm.runInContext(native,c);handler.implementation.call(self,0);assert.equal(original.length,1,'programmatic initialization is preserved');
 hooks.select.onEnter();handler.implementation.call(self,0);hooks.select.onLeave();
 assert.equal(original.length,1,'user selection cannot run the logout coroutine');assert.equal(opened.length,1);assert(opened[0].includes('language=en_us&apply=1'));
 selected='en_us';hooks.select.onEnter();handler.implementation.call(self,1);hooks.select.onLeave();
@@ -57,6 +59,9 @@ assert.equal(opened.length,2,'selecting the active language must not restart the
 labels[1]='Unrecognized language';hooks.select.onEnter();handler.implementation.call(self,1);hooks.select.onLeave();
 assert.equal(opened[2],'teslreborn://resources?chooseLanguage=1');
 assert(logs.some(value=>value.includes('Unknown language label "Unrecognized language"')),'unknown menu labels must be recorded for diagnosis');
+c.persistentPath=()=>'/files';c.readTextFile=()=>'{"languageTransition":true}';
+labels[1]='Русский язык';selected='en_us';hooks.select.onEnter();handler.implementation.call(self,1);hooks.select.onLeave();
+assert.equal(opened.at(-1),'teslreborn://language?language=ru_ru&apply=1','only capable native APKs receive the black language handoff URI');
 console.log('PASS: device locale mismatch, actual enum IDs, settings/default getter, complete dictionary refresh and original language dropdown callback');
 
 const from=hook.indexOf('  function restoreLocalization('),to=hook.indexOf('  // ---------------------------------------------------------------------',from);

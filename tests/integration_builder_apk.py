@@ -269,7 +269,9 @@ def main():
                         for item in ET.parse(resource).getroot().iter("item")
                         if item.get("name") == item_name
                     ]
-                    assert sum(color in ("#171b22", "#ff171b22") for color in items) >= 2, (folder, items)
+                    assert sum(color in ("#171b22", "#ff171b22") for color in items) >= 1, (folder, items)
+                    assert sum(color in ("#000000", "#ff000000") for color in items) >= 2, (folder, items)
+                assert "org.teslreborn.setup.LanguageActivity" in text
 
                 ns = "{http://schemas.android.com/apk/res/android}"
                 application = ET.fromstring(text).find("application")

@@ -294,7 +294,7 @@ class BuilderResourcesTest(unittest.TestCase):
             )
             for qualifier in ("values", "values-v31"):
                 styles = E.parse(path.parent / "res" / qualifier / "tesl_reborn_windows.xml")
-                for name in ("TeslRebornSetup", "TeslRebornGame"):
+                for name in ("TeslRebornSetup", "TeslRebornGame", "TeslRebornTransition"):
                     alias = styles.find(f"style[@name='{name}']")
                     self.assertEqual(alias.get("parent"), "@style/" + name + "Base")
                     if qualifier == "values":
@@ -303,7 +303,11 @@ class BuilderResourcesTest(unittest.TestCase):
                     else:
                         style = alias
                         background = "android:windowSplashScreenBackground"
-                    self.assertEqual(style.find(f"item[@name='{background}']").text, "#171b22")
+                    self.assertEqual(style.find(f"item[@name='{background}']").text, "#171b22" if name == "TeslRebornSetup" else "#000000")
+            transition = next(a for a in activities if a.get(ANDROID + "name").endswith("LanguageActivity"))
+            self.assertEqual(transition.get(ANDROID + "screenOrientation"), "sensorLandscape")
+            self.assertEqual(transition.get(ANDROID + "theme"), "@style/TeslRebornTransition")
+            self.assertEqual(transition.find("intent-filter/data").get(ANDROID + "host"), "language")
             gate = next(
                 a
                 for a in activities

@@ -19,7 +19,7 @@ function fixture() {
       log:()=>{},evaluate:value=>loaded.push(value)}, {meta:meta(35),code:code(35)});
     updater.boot();updater.ready();
     const notices=context.createUpdateNotices(updater,{readNotice:()=>journal,readStatus:()=>disk.status,
-      writeNotice:value=>journal=structuredClone(value),emit:(kind,revision)=>events.push({kind,revision})});
+      writeNotice:value=>journal=structuredClone(value),emit:(kind,revision,onShown)=>{events.push({kind,revision});onShown?.();}});
     return {updater,notices};
   }
   return {disk,cores,events,loaded,boot};
@@ -58,6 +58,10 @@ const context={};vm.createContext(context);vm.runInContext(noticeSource,context)
 const first=[];
 context.createUpdateNotices({current:()=>meta(36)}, {readNotice:()=>null,readStatus:()=>({previous:meta(35)}),writeNotice:()=>{},emit:kind=>first.push(kind)});
 assert.deepEqual(first,['applied']);
+let acknowledged=null,persisted=null;
+context.createUpdateNotices({current:()=>meta(36)}, {readNotice:()=>({revision:36}),readStatus:()=>({previous:meta(35)}),writeNotice:value=>persisted=value,emit:(kind,revision,onShown)=>acknowledged=onShown});
+assert.equal(persisted,null,'an old attempted notice must not count as displayed');
+acknowledged();assert.equal(persisted.shownRevision,36);
 for(const language of ['en_us','ru_ru','de_de','es_es','es_mx','fr_fr','it_it','pl_pl','pt_br','tr_tr'])
  for(const kind of ['downloading','restart','applied','error']) assert(context.updateNoticeText(kind,36,language).length>10);
 assert(context.updateNoticeText('applied',36,'ru_ru').includes('36'));
@@ -72,7 +76,8 @@ function object(name) {
  value.ref=()=>({target:value,free:()=>calls.push([value,'free'])});
  objects.push(value);return value;
 }
-const r={Date:{now:()=>clock},uiFont:()=>{if(!fontReady)throw Error('font not loaded');},
+const r={Date:class extends Date {static now(){return clock;}},PLUGIN_VERSION:'1.3.1-beta',
+ globalThis:null,persistentPath:()=>'/files',readTextFile:()=>'{"androidBuild":38}',writeTextFile:()=>true,
  ucls:name=>({name,type:{object:name},nested:n=>{assert.equal(name,'UnityEngine.UI.CanvasScaler');assert.equal(n,'ScaleMode');return {field:()=>({value:1})};},method:method=>({overload:()=>({invoke:value=>{calls.push([value,method]);if(method==='Destroy')value.dead=true;}})})}),
  newWith:(type,name)=>object(name),Il2Cpp:{string:value=>value,array:()=>[],corlib:{class:()=>({})}},
  uiAdd:(go,type)=>{assert(!/GraphicRaycaster|Button|EventTrigger/.test(type));return object(type);},
@@ -89,11 +94,14 @@ const r={Date:{now:()=>clock},uiFont:()=>{if(!fontReady)throw Error('font not lo
   if(method==='get_yMax')return screen.height-40;
  }};
 // Screen.safeArea is optional in older Unity builds: emulate its absence.
+r.globalThis=r;r.TeslRebornUpdater={current:()=>({revision:37})};
 vm.createContext(r);vm.runInContext(noticeSource,r);
+r.uiSystemText=(go,text)=>{if(!fontReady)throw Error('font not loaded');return object('label');};
 const banner=r.createUpdateBanner();banner.show('downloading',0);banner.tick();
-assert.equal(objects.length,0,'no partial UI objects before fonts are loaded');
+assert(objects.filter(o=>o.name==='RebornUpdateNotice').every(o=>o.dead),'partial UI is discarded if the built-in font is not available yet');
 banner.show('restart',0);fontReady=true;clock=9000;banner.tick();
-const root=objects.find(o=>o.name==='RebornUpdateNotice');assert(root.active);
+const root=objects.find(o=>o.name==='RebornUpdateNotice'&&!o.dead);assert(root.active);
+assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('APK 38 · patch 37')),'loaded version is persistently visible');
 assert(calls.some(([o,m,v])=>m==='set_blocksRaycasts'&&v===false));
 assert(calls.some(([o,m,v])=>m==='set_interactable'&&v===false));
 assert(calls.some(([o,m,v])=>m==='set_raycastTarget'&&v===false));
@@ -102,10 +110,13 @@ assert(calls.some(([o,m,v])=>m==='set_text'&&v.includes('скачано и пр�
 assert(!calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('Скачивается')),'completion replaces a queued stale download notice');
 clock=18000;screen={width:1440,height:3120};banner.tick();assert(root.active,'timeout starts when the UI is actually drawn');
 assert(placements.at(-1)[7]<=screen.width/2-32,'banner follows resolution changes');
-clock=19000;banner.tick();assert.equal(root.active,false);
-banner.show('applied',36);banner.tick();assert.equal(objects.filter(o=>o.name==='RebornUpdateNotice').length,1,'reuse the persistent canvas');
+clock=19000;banner.tick();assert.equal(root.active,true,'version footer remains visible after the notification disappears');
+assert.equal(objects.filter(o=>o.name==='Banner').at(-1).active,false);
+let displayed=0;banner.show('applied',36,()=>displayed++);banner.tick();assert.equal(displayed,0);
+clock+=250;banner.tick();assert.equal(displayed,1,'acknowledge only after a successful subsequent display tick');
+assert.equal(objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).length,1,'reuse the persistent canvas');
 root.dead=true;banner.show('downloading',0);banner.tick();
-assert.equal(objects.filter(o=>o.name==='RebornUpdateNotice').length,2,'unexpectedly destroyed UI can be rebuilt safely');
+assert.equal(objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).length,1,'unexpectedly destroyed UI can be rebuilt safely');
 assert(!calls.some(([o,m])=>/Quit|Pause|SetSelectedGameObject/.test(m)));
 
 // The installed-core adapter initiates the request during bootstrap, without

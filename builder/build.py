@@ -30,18 +30,15 @@ SETUP_ACTIVITY = "org.teslreborn.setup.ResourceActivity"
 def write_window_themes(decoded, game_parent):
     """Supply starting-window backgrounds before any Activity code can run."""
     common = {
-        "android:windowBackground": "#171b22",
-        "android:colorBackground": "#171b22",
-        "android:statusBarColor": "#171b22",
-        "android:navigationBarColor": "#171b22",
         "android:windowLightStatusBar": "false",
         "android:windowLightNavigationBar": "false",
     }
     for qualifier in ("values", "values-v31"):
         resources = ET.Element("resources")
-        for name, parent in (
-            ("TeslRebornSetup", "@android:style/Theme.Material.NoActionBar"),
-            ("TeslRebornGame", game_parent),
+        for name, parent, color in (
+            ("TeslRebornSetup", "@android:style/Theme.Material.NoActionBar", "#171b22"),
+            ("TeslRebornGame", game_parent, "#000000"),
+            ("TeslRebornTransition", "@android:style/Theme.Material.NoActionBar", "#000000"),
         ):
             if qualifier == "values":
                 base = ET.SubElement(
@@ -49,17 +46,21 @@ def write_window_themes(decoded, game_parent):
                 )
                 for key, value in common.items():
                     ET.SubElement(base, "item", {"name": key}).text = value
-                if name == "TeslRebornSetup":
+                for key in ("windowBackground", "colorBackground", "statusBarColor", "navigationBarColor"):
+                    ET.SubElement(base, "item", {"name": "android:" + key}).text = color
+                if name in ("TeslRebornSetup", "TeslRebornTransition"):
                     ET.SubElement(
                         base, "item", {"name": "android:windowAnimationStyle"}
                     ).text = "@null"
+                if name == "TeslRebornTransition":
+                    ET.SubElement(base, "item", {"name": "android:windowFullscreen"}).text = "true"
             style = ET.SubElement(
                 resources, "style", {"name": name, "parent": "@style/" + name + "Base"}
             )
             if qualifier == "values-v31":
                 ET.SubElement(
                     style, "item", {"name": "android:windowSplashScreenBackground"}
-                ).text = "#171b22"
+                ).text = color
         path = decoded / "res" / qualifier / "tesl_reborn_windows.xml"
         path.parent.mkdir(parents=True, exist_ok=True)
         ET.ElementTree(resources).write(path, encoding="utf-8", xml_declaration=True)
@@ -223,6 +224,19 @@ def patch_manifest(path):
         {ANDROID + "name": "android.hardware.camera", ANDROID + "required": "false"},
     )
     activity.set(ANDROID + "process", ":resources")
+    transition = ET.SubElement(application, "activity", {
+        ANDROID + "name": "org.teslreborn.setup.LanguageActivity",
+        ANDROID + "exported": "true",
+        ANDROID + "process": ":resources",
+        ANDROID + "theme": "@style/TeslRebornTransition",
+        ANDROID + "screenOrientation": game.get(ANDROID + "screenOrientation", "sensorLandscape"),
+        ANDROID + "configChanges": "keyboard|keyboardHidden|orientation|screenSize",
+    })
+    transition_link = ET.SubElement(transition, "intent-filter")
+    ET.SubElement(transition_link, "action", {ANDROID + "name": "android.intent.action.VIEW"})
+    for category in ("DEFAULT", "BROWSABLE"):
+        ET.SubElement(transition_link, "category", {ANDROID + "name": "android.intent.category." + category})
+    ET.SubElement(transition_link, "data", {ANDROID + "scheme": "teslreborn", ANDROID + "host": "language"})
     ET.SubElement(
         application,
         "activity",
@@ -665,6 +679,7 @@ def build(
         )
         setup = dict(
             schema=1,
+            androidBuild=38,
             obb=obb_meta,
             defaultLanguage=default_language,
             hookFeed=hook_feed(),
@@ -714,7 +729,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=34,
+                        androidBuild=38,
                     ),
                     indent=2,
                 ),

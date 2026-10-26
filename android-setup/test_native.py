@@ -66,6 +66,11 @@ public class InstallerTest {
     return;
   }
   if(a[2].equals("preview")) {
+    final long[] elapsed={0}; final int[] probes={0};
+    RestartWaiter.await(new int[]{100,200},1000,pid->{probes[0]++;return elapsed[0]<150;},ms->{elapsed[0]+=ms;},()->elapsed[0]);
+    if(elapsed[0]!=150||probes[0]<8)throw new AssertionError("Restart did not wait for every old process");
+    try {RestartWaiter.await(new int[]{100},0,pid->true,ms->{},()->0);throw new AssertionError("Restart timeout ignored");}
+    catch(IOException expected){}
     int[] fit=PreviewSize.fit(945,1900,1280,960,90);
     if(fit[0]!=945||fit[1]!=1260)throw new AssertionError("Stretched portrait preview");
     fit=PreviewSize.fit(2000,945,1280,960,180);
@@ -190,6 +195,7 @@ def main():
                 str(ROOT / "android-setup/src/org/teslreborn/setup/PreviewSize.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/CornerTaps.java"),
                 str(ROOT / "android-setup/src/org/teslreborn/setup/UpdateConfig.java"),
+                str(ROOT / "android-setup/src/org/teslreborn/setup/RestartWaiter.java"),
                 str(
                     ROOT / "android-setup/src/org/teslreborn/setup/ConnectionLink.java"
                 ),

@@ -14,7 +14,7 @@ import java.util.zip.ZipFile;
 import org.json.*;
 
 /** Runs before Unity: resources can be installed without a game login or ADB. */
-public final class ResourceActivity extends Activity {
+public class ResourceActivity extends Activity {
   private static final String[] CODES = {
     "system", "en_us", "de_de", "es_es", "es_mx", "fr_fr", "it_it", "pl_pl", "pt_br", "ru_ru",
     "tr_tr"
@@ -50,11 +50,17 @@ public final class ResourceActivity extends Activity {
   private File root;
 
   @Override
+  public SharedPreferences getPreferences(int mode) {
+    return getSharedPreferences(ResourceActivity.class.getName(), mode);
+  }
+
+  @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
-    getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xff171b22));
-    getWindow().setStatusBarColor(0xff171b22);
-    getWindow().setNavigationBarColor(0xff171b22);
+    int background = this instanceof LanguageActivity ? 0xff000000 : 0xff171b22;
+    getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(background));
+    getWindow().setStatusBarColor(background);
+    getWindow().setNavigationBarColor(background);
     View decor = getWindow().getDecorView();
     decor.setSystemUiVisibility(
         decor.getSystemUiVisibility()
@@ -66,12 +72,12 @@ public final class ResourceActivity extends Activity {
       File downloads = new File(getFilesDir(), "tesl-resource-downloads");
       PackInstaller.migrateDownloads(new File(getCacheDir(), "tesl-resource-downloads"), downloads);
       installer = new PackInstaller(root, downloads, this::message);
-      PackInstaller.writeJson(
-          new File(root, "tesl-reborn-setup.json"),
-          new JSONObject().put("api", 1).put("debugInput", "android-key-events"));
       try (InputStream in = getAssets().open("tesl-reborn/setup.json")) {
         setup = new JSONObject(new String(PackInstaller.read(in, 256 * 1024), "UTF-8"));
       }
+      PackInstaller.writeJson(new File(root, "tesl-reborn-setup.json"), new JSONObject()
+          .put("api", 1).put("debugInput", "android-key-events")
+          .put("androidBuild", setup.optInt("androidBuild", 38)).put("languageTransition", true));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       uiCode = getPreferences(0).getString("uiLanguage", "en_us");
@@ -79,8 +85,7 @@ public final class ResourceActivity extends Activity {
       // Route before inflating the setup UI. Normal launches never draw it
       // when the selected data is present; explicit Game data links still do.
       if (readyFor(selected()) && (getIntent().getData() == null || applyRequested())) {
-        if (applyRequested()) launchGame();
-        else startGame();
+        launchGame();
         return;
       }
       buildUi();
@@ -103,6 +108,7 @@ public final class ResourceActivity extends Activity {
   protected void onNewIntent(Intent intent) {
     super.onNewIntent(intent);
     setIntent(intent);
+    requestedLanguage = null;
     applyLink(intent);
     if (chooseLanguageRequested()) showLanguageChoice();
     else if (applyRequested() && ready()) launchGame();
@@ -112,7 +118,7 @@ public final class ResourceActivity extends Activity {
     Uri data = getIntent().getData();
     return data != null
         && "teslreborn".equals(data.getScheme())
-        && "resources".equals(data.getHost())
+        && ("resources".equals(data.getHost()) || "language".equals(data.getHost()))
         && "1".equals(data.getQueryParameter("chooseLanguage"));
   }
 
@@ -145,7 +151,7 @@ public final class ResourceActivity extends Activity {
     Uri data = getIntent().getData();
     return data != null
         && "teslreborn".equals(data.getScheme())
-        && "resources".equals(data.getHost())
+        && ("resources".equals(data.getHost()) || "language".equals(data.getHost()))
         && "1".equals(data.getQueryParameter("apply"));
   }
 
@@ -153,7 +159,7 @@ public final class ResourceActivity extends Activity {
     Uri data = intent.getData();
     if (data != null
         && "teslreborn".equals(data.getScheme())
-        && "resources".equals(data.getHost())) {
+        && ("resources".equals(data.getHost()) || "language".equals(data.getHost()))) {
       String url = data.getQueryParameter("url"), key = data.getQueryParameter("token");
       if (url != null && address != null) address.setText(url);
       if (key != null && token != null) {
@@ -183,7 +189,7 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 34\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 38\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -312,6 +318,7 @@ public final class ResourceActivity extends Activity {
 
           public void onItemSelected(
               android.widget.AdapterView<?> parent, View view, int position, long id) {
+            if (initialized && !busy) requestedLanguage = null;
             if (initialized)
               getPreferences(0)
                   .edit()
@@ -405,6 +412,7 @@ public final class ResourceActivity extends Activity {
   }
 
   private String selection() {
+    if (requestedLanguage != null && applyRequested()) return requestedLanguage;
     if (language != null) return CODES[language.getSelectedItemPosition()];
     if (requestedLanguage != null) return requestedLanguage;
     String value =
@@ -472,16 +480,28 @@ public final class ResourceActivity extends Activity {
     }
   }
 
-  private void stopGameProcess() {
+  private void stopGameProcess() throws Exception {
     ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
     java.util.List<ActivityManager.RunningAppProcessInfo> processes =
         manager.getRunningAppProcesses();
+    java.util.List<Integer> stopped = new ArrayList<>();
     if (processes != null)
       for (ActivityManager.RunningAppProcessInfo process : processes)
         if (getPackageName().equals(process.processName)
             && process.uid == android.os.Process.myUid()
-            && process.pid != android.os.Process.myPid())
+            && process.pid != android.os.Process.myPid()) {
+          stopped.add(process.pid);
           android.os.Process.killProcess(process.pid);
+        }
+    int[] pids = new int[stopped.size()];
+    for (int i = 0; i < pids.length; i++) pids[i] = stopped.get(i);
+    RestartWaiter.await(pids, 5000, pid -> {
+      try { android.system.Os.kill(pid, 0); return true; }
+      catch (android.system.ErrnoException e) {
+        if (e.errno == android.system.OsConstants.ESRCH) return false;
+        throw e;
+      }
+    }, Thread::sleep, android.os.SystemClock::elapsedRealtime);
   }
 
   private String tr(String value) {
@@ -570,7 +590,7 @@ public final class ResourceActivity extends Activity {
         });
   }
 
-  private void markMutation() {
+  private void markMutation() throws Exception {
     stopGameProcess();
     dataChanged = true;
   }
@@ -733,11 +753,23 @@ public final class ResourceActivity extends Activity {
       return;
     }
     final String code = selected();
+    final String chosen = selection();
     run(
         () -> {
           message("Checking installed resources…");
           installer.verifyInstalled("common");
           installer.verifyInstalled(code);
+          String previousLanguage = "";
+          try { previousLanguage = PackInstaller.json(new File(root, "tesl-reborn-language.json")).optString("language"); }
+          catch (Exception ignored) {}
+          if (dataChanged || !code.equals(previousLanguage)) stopGameProcess();
+          PackInstaller.writeJson(new File(root, "tesl-reborn-language.json"),
+              new JSONObject().put("language", code).put("system", chosen.equals("system")));
+          getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2)
+              .putString("language", chosen).commit();
+          PackInstaller.writeJson(new File(root, "tesl-reborn-handoff.json"), new JSONObject()
+              .put("androidBuild", 38).put("language", code).put("verified", true)
+              .put("at", System.currentTimeMillis()));
           runOnUiThread(() -> startGame());
         });
   }
@@ -745,26 +777,6 @@ public final class ResourceActivity extends Activity {
   private void startGame() {
     if (isDestroyed()) return;
     try {
-      String code = selected();
-      boolean system = selection().equals("system");
-      String previousLanguage = "";
-      try {
-        previousLanguage =
-            PackInstaller.json(new File(root, "tesl-reborn-language.json")).optString("language");
-      } catch (Exception ignored) {
-      }
-      PackInstaller.writeJson(
-          new File(root, "tesl-reborn-language.json"),
-          new JSONObject().put("language", code).put("system", system));
-      getPreferences(0)
-          .edit()
-          .putBoolean("setupComplete", true)
-          .putInt("setupVersion", 2)
-          .putString("language", selection())
-          .commit();
-      // Unity runs in the main process; the preparation screen lives in :resources.
-      // Always start a clean Unity process after resources or language changes.
-      if (dataChanged || !code.equals(previousLanguage)) stopGameProcess();
       Intent intent = new Intent(Intent.ACTION_MAIN);
       intent.addCategory(Intent.CATEGORY_LAUNCHER);
       intent.setClassName(getPackageName(), setup.getString("gameActivity"));

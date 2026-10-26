@@ -156,7 +156,16 @@ const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-  log(`attached, Unity ${Il2Cpp.unityVersion}, hook build android-27-data-archive`);
+  // BEGIN android-ui: resource-events
+  // Bounded startup trace, without request/response bodies or credentials.
+  const resourceTrace = [], resourceTraceStarted = Date.now();
+  function recordResourceEvent(kind, path, status = 0) {
+    if (Date.now() - resourceTraceStarted > 180000) return;
+    resourceTrace.push({ at: Date.now(), kind, path: String(path).replace(/[?#].*$/, "").slice(0,240), status });
+    if (resourceTrace.length > 128) resourceTrace.shift();
+  }
+  // END android-ui: resource-events
+  log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}`);
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -381,6 +390,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // first 80 responses. Bodies and headers are deliberately omitted here.
     if (ordinaryBudget || status === 0 || status >= 400 || /\/api\/account\//.test(uri))
       log(`<- ${state} ${diagnosticUri(uri)} ${info}`);
+    if (typeof recordResourceEvent === "function") recordResourceEvent("http-" + state, diagnosticUri(uri), status);
     if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
       let body = ""; try { body = String(call(response, "get_DataAsText")?.content ?? ""); } catch (_) {}
       const outcome = loginOutcome(status, body);
@@ -1437,6 +1447,15 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     return "";
   }
 
+  function languageSetupUri(query: string): string {
+    let host = "resources";
+    try {
+      const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "{}");
+      if (setup.languageTransition === true) host = "language";
+    } catch (_) {}
+    return "teslreborn://" + host + "?" + query;
+  }
+
   function resourceSettingsOpen(): boolean {
     try { return resourceSettingsWindow != null && Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")); }
     catch (_) { return false; }
@@ -1521,7 +1540,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       log(`resources: language control -> Game data (${target || "chooser"}); native handler suppressed`);
       schedule(0, () => {
         try {
-          ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources?" + link));
+          ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string(languageSetupUri(link)));
         } catch (error) {
           switching = false;
           log(`resources: could not open language setup: ${error}`);
@@ -2384,9 +2403,11 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
             this.replacement = Il2Cpp.string(next).object.ref(false);
             args[1] = this.replacement.target.handle; this.path = next;
           }
+          recordResourceEvent("asset-request", this.path);
         },
         onLeave(ret) {
           if (this.replacement) this.replacement.free();
+          recordResourceEvent(ret.isNull() ? "asset-null" : "asset-operation", this.path);
           const path = this.path ?? "";
           if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
           log(`LoadAssetFromPathAsync("${path}") -> ${ret.isNull() ? "NULL (not in the asset map)" : "ok"}`);
@@ -2667,10 +2688,10 @@ function uiComponent(go, type) {
         if(!code) throw Error("Unknown language label " + JSON.stringify(label.slice(0,120)));
         if(code===resourceLanguage()) return;
         log(`native language dropdown: selected ${code}`);
-        schedule(0,()=>ucls("UnityEngine.Application").method("OpenURL",1).invoke(Il2Cpp.string("teslreborn://resources?language="+code+"&apply=1")));
+        schedule(0,()=>ucls("UnityEngine.Application").method("OpenURL",1).invoke(Il2Cpp.string(languageSetupUri("language="+code+"&apply=1"))));
       } catch(error) {
         log(`native language dropdown: ${error}`);
-        schedule(0,()=>ucls("UnityEngine.Application").method("OpenURL",1).invoke(Il2Cpp.string("teslreborn://resources?chooseLanguage=1")));
+        schedule(0,()=>ucls("UnityEngine.Application").method("OpenURL",1).invoke(Il2Cpp.string(languageSetupUri("chooseLanguage=1"))));
       }
     };
     globalThis.__teslNativeLanguageCallback=true;
@@ -3929,10 +3950,12 @@ const chatWindows = new Map();
     let downloadStarted = false, lastStatus = "";
     const saved = io.readNotice() || {}, current = updater.current();
     const previous = io.readStatus()?.previous;
-    const priorRevision = Number(saved.revision || previous?.revision || 0);
+    // OTA 36 recorded an attempted notification before its UI was drawn.
+    // Only the new acknowledgement field proves it was actually displayed.
+    const priorRevision = Number(saved.shownRevision || previous?.revision || 0);
     if (Number.isSafeInteger(current?.revision) && current.revision > priorRevision) {
-      if (priorRevision > 0) io.emit("applied", current.revision);
-      io.writeNotice({ revision: current.revision });
+      if (priorRevision > 0) io.emit("applied", current.revision, () => io.writeNotice({ shownRevision: current.revision }));
+      else io.writeNotice({ shownRevision: current.revision });
     }
     function poll() {
       const status = updater.status();
@@ -4025,15 +4048,42 @@ const chatWindows = new Map();
     return (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
   }
 
+  let cachedPortCaption = "";
+  function portVersionCaption() {
+    if (cachedPortCaption) return cachedPortCaption;
+    let build = "legacy";
+    try {
+      const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "{}");
+      if (Number.isSafeInteger(setup.androidBuild)) build = String(setup.androidBuild);
+    } catch (_) {}
+    const revision = globalThis.TeslRebornUpdater?.current()?.revision;
+    return cachedPortCaption = `Reborn API ${PLUGIN_VERSION} · APK ${build} · patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
+  }
+
+  function uiSystemText(go, text, size) {
+    // Arial is built into Unity: notices/version do not depend on a language's
+    // TMP assets having already loaded successfully.
+    const font = ucls("UnityEngine.Resources").method("GetBuiltinResource")
+      .overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
+    if (isNull(font)) throw Error("Built-in notice font is unavailable");
+    const label = uiAdd(go, "UnityEngine.UI.Text");
+    call(label, "set_font", font); call(label, "set_fontSize", size);
+    call(label, "set_raycastTarget", false); call(label, "set_supportRichText", false);
+    call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleCenter"));
+    call(label, "set_color", rgba(1, 1, 1, 1)); call(label, "set_text", Il2Cpp.string(text));
+    return label;
+  }
+
   function createUpdateBanner() {
-    let root = null, label = null, canvas = null, panel = null;
+    let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let message = null, shownAt = 0, lastError = "";
+    let reportedCaption = "";
     function discard() {
       if (root) {
         try { ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(root.target); } catch (_) {}
         root.free();
       }
-      root = label = canvas = panel = null;
+      root = label = canvas = panel = badge = badgeText = null;
     }
     function ensure() {
       if (root) {
@@ -4042,7 +4092,6 @@ const chatWindows = new Map();
       }
       // The first frame may precede the game's fonts. Keep the message queued
       // and retry later instead of delaying authentication or failing startup.
-      uiFont();
       const go = newWith(ucls("UnityEngine.GameObject"), Il2Cpp.string("RebornUpdateNotice"),
         Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [ucls("UnityEngine.RectTransform").type.object]));
       root = go.ref(false);
@@ -4066,27 +4115,28 @@ const chatWindows = new Map();
         uiStretch(uiRect(text));
         call(uiRect(text), "set_offsetMin", vec2(16, 10));
         call(uiRect(text), "set_offsetMax", vec2(-16, -10));
-        label = uiText(text, "", 22);
-        call(label, "set_enableAutoSizing", true);
-        call(label, "set_fontSizeMin", 18);
-        call(label, "set_fontSizeMax", 22);
-        call(label, "set_enableWordWrapping", true);
+        label = uiSystemText(text, "", 22);
+        call(label, "set_resizeTextForBestFit", true);
+        call(label, "set_resizeTextMinSize", 18);
+        call(label, "set_resizeTextMaxSize", 22);
+        badge = uiNew("PortVersion", call(go, "get_transform"));
+        badgeText = uiSystemText(badge, "", 16);
+        call(badgeText, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleRight"));
+        call(badgeText, "set_color", rgba(0.7, 0.7, 0.7, 1));
         ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
-        call(go, "SetActive", false);
+        call(panel, "SetActive", false);
         // No GraphicRaycaster, event handlers or buttons: all taps pass through.
       } catch (error) { discard(); throw error; }
     }
     return {
-      show(kind, revision) {
-        message = { kind, revision, duration: kind === "restart" ? 10000 : 6000 };
+      show(kind, revision, onShown) {
+        message = { kind, revision, onShown, duration: kind === "restart" ? 10000 : 6000 };
         shownAt = 0;
       },
       tick() {
-        if (!message) return;
-        if (shownAt && Date.now() - shownAt >= message.duration) {
-          try { if (root) call(root.target, "SetActive", false); } catch (_) { discard(); }
+        if (message && shownAt && Date.now() - shownAt >= message.duration) {
+          try { if (panel) call(panel, "SetActive", false); } catch (_) { discard(); }
           message = null;
-          return;
         }
         try {
           ensure();
@@ -4097,14 +4147,26 @@ const chatWindows = new Map();
             const safe = ucls("UnityEngine.Screen").method("get_safeArea", 0).invoke();
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {}
+          uiPlace(badge, 1, 0, 1, 0, -16, 10, Math.min(800, Math.max(240, width)), 26);
+          const caption = portVersionCaption();
+          call(badgeText, "set_text", Il2Cpp.string(caption));
+          if (caption !== reportedCaption) {
+            reportedCaption = caption;
+            try { writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ version: caption, visible: true, at: new Date().toISOString() })); } catch (_) {}
+          }
+          if (!message) { lastError = ""; return; }
           uiPlace(panel, 0.5, 1, 0.5, 1, 0, -top, Math.max(240, width), 92);
           call(label, "set_text", Il2Cpp.string(updateNoticeText(message.kind, message.revision, resourceLanguage())));
-          call(root.target, "SetActive", true);
+          call(panel, "SetActive", true);
           if (!shownAt) shownAt = Date.now();
+          else if (message.onShown) { const acknowledge = message.onShown; message.onShown = null; acknowledge(); }
           lastError = "";
         } catch (error) {
           const detail = String(error);
-          if (detail !== lastError) { log(`update notice: ${detail}`); lastError = detail; }
+          if (detail !== lastError) {
+            log(`update notice: ${detail}`); lastError = detail;
+            try { writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ error: detail.slice(0,300), at: new Date().toISOString() })); } catch (_) {}
+          }
         }
       }
     };
@@ -4120,7 +4182,7 @@ const chatWindows = new Map();
       writeNotice: value => {
         try { if (writeTextFile(noticeFile + ".part", JSON.stringify(value))) atomicRename(noticeFile + ".part", noticeFile); } catch (_) {}
       },
-      emit: (kind, revision) => banner.show(kind, revision)
+      emit: (kind, revision, onShown) => banner.show(kind, revision, onShown)
     });
     let nextPoll = 0, queued = false;
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
@@ -4138,6 +4200,43 @@ const chatWindows = new Map();
     schedule(1000, () => notices.check((url, callback) => httpGet(url, false, callback, true)));
   }
   // END android-ui: update-notices
+
+  // BEGIN android-ui: resource-diagnostics
+  section("bounded startup resource diagnostics", () => {
+    let next = 0, queued = false;
+    Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+      onLeave() {
+        const now = Date.now();
+        if (queued || now < next || now - resourceTraceStarted > 180000) return;
+        next = now + 5000; queued = true;
+        schedule(0, () => {
+          queued = false;
+          const report:any = {at:new Date().toISOString(),language:resourceLanguage(),
+            patch:globalThis.TeslRebornUpdater?.current()?.revision,elapsedMs:Date.now()-resourceTraceStarted,
+            events:resourceTrace.slice(),bundles:[]};
+          try {
+            const manager = cls(img,"AssetBundles.AssetBundleManager");
+            for (const field of manager.fields.filter(f=>f.isStatic && /load|bundle|error/i.test(f.name) && /Dictionary/.test(f.type.name))) {
+              const item:any = {name:field.name,type:field.type.name};
+              try {
+                const dictionary = field.value;
+                item.count = Number(call(dictionary,"get_Count"));
+                const iterator = call(call(dictionary,"get_Keys"),"GetEnumerator");
+                item.keys=[];
+                try { while(item.keys.length<12 && call(iterator,"MoveNext")) {
+                  const key = call(iterator,"get_Current");
+                  if(typeof key?.content === "string") item.keys.push(key.content.replace(/[?#].*$/,"").slice(0,160));
+                }} finally { try { call(iterator,"Dispose"); } catch(_){} }
+              } catch(error) { item.error=String(error).slice(0,120); }
+              report.bundles.push(item);
+            }
+          } catch(error) { report.error=String(error).slice(0,160); }
+          writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`,JSON.stringify(report));
+        });
+      }
+    });
+  });
+  // END android-ui: resource-diagnostics
 
   section("Reborn Android updater and diagnostics", () => {
     const uriClass = ucls("System.Uri");

@@ -22,7 +22,8 @@ public final class LaunchActivity extends Activity {
       if (root == null) throw new java.io.IOException("App storage is unavailable");
       PackInstaller.writeJson(
           new File(root, "tesl-reborn-setup.json"),
-          new JSONObject().put("api", 1).put("debugInput", "android-key-events"));
+          new JSONObject().put("api", 1).put("debugInput", "android-key-events")
+              .put("androidBuild", setup.optInt("androidBuild", 38)).put("languageTransition", true));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       JSONObject choice = PackInstaller.json(new File(root, "tesl-reborn-language.json"));
       String language = choice.getString("language");
