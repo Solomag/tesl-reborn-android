@@ -122,7 +122,7 @@ def patch_manifest(path):
             ANDROID + "name": SETUP_ACTIVITY,
             ANDROID + "exported": "true",
             ANDROID + "launchMode": "singleTop",
-            ANDROID + "theme": "@android:style/Theme.Material.Light.NoActionBar",
+            ANDROID + "theme": "@android:style/Theme.Material.NoActionBar",
             ANDROID + "label": "TESL Reborn",
             ANDROID + "configChanges": "keyboard|keyboardHidden|orientation|screenSize",
         },
@@ -169,7 +169,7 @@ def patch_manifest(path):
             ANDROID + "hardwareAccelerated": "true",
             ANDROID + "exported": "false",
             ANDROID + "process": ":resources",
-            ANDROID + "theme": "@android:style/Theme.Material.Light.NoActionBar",
+            ANDROID + "theme": "@android:style/Theme.Material.NoActionBar",
         },
     )
     tree.write(path, encoding="utf-8", xml_declaration=True)
@@ -652,7 +652,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=31,
+                        androidBuild=33,
                     ),
                     indent=2,
                 ),

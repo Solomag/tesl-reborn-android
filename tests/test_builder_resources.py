@@ -284,6 +284,11 @@ class BuilderResourcesTest(unittest.TestCase):
                 if a.get(ANDROID + "name").endswith("ScanActivity")
             )
             self.assertEqual(scanner.get(ANDROID + "exported"), "false")
+            for activity in (setup_activity, scanner):
+                self.assertEqual(
+                    activity.get(ANDROID + "theme"),
+                    "@android:style/Theme.Material.NoActionBar",
+                )
             gate = next(
                 a
                 for a in activities

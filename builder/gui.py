@@ -55,6 +55,72 @@ def configure_ui_font(window):
     window.option_add("*TCombobox*Listbox.font", "TkTextFont")
 
 
+def configure_dark_theme(window):
+    """Use the same palette on Windows/Linux, independent of OS light mode."""
+    bg, panel, field = "#171b22", "#202630", "#262e3a"
+    text, muted, accent = "#e8edf5", "#9daabd", "#345985"
+    style = ttk.Style(window)
+    if "clam" in style.theme_names():
+        style.theme_use("clam")
+    window.configure(background=bg)
+    window.option_add("*background", bg)
+    window.option_add("*foreground", text)
+    window.option_add("*Text.background", field)
+    window.option_add("*Text.foreground", text)
+    window.option_add("*Text.insertBackground", text)
+    window.option_add("*Text.selectBackground", accent)
+    window.option_add("*TCombobox*Listbox.background", field)
+    window.option_add("*TCombobox*Listbox.foreground", text)
+    window.option_add("*TCombobox*Listbox.selectBackground", accent)
+    window.option_add("*TCombobox*Listbox.selectForeground", text)
+    style.configure(
+        ".",
+        background=bg,
+        foreground=text,
+        bordercolor="#414c5d",
+        lightcolor=panel,
+        darkcolor=bg,
+        focuscolor=accent,
+    )
+    style.map(".", foreground=[("disabled", muted)])
+    style.configure("TButton", background=panel, padding=(8, 5))
+    style.map(
+        "TButton",
+        background=[("pressed", accent), ("active", "#303d50")],
+        foreground=[("disabled", muted)],
+    )
+    for name in ("TCheckbutton", "TRadiobutton"):
+        style.configure(
+            name, background=bg, indicatorbackground=field, indicatorforeground=text
+        )
+        style.map(
+            name,
+            background=[("active", panel)],
+            indicatorbackground=[("selected", accent), ("disabled", panel)],
+            foreground=[("disabled", muted)],
+        )
+    for name in ("TEntry", "TCombobox", "TSpinbox"):
+        style.configure(
+            name,
+            fieldbackground=field,
+            background=field,
+            foreground=text,
+            insertcolor=text,
+            selectbackground=accent,
+            selectforeground=text,
+            arrowcolor=text,
+        )
+        style.map(
+            name,
+            fieldbackground=[("disabled", panel), ("readonly", field)],
+            foreground=[("disabled", muted), ("readonly", text)],
+            selectbackground=[("readonly", accent)],
+        )
+    style.configure("TLabelframe", background=bg, bordercolor="#414c5d")
+    style.configure("TLabelframe.Label", background=bg, foreground=text)
+    style.configure("TScrollbar", background=panel, troughcolor=bg, arrowcolor=text)
+
+
 def steam_games():
     libraries = []
     if sys.platform == "win32":
@@ -138,6 +204,7 @@ class BuilderWindow:
     def __init__(self, window):
         self.window = window
         configure_ui_font(window)
+        configure_dark_theme(window)
         self.window.title("TESL Reborn Builder")
         self.window.geometry("850x850")
         self.events = queue.Queue()

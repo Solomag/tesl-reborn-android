@@ -30,13 +30,13 @@ public final class GestureBridge {
     view.post(
         () -> {
           try {
-            boolean visible = true;
+            boolean visible = false;
             try {
               visible =
                   PackInstaller.json(
                           new File(
                               activity.getExternalFilesDir(null), "tesl-reborn-debug-marker.json"))
-                      .optBoolean("enabled", true);
+                      .optBoolean("enabled", false);
             } catch (Exception ignored) {
             }
             Marker old = MARKERS.get(activity);

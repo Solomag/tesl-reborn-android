@@ -52,6 +52,13 @@ public final class ResourceActivity extends Activity {
   @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    getWindow().setStatusBarColor(0xff171b22);
+    getWindow().setNavigationBarColor(0xff171b22);
+    View decor = getWindow().getDecorView();
+    decor.setSystemUiVisibility(
+        decor.getSystemUiVisibility()
+            & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            & ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
     try {
       root = getExternalFilesDir(null);
       if (root == null) throw new IOException("App storage is unavailable");
@@ -175,7 +182,7 @@ public final class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 31\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 33\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -252,7 +259,7 @@ public final class ResourceActivity extends Activity {
         "Scan QR code to download game data from your PC",
         () -> startActivityForResult(new Intent(this, ScanActivity.class), 10));
     connectionHint = new TextView(this);
-    connectionHint.setTextColor(0xff26703a);
+    connectionHint.setTextColor(0xff81c995);
     box.addView(connectionHint);
     download = button(box, "Choose language packs and download", () -> download());
     button(
@@ -363,11 +370,11 @@ public final class ResourceActivity extends Activity {
       box.addView(source);
       Switch marker = new Switch(this);
       marker.setText(tr("Show Ctrl+D test area"));
-      boolean visible = true;
+      boolean visible = false;
       try {
         visible =
             PackInstaller.json(new File(root, "tesl-reborn-debug-marker.json"))
-                .optBoolean("enabled", true);
+                .optBoolean("enabled", false);
       } catch (Exception ignored) {
       }
       marker.setChecked(visible);

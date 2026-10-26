@@ -122,7 +122,7 @@ def main():
             python_lib + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
         )
     subprocess.run(command, cwd=ROOT, check=True, env=environment)
-    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-31-check-ru.md"):
+    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-32-33-check-ru.md"):
         shutil.copyfile(ROOT / "docs" / name, ROOT / "dist" / name)
     shutil.copytree(notices, ROOT / "dist/third-party-notices", dirs_exist_ok=True)
     if not windows:
@@ -134,7 +134,7 @@ def main():
                 binary,
                 "builder-ru.md",
                 "THIRD_PARTY_BUILDER.md",
-                "android-31-check-ru.md",
+                "android-32-33-check-ru.md",
                 "third-party-notices",
             ):
                 package.add(ROOT / "dist" / name, arcname="TESL-Reborn-Builder/" + name)
