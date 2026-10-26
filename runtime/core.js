@@ -3649,32 +3649,7 @@ function loadOverrides() {
   }
   return o;
 }
-const BATTLE_CRASH_DIAGNOSTIC = true;
-const BATTLE_CRASH_KEEP_SECTIONS = /* @__PURE__ */ new Set([
-  "auth hooks (BNETPlatformAuthInstance)",
-  "auth hooks (GooglePlayAuthUtilities)",
-  "request language before send",
-  "config redirect",
-  "http caching",
-  "http header",
-  "http trace",
-  "error tracing: ErrorHandler.OnError",
-  "error tracing: websocket transport",
-  "error tracing: socket.io manager",
-  "bundles: desktop behaviour",
-  "storage modes from local versions.json",
-  "versions.json load",
-  "cache never expires",
-  "main thread scheduler",
-  "payload from the apk",
-  "auto login",
-  "Reborn Android updater and diagnostics"
-]);
 function section(name, fn) {
-  if (BATTLE_CRASH_DIAGNOSTIC && !BATTLE_CRASH_KEEP_SECTIONS.has(name)) {
-    log(`battle crash isolation: ${name} skipped`);
-    return;
-  }
   try {
     fn();
     log(`OK   ${name}`);
