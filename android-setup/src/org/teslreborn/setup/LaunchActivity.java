@@ -106,7 +106,8 @@ public final class LaunchActivity extends Activity {
       runOnUiThread(()->{if(!launched)startGame(status);});
     });
   }
-  private String tr(String key) {return UiStrings.text(ResourceActivity.systemLanguageCode(),key);}
+  // Keep the prelaunch update screen in English regardless of device/game locale.
+  private String tr(String key) {return key;}
 
   private void startGame(String status) {
     if(launched || isDestroyed())return;
