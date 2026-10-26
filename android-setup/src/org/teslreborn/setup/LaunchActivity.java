@@ -24,7 +24,7 @@ public final class LaunchActivity extends Activity {
       PackInstaller.writeJson(
           new File(root, "tesl-reborn-setup.json"),
           new JSONObject().put("api", 1).put("debugInput", "android-key-events")
-              .put("androidBuild", setup.optInt("androidBuild", 42)).put("languageTransition", true));
+              .put("androidBuild", setup.optInt("androidBuild", 44)).put("languageTransition", true));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       JSONObject choice = PackInstaller.json(new File(root, "tesl-reborn-language.json"));
       String language = choice.getString("language");

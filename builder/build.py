@@ -690,7 +690,7 @@ def build(
         )
         setup = dict(
             schema=1,
-            androidBuild=42,
+            androidBuild=44,
             obb=obb_meta,
             defaultLanguage=default_language,
             hookFeed=hook_feed(),
@@ -740,7 +740,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=42,
+                        androidBuild=44,
                     ),
                     indent=2,
                 ),

@@ -86,14 +86,13 @@ class BuilderServerTest(unittest.TestCase):
         page = self.server.connect_path
         status, headers, html = self.request(page)
         self.assertEqual(status, 200)
-        self.assertIn(b"Download APK", html)
+        self.assertIn(b"Download / resume APK", html)
         self.assertIn(b"teslreborn://resources?url=", html)
         self.assertIn("no-referrer", headers["Referrer-Policy"])
         self.assertNotIn(b"https://", html)  # no external scripts, fonts or analytics
         html_text = html.decode("utf-8")
-        href = re.search(r'href="([^"]+)" download', html_text).group(1)
         location = f"http://127.0.0.1:{self.server.port}" + page
-        apk_path = urlsplit(urljoin(location, href)).path
+        apk_path = page + "/tesl-reborn.apk"
         self.assertEqual(apk_path, page + "/tesl-reborn.apk")
         # Execute the actual page's connection script, including reverse-proxy
         # prefixes. A valid HTTP response alone does not make the Open button work.

@@ -23,6 +23,6 @@ assert.equal(reports[0].bundles[0].keys.length,12);
 assert(!JSON.stringify(reports).includes('do-not-copy'));
 hook.onLeave();assert.equal(reports.length,1,'snapshots are throttled');
 now+=5001;hook.onLeave();assert.equal(reports.length,2);
-now+=180001;c.recordResourceEvent('asset-request','too-late');hook.onLeave();
+now+=900001;c.recordResourceEvent('asset-request','too-late');hook.onLeave();
 assert.equal(reports.length,2,'startup diagnostics stop after three minutes');
 console.log('PASS: bounded startup trace and bundle keys, throttled snapshots, locale/patch identification and URL secret omission');

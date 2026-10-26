@@ -163,7 +163,7 @@ Il2Cpp.perform(() => {
   // Bounded startup trace, without request/response bodies or credentials.
   const resourceTrace = [], resourceTraceStarted = Date.now();
   function recordResourceEvent(kind, path, status = 0) {
-    if (Date.now() - resourceTraceStarted > 180000) return;
+    if (Date.now() - resourceTraceStarted > 900000) return;
     resourceTrace.push({ at: Date.now(), kind, path: String(path).replace(/[?#].*$/, "").slice(0,240), status });
     if (resourceTrace.length > 128) resourceTrace.shift();
   }
@@ -2714,7 +2714,8 @@ function uiComponent(go, type) {
     // Cancel restores the game's saved UI state. Do not recreate our child
     // while that restoration or the close animation is still running.
     const root = call(self,"get_transform"), child = call(root,"Find",Il2Cpp.string("RebornGameData"));
-    if (!isNull(child)) call(call(child,"get_gameObject"),"SetActive",false);
+    // Let the native dialog hide its own hierarchy. No SetActive during Cancel:
+    // changing a child here can trigger an unnecessary layout rebuild.
     if (resourceSettingsWindow && resourceSettingsWindow.target.handle.toString() === key) {
       resourceSettingsWindow.free(); resourceSettingsWindow = null;
     }
@@ -2756,6 +2757,7 @@ function uiComponent(go, type) {
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
       ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
     });
+    uiPlace(button,1,1,1,1,-130,-70,240,42);
     call(uiAdd(button, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
   }
   section("settings game data", () => {
@@ -4306,7 +4308,7 @@ const chatWindows = new Map();
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
         const now = Date.now();
-        if (queued || now < next || now - resourceTraceStarted > 180000) return;
+        if (queued || now < next || now - resourceTraceStarted > 900000) return;
         next = now + 5000; queued = true;
         schedule(0, () => {
           queued = false;
@@ -4351,6 +4353,22 @@ const chatWindows = new Map();
               }
             }
           } catch(error) {report.menuError=String(error).slice(0,160);}
+          try {
+            report.shopImages=[];
+            const images=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object);
+            for(let i=0;i<images.length && report.shopImages.length<40;i++) {
+              const image=images.get(i),go=call(image,"get_gameObject");
+              if(!call(go,"get_activeInHierarchy")) continue;
+              let node=call(go,"get_transform"),path="";
+              for(let depth=0;depth<10 && !isNull(node);depth++,node=call(node,"get_parent")) path=String(call(node,"get_name")?.content||"")+"/"+path;
+              if(!/shop|store|packbundle|product/i.test(path)) continue;
+              const item:any={path:path.slice(-400)};
+              try {const sprite=call(image,"get_sprite");item.sprite=isNull(sprite)?null:String(call(sprite,"get_name")?.content||"");}catch(_){}
+              try {const material=call(image,"get_material");item.material=isNull(material)?null:String(call(material,"get_name")?.content||"");
+                if(!isNull(material))item.shader=String(call(call(material,"get_shader"),"get_name")?.content||"");}catch(_){}
+              report.shopImages.push(item);
+            }
+          }catch(error){report.shopError=String(error).slice(0,160);}
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`,JSON.stringify(report));
         });
       }

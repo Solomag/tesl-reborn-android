@@ -47,6 +47,9 @@ public class ResourceActivity extends Activity {
   private boolean initialized = false;
   private boolean dataChanged = false;
   private boolean busy = false;
+  private Future<?> catalogTask;
+  private int catalogGeneration;
+  private Button cancelConnection;
   private File root;
 
   @Override
@@ -78,7 +81,7 @@ public class ResourceActivity extends Activity {
       }
       PackInstaller.writeJson(new File(root, "tesl-reborn-setup.json"), new JSONObject()
           .put("api", 1).put("debugInput", "android-key-events")
-          .put("androidBuild", setup.optInt("androidBuild", 42)).put("languageTransition", true));
+          .put("androidBuild", setup.optInt("androidBuild", 44)).put("languageTransition", true));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       uiCode = getPreferences(0).getString("uiLanguage", "en_us");
@@ -191,7 +194,7 @@ public class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 42\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 44\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -271,6 +274,11 @@ public class ResourceActivity extends Activity {
     connectionHint.setTextColor(0xff81c995);
     box.addView(connectionHint);
     download = button(box, "Choose language packs and download", () -> download());
+    cancelConnection = new Button(this);
+    cancelConnection.setText(android.R.string.cancel);
+    cancelConnection.setVisibility(View.GONE);
+    cancelConnection.setOnClickListener(v -> cancelCatalog());
+    box.addView(cancelConnection);
     button(
         advanced,
         "Import OBB file",
@@ -645,14 +653,38 @@ public class ResourceActivity extends Activity {
         });
   }
 
+  private void cancelCatalog() {
+    catalogGeneration++;
+    if (catalogTask != null) catalogTask.cancel(true);
+    catalogTask = null;
+    installer.cancelCatalog();
+    busy = false;
+    cancelConnection.setVisibility(View.GONE);
+    refresh();
+  }
+
   private void download() {
+    if (busy) return;
     final String url = address.getText().toString().trim(), key = token.getText().toString().trim();
     getPreferences(0).edit().putString("address", url).apply();
-    run(
-        () -> {
-          JSONObject catalog = installer.catalog(PackInstaller.baseUrl(url), key);
-          runOnUiThread(() -> chooseDownloads(url, key, catalog));
-        });
+    final int generation = ++catalogGeneration;
+    busy = true; refresh(); cancelConnection.setVisibility(View.VISIBLE);
+    message("Connecting to PC…");
+    catalogTask = worker.submit(() -> {
+      JSONObject received = null; String failure = null;
+      try { received = installer.catalog(PackInstaller.baseUrl(url), key); }
+      catch (Exception error) { failure = error.getMessage(); }
+      final JSONObject catalog = received; final String error = failure;
+      runOnUiThread(() -> {
+        if (isDestroyed() || generation != catalogGeneration) return;
+        catalogTask = null; busy = false;
+        cancelConnection.setVisibility(View.GONE); refresh();
+        if (catalog != null) chooseDownloads(url, key, catalog);
+        else new AlertDialog.Builder(this).setTitle("PC unavailable")
+          .setMessage("Start transfer on your PC and scan its new QR code.\n" + (error == null ? "Connection failed" : error))
+          .setPositiveButton(android.R.string.ok, null).show();
+      });
+    });
   }
 
   private void chooseDownloads(String url, String key, JSONObject catalog) {
@@ -772,7 +804,7 @@ public class ResourceActivity extends Activity {
           getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2)
               .putString("language", chosen).commit();
           PackInstaller.writeJson(new File(root, "tesl-reborn-handoff.json"), new JSONObject()
-              .put("androidBuild", 42).put("language", code).put("verified", true)
+              .put("androidBuild", 44).put("language", code).put("verified", true)
               .put("at", System.currentTimeMillis()));
           runOnUiThread(() -> startGame());
         });
@@ -886,6 +918,7 @@ public class ResourceActivity extends Activity {
 
   @Override
   public void onBackPressed() {
+    if (catalogTask != null) { cancelCatalog(); return; }
     if (busy) {
       message("Wait for the transfer to finish or close the app through Android settings.");
       return;

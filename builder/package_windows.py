@@ -50,6 +50,7 @@ def main():
     shutil.copyfile(ROOT / "runtime/channel.json", bundle / "runtime/channel.json")
     (bundle / "builder").mkdir()
     shutil.copyfile(ROOT / "builder/ui-text.json", bundle / "builder/ui-text.json")
+    shutil.copyfile(ROOT / "builder/apk-download.js", bundle / "builder/apk-download.js")
     shutil.copyfile(ROOT / "hook.js", bundle / "hook.js")
     shutil.copyfile(
         ROOT / "JNIBridge_a.patched.smali", bundle / "JNIBridge_a.patched.smali"
@@ -122,7 +123,7 @@ def main():
             python_lib + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
         )
     subprocess.run(command, cwd=ROOT, check=True, env=environment)
-    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-41-42-check-ru.md"):
+    for name in ("builder-ru.md", "THIRD_PARTY_BUILDER.md", "android-43-44-check-ru.md"):
         shutil.copyfile(ROOT / "docs" / name, ROOT / "dist" / name)
     shutil.copytree(notices, ROOT / "dist/third-party-notices", dirs_exist_ok=True)
     if not windows:
@@ -134,7 +135,7 @@ def main():
                 binary,
                 "builder-ru.md",
                 "THIRD_PARTY_BUILDER.md",
-                "android-41-42-check-ru.md",
+                "android-43-44-check-ru.md",
                 "third-party-notices",
             ):
                 package.add(ROOT / "dist" / name, arcname="TESL-Reborn-Builder/" + name)

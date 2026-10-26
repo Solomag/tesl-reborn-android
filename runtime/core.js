@@ -3675,7 +3675,7 @@ Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
   const resourceTrace = [], resourceTraceStarted = Date.now();
   function recordResourceEvent(kind, path, status = 0) {
-    if (Date.now() - resourceTraceStarted > 18e4) return;
+    if (Date.now() - resourceTraceStarted > 9e5) return;
     resourceTrace.push({ at: Date.now(), kind, path: String(path).replace(/[?#].*$/, "").slice(0, 240), status });
     if (resourceTrace.length > 128) resourceTrace.shift();
   }
@@ -6384,7 +6384,6 @@ Il2Cpp.perform(() => {
     if (closingSettings.size > 128) closingSettings.clear();
     closingSettings.add(key);
     const root = call(self, "get_transform"), child = call(root, "Find", Il2Cpp.string("RebornGameData"));
-    if (!isNull(child)) call(call(child, "get_gameObject"), "SetActive", false);
     if (resourceSettingsWindow && resourceSettingsWindow.target.handle.toString() === key) {
       resourceSettingsWindow.free();
       resourceSettingsWindow = null;
@@ -6429,6 +6428,7 @@ Il2Cpp.perform(() => {
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
       ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
     });
+    uiPlace(button, 1, 1, 1, 1, -130, -70, 240, 42);
     call(uiAdd(button, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
   }
   section("settings game data", () => {
@@ -8374,7 +8374,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
         const now = Date.now();
-        if (queued || now < next || now - resourceTraceStarted > 18e4) return;
+        if (queued || now < next || now - resourceTraceStarted > 9e5) return;
         next = now + 5e3;
         queued = true;
         schedule(0, () => {
@@ -8439,6 +8439,32 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
             }
           } catch (error) {
             report.menuError = String(error).slice(0, 160);
+          }
+          try {
+            report.shopImages = [];
+            const images = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object);
+            for (let i = 0; i < images.length && report.shopImages.length < 40; i++) {
+              const image = images.get(i), go = call(image, "get_gameObject");
+              if (!call(go, "get_activeInHierarchy")) continue;
+              let node = call(go, "get_transform"), path = "";
+              for (let depth = 0; depth < 10 && !isNull(node); depth++, node = call(node, "get_parent")) path = String(call(node, "get_name")?.content || "") + "/" + path;
+              if (!/shop|store|packbundle|product/i.test(path)) continue;
+              const item = { path: path.slice(-400) };
+              try {
+                const sprite = call(image, "get_sprite");
+                item.sprite = isNull(sprite) ? null : String(call(sprite, "get_name")?.content || "");
+              } catch (_) {
+              }
+              try {
+                const material = call(image, "get_material");
+                item.material = isNull(material) ? null : String(call(material, "get_name")?.content || "");
+                if (!isNull(material)) item.shader = String(call(call(material, "get_shader"), "get_name")?.content || "");
+              } catch (_) {
+              }
+              report.shopImages.push(item);
+            }
+          } catch (error) {
+            report.shopError = String(error).slice(0, 160);
           }
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`, JSON.stringify(report));
         });

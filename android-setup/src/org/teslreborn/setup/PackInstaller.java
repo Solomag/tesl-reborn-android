@@ -165,26 +165,22 @@ public final class PackInstaller {
     return c;
   }
 
+  private volatile HttpURLConnection catalogConnection;
+  public void cancelCatalog() {
+    HttpURLConnection current = catalogConnection;
+    if (current != null) new Thread(() -> current.disconnect()).start();
+  }
   public JSONObject catalog(URL base, String token) throws Exception {
-    for (int attempt = 0; ; attempt++) {
-      try {
-        return catalogOnce(base, token);
-      } catch (IOException error) {
-        String message = String.valueOf(error.getMessage());
-        if (attempt >= 7
-            || Thread.currentThread().isInterrupted()
-            || message.contains("HTTP 401")
-            || message.contains("HTTP 403")
-            || message.contains("HTTP 404")) throw error;
-        progress.show("Connecting to PC again…");
-        Thread.sleep(Math.min(10000, 1000L << attempt));
-      }
-    }
+    if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+    return catalogOnce(base, token);
   }
 
   private JSONObject catalogOnce(URL base, String token) throws Exception {
     HttpURLConnection c = connect(base, "catalog.json", token);
+    c.setConnectTimeout(5000); c.setReadTimeout(8000);
+    catalogConnection = c;
     try {
+      if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
       if (c.getResponseCode() != 200) throw new IOException("Catalog: HTTP " + c.getResponseCode());
       JSONObject value;
       try (InputStream in = c.getInputStream()) {
@@ -194,6 +190,7 @@ public final class PackInstaller {
       validateCatalog(value);
       return value;
     } finally {
+      catalogConnection = null;
       c.disconnect();
     }
   }

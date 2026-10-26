@@ -178,7 +178,7 @@ class ResourceServer:
                             "Content-Security-Policy",
                             "default-src 'none'; script-src 'nonce-"
                             + owner.token
-                            + "'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+                            + "'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
                         )
                         self.end_headers()
                         if not getattr(self, "head_only", False):
@@ -369,17 +369,16 @@ class ResourceServer:
     def landing_page(self):
         # No external content or Host-header interpolation. Relative links also
         # work behind a reverse proxy with a URL prefix.
-        apk = (
-            '<a class="button" href="'
-            + quote(self.token)
-            + '/tesl-reborn.apk" download>1. Download APK</a>'
-            if self.apk
-            else "<p>This transfer has no APK. Install TESL Reborn first.</p>"
-        )
+        apk = ('<button class="button" id="apk-start">1. Download / resume APK</button>'
+               '<button id="apk-cancel" hidden>Pause</button><p id="apk-status"></p>'
+               '<a class="button" id="apk-save" hidden>Save verified APK</a>') if self.apk else "<p>This transfer has no APK.</p>"
+        downloader = Path(__file__).with_name("apk-download.js").read_text(encoding="utf-8")
+        config = json.dumps(dict(bytes=self.apk_size, sha256=self.apk_hash,
+                                 url=self.token + "/tesl-reborn.apk"))
         return (
             """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Install TESL Reborn</title>
-<style>body{font:18px system-ui;background:#161a20;color:#eee;max-width:38em;margin:3em auto;padding:0 20px;line-height:1.5}.button{display:block;background:#d7ae63;color:#171717;padding:16px;margin:18px 0;border-radius:8px;text-decoration:none;font-weight:bold}</style>
+<style>body{font:18px system-ui;background:#161a20;color:#eee;max-width:38em;margin:3em auto;padding:0 20px;line-height:1.5}[hidden]{display:none!important}.button{display:block;background:#d7ae63;color:#171717;padding:16px;margin:18px 0;border-radius:8px;text-decoration:none;font-weight:bold}</style>
 <h1>TESL Reborn</h1><p>Keep the builder running on your PC. Use the same Wi-Fi or Tailscale connection.</p>"""
             + apk
             + '''<p>Install the downloaded APK. Android may ask you to allow installations from your browser. Then return to this page.</p>
@@ -392,7 +391,7 @@ class ResourceServer:
 const base=location.origin+location.pathname.slice(0,marker)+'/';
 document.getElementById('open').href='teslreborn://resources?url='+encodeURIComponent(base)+'&token="""
             + self.token
-            + """';</script></html>"""
+            + """';""" + downloader + "\ninstallApkDownload(" + config + ");</script></html>"
         ).encode("utf-8")
 
     @property

@@ -42,7 +42,7 @@ public final class DiagnosticsActivity extends Activity {
     ScrollView scroll = new ScrollView(this); scroll.addView(box); setContentView(scroll);
     TextView heading = new TextView(this); heading.setText(tr("Diagnostics")); heading.setTextSize(26); box.addView(heading);
     status = new TextView(this); status.setTextIsSelectable(true);
-    String version = "TESL Reborn · APK 42";
+    String version = "TESL Reborn · APK 44";
     try {
       JSONObject current = PackInstaller.json(new File(getExternalFilesDir(null), "tesl-reborn-update-status.json")).optJSONObject("current");
       if (current != null) version += "\nPatch " + current.optInt("revision") + " · " + current.optString("version");
@@ -75,7 +75,7 @@ public final class DiagnosticsActivity extends Activity {
       try {
         File directory = new File(getCacheDir(), "diagnostic-reports"); PackInstaller.mkdir(directory);
         File output = new File(directory, "report-" + UUID.randomUUID().toString().replace("-", "") + ".zip");
-        JSONObject device = new JSONObject().put("androidBuild",42).put("sdk",Build.VERSION.SDK_INT)
+        JSONObject device = new JSONObject().put("androidBuild",44).put("sdk",Build.VERSION.SDK_INT)
             .put("model",Build.MODEL).put("at",System.currentTimeMillis());
         try {
         ActivityManager manager = (ActivityManager)getSystemService(ACTIVITY_SERVICE);
