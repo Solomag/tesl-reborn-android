@@ -4911,6 +4911,9 @@ Il2Cpp.perform(() => {
       for (const key of keys) {
         dictionary.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(String(json[key])));
       }
+      const fixes = TRANSLATIONS[selected] || TRANSLATIONS[shortLanguage(selected)] || {};
+      for (const key of Object.keys(fixes))
+        dictionary.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
       manager.field("_localizedData").value = dictionary;
       return keys.length;
     } catch (e) {
@@ -5018,6 +5021,7 @@ Il2Cpp.perform(() => {
       tr_tr: ["turkish", "tr"]
     };
     function requestLanguage(target, current, explicit = false) {
+      if (globalThis.__teslLanguageSyncing) return false;
       noteLanguageInput();
       if (!explicit && (!target || target === current || !loaded || !recentInputAt || Date.now() - recentInputAt > 3e3)) return false;
       if (switching && Date.now() - switchingAt < 1500 || target && target === current) return true;
@@ -5063,6 +5067,7 @@ Il2Cpp.perform(() => {
     for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
       try {
         replaceLanguageControl(ucls(name).tryMethod("Show", 0), (self) => {
+          if (globalThis.__teslNativeLanguageCallback) return false;
           const options = call(self, "get_options"), count = Number(call(options, "get_Count"));
           if (count < 2 || count > 16) return false;
           let recognized = 0;
@@ -5076,6 +5081,7 @@ Il2Cpp.perform(() => {
     }
     try {
       replaceLanguageControl(ucls("UnityEngine.UI.Button").tryMethod("Press", 0), (self) => {
+        if (globalThis.__teslNativeLanguageCallback) return false;
         const event = call(self, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
         let languageAction = false;
         for (let i = 0; i < count; i++) {
@@ -5142,7 +5148,7 @@ Il2Cpp.perform(() => {
         Interceptor.attach(method.virtualAddress, {
           onEnter(args) {
             this.index = method.name === "OnSelectItem" ? null : args[1].toInt32();
-            this.active = resourceSettingsOpen() && (method.name === "OnSelectItem" || method.parameterCount < 2 || args[2].toInt32() !== 0);
+            this.active = !globalThis.__teslNativeLanguageCallback && resourceSettingsOpen() && (method.name === "OnSelectItem" || method.parameterCount < 2 || args[2].toInt32() !== 0);
             if (this.active) this.dropdown = new Il2Cpp.Object(args[0]).ref(false);
           },
           onLeave() {
@@ -6094,25 +6100,212 @@ Il2Cpp.perform(() => {
     uiButton(go, bg, action);
     return go;
   }
+  section("native localized language state", () => {
+    const localization = cls(img, "LocalizationManager"), set = localization.method("SetLanguage", 2);
+    const type = set.parameters[0].type;
+    let pending2 = false, nextCheck = 0, attempts = 0, lastChoice = "", lastError = "";
+    const resolved = /* @__PURE__ */ new Map();
+    function codeOf(name) {
+      const raw = String(name || "").toLowerCase().replace(/[^a-zа-яё]/g, "").replace(/^(localizedlanguage|language|locale)/, "");
+      const aliases = {
+        en_us: ["en", "enus", "engb", "english", "englishus", "englishuk", "englishunitedstates"],
+        de_de: ["de", "dede", "german", "deutsch"],
+        es_es: ["es", "eses", "spanish", "spanishspain"],
+        es_mx: ["esmx", "spanishmexico", "mexicanspanish", "spanishlatinamerica", "latinamericanspanish"],
+        fr_fr: ["fr", "frfr", "french", "fran\xE7ais"],
+        it_it: ["it", "itit", "italian", "italiano"],
+        pl_pl: ["pl", "plpl", "polish", "polski"],
+        pt_br: ["pt", "ptbr", "portuguese", "portuguesebrazil", "brazilianportuguese"],
+        ru_ru: ["ru", "ruru", "russian", "russianru", "\u0440\u0443\u0441\u0441\u043A\u0438\u0439"],
+        tr_tr: ["tr", "trtr", "turkish", "t\xFCrk\xE7e"]
+      };
+      return Object.keys(aliases).find((code) => aliases[code].includes(raw)) || languageLabel(name);
+    }
+    function objectCode(object) {
+      if (isNull(object)) return;
+      for (const field of object.class.fields.filter((f) => !f.isStatic && f.type.name === "System.String" && /code|name|language/i.test(f.name))) {
+        const code = codeOf(object.field(field.name).value?.content);
+        if (code) return code;
+      }
+    }
+    function resolve(code, manager = null) {
+      if (resolved.has(code)) return resolved.get(code);
+      if (type.class.isEnum) {
+        const field = type.class.fields.find((f) => f.isStatic && codeOf(f.name) === code);
+        if (!field) return null;
+        const value = field.value, numeric = enumVal(value);
+        if (numeric < 0) return null;
+        const entry2 = { raw: ptr(numeric), managed: value, name: field.name };
+        resolved.set(code, entry2);
+        return entry2;
+      }
+      if (type.class.isValueType) return null;
+      const candidates = [];
+      for (const field of type.class.fields.filter((f) => f.isStatic && f.type.name === type.name)) candidates.push(field.value);
+      if (manager) for (const field of manager.class.fields.filter((f) => !f.isStatic && f.type.name.includes(type.name))) {
+        const value = manager.field(field.name).value;
+        if (isNull(value)) continue;
+        if (field.type.name === type.name) candidates.push(value);
+        else if (field.type.name.endsWith("[]")) {
+          for (let i = 0; i < Math.min(value.length, 32); i++) candidates.push(value.get(i));
+        } else {
+          try {
+            for (let i = 0, n = Math.min(32, Number(call(value, "get_Count"))); i < n; i++) candidates.push(call(value, "get_Item", i));
+          } catch (_) {
+          }
+        }
+      }
+      const object = candidates.find((value) => objectCode(value) === code);
+      if (!object) return null;
+      const retained = object.ref(false), entry = { raw: retained.target.handle, managed: retained.target, name: code, retained };
+      resolved.set(code, entry);
+      return entry;
+    }
+    function pin(method) {
+      if (!method || method.virtualAddress.isNull()) return;
+      Interceptor.attach(method.virtualAddress, { onEnter(args) {
+        try {
+          const selected = resourceLanguage(), value = selected && resolve(selected, method === set && !set.isStatic ? new Il2Cpp.Object(args[0]) : null);
+          if (value) args[method.isStatic ? 0 : 1] = value.raw;
+        } catch (error) {
+          log(`language state: ${method.name} argument: ${error}`);
+        }
+      } });
+    }
+    pin(set);
+    let settings = null;
+    try {
+      settings = cls(img, "SettingsManager");
+      const setter = settings.tryMethod("SetCurrentLanguage", 1);
+      if (setter) pin(setter);
+    } catch (_) {
+    }
+    for (const [owner, name] of [[localization, "GetSystemDefaultLanguage"], [settings, "GetCurrentLanguage"]]) {
+      try {
+        const method = owner?.tryMethod(name, 0);
+        if (!method || method.returnType.name !== type.name || method.virtualAddress.isNull()) continue;
+        Interceptor.attach(method.virtualAddress, { onLeave(result) {
+          try {
+            const value = resolve(resourceLanguage());
+            if (value) result.replace(value.raw);
+          } catch (_) {
+          }
+        } });
+      } catch (_) {
+      }
+    }
+    function check() {
+      if (pending2 || Date.now() < nextCheck) return;
+      nextCheck = Date.now() + 1500;
+      const selected = resourceLanguage();
+      if (!selected) return;
+      if (selected !== lastChoice) {
+        lastChoice = selected;
+        attempts = 0;
+      }
+      try {
+        const manager = localization.method("get_Instance", 0).invoke();
+        if (isNull(manager)) return;
+        const actual = String(call(manager, "get_CurrentLanguageCode")?.content || "");
+        if (codeOf(actual) === selected) return;
+        const value = resolve(selected, manager);
+        if (!value) {
+          const error = `Cannot resolve ${type.name} for ${selected}`;
+          if (error !== lastError) {
+            lastError = error;
+            log(`language state: ${error}`);
+          }
+          return;
+        }
+        if (attempts >= 3) return;
+        pending2 = true;
+        attempts++;
+        const retained = manager.ref(false);
+        schedule(0, () => {
+          const previous = globalThis.__teslLanguageSyncing;
+          globalThis.__teslLanguageSyncing = true;
+          try {
+            retained.target.method("SetLanguage", 2).invoke(value.managed, false);
+            restoreLocalization(retained.target, selected);
+            retained.target.method("UpdateObjects", 0).invoke();
+            if (settings) try {
+              const current = settings.method("get_Instance", 0).invoke();
+              if (!isNull(current)) current.method("SetCurrentLanguage", 1).invoke(value.managed);
+            } catch (_) {
+            }
+            const after = String(call(retained.target, "get_CurrentLanguageCode")?.content || "");
+            writeTextFile(`${persistentPath()}/tesl-reborn-language-state.json`, JSON.stringify({ revision: 32, selected, before: actual, after, type: type.name, value: value.name, attempt: attempts }));
+            log(`language state: ${actual} -> ${after}; selected ${selected}, ${value.name}`);
+          } catch (error) {
+            log(`language state: initialization failed: ${error}`);
+          } finally {
+            globalThis.__teslLanguageSyncing = previous;
+            pending2 = false;
+            retained.free();
+          }
+        });
+      } catch (error) {
+        log(`language state: ${error}`);
+      }
+    }
+    Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave: check });
+    schedule(0, check);
+  });
+  section("native Settings language selection", () => {
+    const owner = img.classes.find((c) => c.name === "LanguageSelectDropdown");
+    const handler = owner?.tryMethod("HandleLanguageOnValueChanged", 1);
+    if (!handler || handler.virtualAddress.isNull()) return;
+    let selecting = 0, selectionHooks = 0;
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) try {
+      const method = ucls(name).tryMethod("OnSelectItem", 1);
+      if (!method || method.virtualAddress.isNull()) continue;
+      Interceptor.attach(method.virtualAddress, { onEnter() {
+        selecting++;
+      }, onLeave() {
+        selecting = Math.max(0, selecting - 1);
+      } });
+      selectionHooks++;
+    } catch (_) {
+    }
+    if (!selectionHooks) return;
+    handler.implementation = function(index) {
+      if (!selecting) return handler.invokeRaw(this.handle, index);
+      try {
+        let dropdown = this;
+        try {
+          call(dropdown, "get_options");
+        } catch (_) {
+          const field = this.class.fields.find((f) => !f.isStatic && /^(UnityEngine.UI.Dropdown|TMPro.TMP_Dropdown)$/.test(f.type.name));
+          dropdown = field ? this.field(field.name).value : null;
+        }
+        if (isNull(dropdown)) throw Error("Language dropdown instance unavailable");
+        const options = call(dropdown, "get_options"), count = Number(call(options, "get_Count"));
+        if (index < 0 || index >= count || count > 32) return;
+        const label = String(call(call(options, "get_Item", index), "get_text")?.content || "");
+        const code = languageLabel(label);
+        if (!code) throw Error("Unknown language label");
+        if (code === resourceLanguage()) return;
+        schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources?language=" + code + "&apply=1")));
+      } catch (error) {
+        log(`native language dropdown: ${error}`);
+        schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources?chooseLanguage=1")));
+      }
+    };
+    globalThis.__teslNativeLanguageCallback = true;
+  });
   function installSettingsDataButton(self) {
     if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
     const root = call(self, "get_transform");
     const rootName = String(call(root, "get_name")?.content || "");
     const typeName = String(self.class?.name || "");
-    if (/menu/i.test(rootName + " " + typeName)) return;
-    const window = call(root, "get_gameObject");
-    let controls = false;
-    for (const name of ["UnityEngine.UI.Slider", "UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown", "UnityEngine.UI.Toggle"]) {
-      try {
-        const list = window.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(name).type.object, false);
-        if (Number(list.length) > 0) {
-          controls = true;
-          break;
-        }
-      } catch (_) {
-      }
+    const compactName = rootName.replace(/\(Clone\)$/i, "").replace(/[_ -]/g, "");
+    if (typeName === "OptionsWin" || /^OptionsWin(?:Mobile)?$/i.test(compactName)) {
+      const old = call(root, "Find", Il2Cpp.string("RebornGameData"));
+      if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
+      return;
     }
-    if (!controls) return;
+    if (typeName !== "SettingsWin" && !/^SettingsWin(?:Mobile)?$/i.test(compactName)) return;
+    const window = call(root, "get_gameObject");
     if (resourceSettingsWindow && !resourceSettingsWindow.target.handle.equals(window.handle)) {
       try {
         const previous = call(resourceSettingsWindow.target, "get_transform");
@@ -6184,7 +6377,7 @@ Il2Cpp.perform(() => {
             const key = node.handle.toString();
             if (visited.has(key)) break;
             visited.add(key);
-            if (!/^(?:Win[_ -]?)?(?:Game)?(?:Options|Settings)(?:[_ -]?(?:Win|Window|Panel|Dialog|Root))?$/i.test(String(call(node, "get_name")?.content || "").replace(/\(Clone\)$/i, "").trim())) continue;
+            if (!/^(?:OptionsWinMobile|SettingsWin_Mobile|SettingsWin|OptionsWin)$/i.test(String(call(node, "get_name")?.content || "").replace(/\(Clone\)$/i, "").trim())) continue;
             const root = call(node, "get_gameObject"), rect = uiRect(root), bounds = call(rect, "get_rect");
             if (Number(bounds.field("m_Width").value) < 300 || Number(bounds.field("m_Height").value) < 200) continue;
             installSettingsDataButton(root);
@@ -6219,6 +6412,8 @@ Il2Cpp.perform(() => {
       }
       try {
         const owner = cls(img, "LocalizationManager");
+        const nativeType = owner.method("SetLanguage", 2).parameters[0].type;
+        report.languageType = { name: nativeType.name, isEnum: nativeType.class.isEnum, fields: nativeType.class.fields.map((f) => ({ name: f.name, type: f.type.name, static: f.isStatic, value: nativeType.class.isEnum && f.isStatic ? enumVal(f.value) : void 0 })) };
         report.localizationMethods = owner.methods.filter((m) => /language|locale|updateobjects/i.test(m.name)).slice(0, 40).map((m) => ({ name: m.name, parameters: m.parameters.map((p) => p.type.name), returns: m.returnType.name }));
         const manager = owner.method("get_Instance", 0).invoke();
         if (!isNull(manager)) report.managerLanguage = String(call(manager, "get_CurrentLanguageCode")?.content || "");
@@ -7541,6 +7736,22 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         }
       }
     });
+  });
+  section("hide confirmed debug test marker", () => {
+    const path = `${persistentPath()}/tesl-reborn-debug-marker.json`;
+    const latch = `${persistentPath()}/tesl-reborn-debug-marker-confirmed32.json`;
+    let applied = false;
+    try {
+      applied = JSON.parse(readTextFile(latch) || "{}").applied === true;
+    } catch (_) {
+    }
+    if (applied) return;
+    let config = {};
+    try {
+      config = JSON.parse(readTextFile(path) || "{}");
+    } catch (_) {
+    }
+    if (writeTextFile(path, JSON.stringify({ ...config, enabled: false }))) writeTextFile(latch, JSON.stringify({ applied: true }));
   });
   section("mobile global debug shortcut", () => {
     try {

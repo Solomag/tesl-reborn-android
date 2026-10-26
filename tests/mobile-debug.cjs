@@ -35,3 +35,11 @@ console.log('PASS: corner gesture, native/inlined Unity input, string/enum overl
 
 const android={...c,readTextFile:()=>JSON.stringify({debugInput:'android-key-events'}),persistentPath:()=>'/files',Interceptor:{attach:()=>{throw Error('legacy key synthesis must be disabled for Android key events')}}};
 vm.createContext(android);vm.runInContext(code,android);
+
+const markerCode=transformSync(require('./source.cjs')('confirmed-debug-marker'),{loader:'ts'}).code;
+const markerPath='/files/tesl-reborn-debug-marker.json';
+const markerFiles=new Map([[markerPath,{enabled:true}]]);let writes=0;
+const migration={section:(_,f)=>f(),persistentPath:()=>'/files',readTextFile:path=>JSON.stringify(markerFiles.get(path)||{}),writeTextFile:(path,text)=>{markerFiles.set(path,JSON.parse(text));writes++;return true;}};
+vm.createContext(migration);vm.runInContext(markerCode,migration);assert.equal(markerFiles.get(markerPath).enabled,false);
+// APK 31's switch replaces the config object; the latch must survive separately.
+markerFiles.set(markerPath,{enabled:true});vm.runInContext(markerCode,migration);assert.equal(markerFiles.get(markerPath).enabled,true);assert.equal(writes,2,'explicit re-enabling after migration is preserved');

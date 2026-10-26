@@ -1,5 +1,5 @@
 const { spawnSync } = require('node:child_process');
-for (const name of ['updater', 'loader-glue', 'chat-bounds', 'history', 'chat-scale', 'message-preview', 'release', 'resource-language', 'mobile-debug', 'auth-and-logs', 'settings-data', 'settings-diagnostics']) {
+for (const name of ['updater', 'ota-release', 'loader-glue', 'chat-bounds', 'history', 'chat-scale', 'message-preview', 'release', 'resource-language', 'localized-language-state', 'mobile-debug', 'auth-and-logs', 'settings-data', 'settings-diagnostics']) {
   const result = spawnSync(process.execPath, [`tests/${name}.cjs`], { stdio: 'inherit' });
   if (result.status !== 0) process.exit(result.status || 1);
 }

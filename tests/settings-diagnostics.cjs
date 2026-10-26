@@ -10,7 +10,7 @@ const c={Date:class extends Date{static now(){return clock;}},section:(_,f)=>f()
  if(path.endsWith('update-status.json'))return JSON.stringify({current:{revision:31,version:'test-31'}});
  for(const lang of Object.keys(strings))if(path.endsWith('tesl-localization-'+lang+'.json'))return JSON.stringify(strings[lang]);return '';},
  writeTextFile:(path,text)=>outputs.set(path,JSON.parse(text)),img:{classes:[{name:'ActualOptionsController',methods:[{name:'OnLanguageChanged',parameters:[{type:{name:'System.String'}}],returnType:{name:'System.Void'}}]}]},
- cls:(img,name)=>name==='LocalizationManager'?{methods:[],method:()=>({invoke:()=>({manager:true})})}:{method:()=>({virtualAddress:'Update'})},
+ cls:(img,name)=>name==='LocalizationManager'?{methods:[],method:name=>name==='SetLanguage'?{parameters:[{type:{name:'LocalizedLanguage',class:{isEnum:true,fields:[]}}}]}:{invoke:()=>({manager:true})}}:{method:()=>({virtualAddress:'Update'})},
  Interceptor:{attach:(address,hooks)=>update=hooks.onLeave},ucls:name=>name==='UnityEngine.Resources'?{method:()=>({overload:()=>({invoke:()=>({length:1,get:()=>button})})})}:{type:{object:{}}},
  call:(o,name,...args)=>name==='get_CurrentLanguageCode'?{content:'ru'}:name==='get_gameObject'?o:name==='get_activeInHierarchy'?o.active:name==='get_transform'?o.node:name==='get_name'?{content:o.name}:name==='get_parent'?o.parent:name==='get_onClick'?{}:name==='GetPersistentEventCount'?0:undefined};
 vm.createContext(c);vm.runInContext(code,c);
