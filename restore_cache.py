@@ -75,9 +75,12 @@ LANGUAGES = {"en_us": 0, "de_de": 1, "es_es": 2, "es_mx": 3, "fr_fr": 4,
 def patch_platform(src, dst):
     """Copies a bundle and sets its build target to Android."""
     env = UnityPy.load(src)
+    bundles = [f for f in env.files.values() if isinstance(f, BundleFile)]
+    if len(bundles) != 1:
+        raise ValueError("%s holds %d bundles, expected 1" % (src, len(bundles)))
     out = None
     patched = 0
-    for name, f in env.files.items():
+    for f in bundles:
         if isinstance(f, BundleFile):
             for sub in f.files.values():
                 if hasattr(sub, "_m_target_platform"):
@@ -122,6 +125,11 @@ def main():
     wanted = [e for e in entries
               if e["StorageMode"] == 0
               and (e["LocCode"] == loc_code or "filemanifest" in e["BundleName"])]
+
+    for entry in wanted:
+        candidate = os.path.realpath(os.path.join(WINDOWS_ASSETS, entry["BundleName"]))
+        if os.path.commonpath([candidate, WINDOWS_ASSETS]) != WINDOWS_ASSETS:
+            sys.exit("BundleName leaves the assets folder: %s" % entry["BundleName"])
 
     # Do not silently produce an incomplete language pack with exit status 0.
     missing = [e["BundleName"] for e in wanted

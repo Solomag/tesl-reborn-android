@@ -2,7 +2,7 @@ name: Build Desktop Builders
 on:
   workflow_dispatch:
   push:
-    branches: [android-ui-and-update-loader, portable-builder-and-resources]
+    branches: [android-ui-and-update-loader, portable-builder-and-resources, "sync-upstream-*"]
     paths: ['builder/**', 'android-setup/**', '.github/workflows/build-builder.yml', 'hook.ts', 'runtime/**']
 permissions:
   contents: read

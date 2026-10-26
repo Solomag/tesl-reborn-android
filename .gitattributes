@@ -1,1 +1,6 @@
 * text=auto eol=lf
+# Keep the generated hook byte-exact on Windows.
+hook.js -text
+*.sh text eol=lf
+*.py text eol=lf
+*.smali text eol=lf

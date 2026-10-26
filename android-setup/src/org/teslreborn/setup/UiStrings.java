@@ -7,6 +7,10 @@ final class UiStrings {
   private static final Map<String, String[]> TEXT = new HashMap<>();
 
   static {
+    TEXT.put("All language packs are installed", new String[] {"All language packs are installed","Alle Sprachpakete sind installiert","Todos los idiomas están instalados","Todos los idiomas están instalados","Toutes les langues sont installées","Tutte le lingue sono installate","Wszystkie języki są zainstalowane","Todos os idiomas estão instalados","Все языковые пакеты уже установлены","Tüm dil paketleri kurulu"});
+    TEXT.put("All available languages are already on this phone. Connect to your PC only to check for newer packs or reinstall them.", new String[] {"All available languages are already on this phone. Connect to your PC only to check for newer packs or reinstall them.","Alle verfügbaren Sprachen sind bereits auf diesem Handy. Verbinde den PC nur zum Prüfen neuer Pakete oder zur Neuinstallation.","Todos los idiomas disponibles ya están en el teléfono. Conecta el PC solo para buscar paquetes nuevos o reinstalarlos.","Todos los idiomas disponibles ya están en el teléfono. Conecta el PC solo para buscar paquetes nuevos o reinstalarlos.","Toutes les langues sont déjà sur ce téléphone. Connectez le PC pour rechercher de nouveaux packs ou les réinstaller.","Tutte le lingue sono già sul telefono. Collega il PC solo per aggiornare o reinstallare i pacchetti.","Wszystkie języki są już na telefonie. Połącz PC tylko, aby sprawdzić aktualizacje lub ponownie je zainstalować.","Todos os idiomas já estão no celular. Conecte o PC só para atualizar ou reinstalar os pacotes.","Все доступные языки уже есть на телефоне. Подключение к ПК нужно только для проверки новых пакетов или повторной установки.","Tüm diller zaten bu telefonda. Yalnızca yeni paketleri denetlemek veya yeniden kurmak için PC’ye bağlanın."});
+    TEXT.put("Check PC anyway", new String[] {"Check PC anyway","Trotzdem PC prüfen","Consultar el PC","Consultar el PC","Vérifier le PC","Controlla il PC","Sprawdź PC mimo to","Consultar o PC","Всё равно проверить ПК","Yine de PC’yi denetle"});
+
     TEXT.put("Diagnostics", new String[] {
       "Diagnostics",
       "Diagnose",

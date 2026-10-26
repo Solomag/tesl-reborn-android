@@ -100,6 +100,7 @@ const r={Date:class extends Date {static now(){return clock;}},PLUGIN_VERSION:'1
 // Screen.safeArea is optional in older Unity builds: emulate its absence.
 r.globalThis=r;r.TeslRebornUpdater={current:()=>({revision:37})};
 vm.createContext(r);vm.runInContext(noticeSource,r);
+r.loadingVersionState=()=>({visible:true,scene:'Loading'});
 r.uiSystemText=(go,text)=>{if(!fontReady)throw Error('font not loaded');return object('label');};
 const banner=r.createUpdateBanner();banner.show('downloading',0);banner.tick();
 assert(objects.filter(o=>o.name==='RebornUpdateNotice').every(o=>o.dead),'partial UI is discarded if the built-in font is not available yet');
@@ -155,3 +156,9 @@ assert(calls.slice(callStart).some(([o,m,parent])=>o.name==='RebornUpdateNotice'
 assert(!calls.slice(callStart).some(([o,m])=>o===gameCanvas&&['Destroy','SetParent','DontDestroyOnLoad'].includes(m)));
 assert(!calls.slice(callStart).some(([o,m])=>m==='DontDestroyOnLoad'),'scene-owned fallback must not detach a game hierarchy');
 assert(calls.slice(callStart).some(([o,m,text])=>m==='set_text'&&String(text).includes('APK 38 · patch 37')));
+
+assert(r.isLoadingVersionScreen('Loading',[]));assert(r.isLoadingVersionScreen('', ['LoadingScreen(Clone)']));
+assert(!r.isLoadingVersionScreen('MainMenu',[]));assert(!r.isLoadingVersionScreen('Battle',[]));
+assert(!r.isLoadingVersionScreen('Login',[]));
+r.loadingVersionState=()=>({visible:false,scene:'Battle'});fallback.tick();
+assert.equal(objects.filter(o=>o.name==='PortVersion').at(-1).active,false,'version must not remain visible in combat');

@@ -81,7 +81,7 @@ public class ResourceActivity extends Activity {
       }
       PackInstaller.writeJson(new File(root, "tesl-reborn-setup.json"), new JSONObject()
           .put("api", 1).put("debugInput", "android-key-events")
-          .put("androidBuild", setup.optInt("androidBuild", 44)).put("languageTransition", true));
+          .put("androidBuild", setup.optInt("androidBuild", 46)).put("languageTransition", true));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       uiCode = getPreferences(0).getString("uiLanguage", "en_us");
@@ -194,7 +194,7 @@ public class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 44\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 46\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -665,6 +665,20 @@ public class ResourceActivity extends Activity {
 
   private void download() {
     if (busy) return;
+    boolean all = true;
+    for (String code : CODES) if (!code.equals("system") && !installer.installed(code)) { all = false; break; }
+    if (all) {
+      new AlertDialog.Builder(this).setTitle(tr("All language packs are installed"))
+        .setMessage(tr("All available languages are already on this phone. Connect to your PC only to check for newer packs or reinstall them."))
+        .setNegativeButton(android.R.string.cancel, null)
+        .setPositiveButton(tr("Check PC anyway"), (d,w) -> downloadCatalog()).show();
+      return;
+    }
+    downloadCatalog();
+  }
+
+  private void downloadCatalog() {
+    if (busy) return;
     final String url = address.getText().toString().trim(), key = token.getText().toString().trim();
     getPreferences(0).edit().putString("address", url).apply();
     final int generation = ++catalogGeneration;
@@ -804,7 +818,7 @@ public class ResourceActivity extends Activity {
           getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2)
               .putString("language", chosen).commit();
           PackInstaller.writeJson(new File(root, "tesl-reborn-handoff.json"), new JSONObject()
-              .put("androidBuild", 44).put("language", code).put("verified", true)
+              .put("androidBuild", 46).put("language", code).put("verified", true)
               .put("at", System.currentTimeMillis()));
           runOnUiThread(() -> startGame());
         });

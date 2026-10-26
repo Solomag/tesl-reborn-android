@@ -1589,6 +1589,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // without guessing which Settings/Options prefab is the real dialog.
     try {
       replaceLanguageControl(ucls("UnityEngine.UI.Button").tryMethod("Press", 0), self => {
+        settingsButtonPressed(self);
         if (globalThis.__teslNativeLanguageCallback) return false;
         const event = call(self, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
         let languageAction = false;
@@ -2721,6 +2722,22 @@ function uiComponent(go, type) {
     }
     log(`settings UI: ${reason}; custom control suspended`);
   }
+  function settingsButtonPressed(button) {
+    try {
+      let node=call(button,"get_transform"),names=[];
+      const event=call(button,"get_onClick"),count=Number(call(event,"GetPersistentEventCount"));
+      for(let i=0;i<count;i++)names.push(String(call(event,"GetPersistentMethodName",i)?.content||""));
+      const buttonName=String(call(node,"get_name")?.content||"");
+      for(let depth=0;depth<10 && !isNull(node);depth++,node=call(node,"get_parent")) {
+        const name=String(call(node,"get_name")?.content||"");
+        if(!/^SettingsWin[_ -]?Mobile(?:\(Clone\))?$/i.test(name) && !/^SettingsWin(?:\(Clone\))?$/i.test(name)) continue;
+        const action=[buttonName,...names].join(" ");
+        log(`settings button: ${action.slice(0,240)}`);
+        if(/cancel|close|back|\bok\b|confirm|accept/i.test(action)) settingsClosing(call(node,"get_gameObject"),action);
+        return;
+      }
+    }catch(error){log(`settings button trace: ${error}`);}
+  }
   function installSettingsDataButton(self) {
     if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
     if (closingSettings.has(settingsWindowKey(self))) return;
@@ -2757,7 +2774,8 @@ function uiComponent(go, type) {
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
       ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
     });
-    uiPlace(button,1,1,1,1,-130,-70,240,42);
+    // Fit in the free right margin beside the native tabs, not over Preferences.
+    uiPlace(button,1,1,1,1,-18,-136,180,48);
     call(uiAdd(button, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
   }
   section("settings game data", () => {
@@ -4156,6 +4174,27 @@ const chatWindows = new Map();
     }
   }
 
+  function isLoadingVersionScreen(sceneName, names) {
+    const loading=/^(?:.*[\/ _-])?(?:loading|bootstrap|splash)(?:screen|scene|canvas|win|controller)?(?:\(clone\))?$/i;
+    return loading.test(String(sceneName||"")) || names.some(name=>loading.test(String(name)));
+  }
+  let versionScreenCheck=0,versionScreenState={visible:false,scene:""};
+  function loadingVersionState() {
+    if(Date.now()<versionScreenCheck)return versionScreenState;
+    versionScreenCheck=Date.now()+500;
+    let scene="",names=[];
+    try {const value=ucls("UnityEngine.SceneManagement.SceneManager").method("GetActiveScene",0).invoke();scene=String(value.method("get_name",0).invoke()?.content||"");}catch(_){}
+    try {
+      const find=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+      for(const owner of img.classes.filter(c=>/^(?:LoadingScreen|LoadingWin|LoadingScreenController|GameLoadingScreen)$/.test(c.name)
+        && Array.from(c.hierarchy()).some(base=>base.type.name==="UnityEngine.Component"))) {
+        const values=find.invoke(owner.type.object);
+        for(let i=0;i<values.length;i++){const go=call(values.get(i),"get_gameObject");if(call(go,"get_activeInHierarchy"))names.push(String(call(go,"get_name")?.content||owner.name));}
+      }
+    }catch(_){}
+    return versionScreenState={visible:isLoadingVersionScreen(scene,names),scene};
+  }
+
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let inheritedCanvas = false;
@@ -4218,9 +4257,9 @@ const chatWindows = new Map();
         label = uiSystemText(text, "", 22);
         noticeTextLayout(label);
         badge = uiNew("PortVersion", call(go, "get_transform"));
-        badgeText = uiSystemText(badge, "", 16);
-        noticeTextLayout(badgeText, true);
-        call(badgeText, "set_color", rgba(0.7, 0.7, 0.7, 1));
+        badgeText = uiSystemText(badge, "", 24);
+        call(badgeText,"set_alignment",uiEnum(badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"TMPro.TextAlignmentOptions":"UnityEngine.TextAnchor",badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"Center":"MiddleCenter"));
+        call(badgeText, "set_color", rgba(1, 0.91, 0.68, 1));
         if(!inheritedCanvas) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
         call(panel, "SetActive", false);
         // No GraphicRaycaster, event handlers or buttons: all taps pass through.
@@ -4248,12 +4287,15 @@ const chatWindows = new Map();
             const safe = ucls("UnityEngine.Screen").method("get_safeArea", 0).invoke();
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {}
-          uiPlace(badge, 1, 0, 1, 0, -16, 10, Math.min(800, Math.max(240, width)), 26);
+          uiPlace(badge,0.5,0.5,0.5,0.5,0,-110,Math.min(1100,Math.max(240,width)),38);
+          const versionScreen=loadingVersionState();
+          call(badge,"SetActive",versionScreen.visible);
           const caption = portVersionCaption();
           call(badgeText, "set_text", Il2Cpp.string(caption));
-          if (caption !== reportedCaption) {
-            reportedCaption = caption;
-            try { writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ version: caption, visible: true, at: new Date().toISOString() })); } catch (_) {}
+          const signature=caption+":"+versionScreen.visible+":"+versionScreen.scene;
+          if (signature !== reportedCaption) {
+            reportedCaption = signature;
+            try { writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ version: caption, visible: versionScreen.visible, scene:versionScreen.scene, at: new Date().toISOString() })); } catch (_) {}
           }
           if (!message) { lastError = ""; return; }
           uiPlace(panel, 0.5, 1, 0.5, 1, 0, -top, Math.max(240, width), 92);
