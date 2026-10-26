@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 55,
-  "version": "android-55-store-pointer-native-friends-and-ui",
-  "bytes": 386917,
-  "sha256": "82d6aab6a99b7775e3287d13fc55ba60c64615632b03197be78a47c4cbf41951",
+  "revision": 56,
+  "version": "android-56-native-search-layout-and-loading",
+  "bytes": 390160,
+  "sha256": "1c64789914055797dc4343936f2dc36aaea8f09b464bc98854ef5c36bdcde04c",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "3d135c18135738ef0e0ddf22efb85e2437786c036b13b3b78bc8e3b510020107"
+  "sourceSha256": "e95c659e99302f2f66cb82aec3bc6dbc9214b83c51e3cb2e8ec22bda5b9affcc"
 }

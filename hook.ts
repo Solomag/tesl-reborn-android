@@ -2739,6 +2739,28 @@ function uiComponent(go, type) {
   });
   // END android-ui: localized-language-state
 
+  // BEGIN android-ui: native-ui-sprites
+  function loadNativeUiSprite(path,image,onLoaded=()=>{}) {
+    const retained=image.ref(false),started=Date.now();let operation=null;
+    function release(){if(operation){operation.free();operation=null;}retained.free();}
+    function poll(){try {
+      if(!operation){const catalog=cls(img,"AssetCatalog").method("get_Instance",0).invoke();
+        const value=catalog.method("LoadAssetFromPathAsync").overload("System.String","System.Type","System.String")
+          .invoke(Il2Cpp.string(path),ucls("UnityEngine.Sprite").type.object,Il2Cpp.string("png"));
+        if(isNull(value)){release();return;}operation=value.ref(false);
+      }
+      if(call(operation.target,"IsDone")){
+        const sprite=operation.target.method("GetAsset",0).inflate(ucls("UnityEngine.Sprite")).invoke();
+        if(!isNull(sprite)){call(retained.target,"set_sprite",sprite);call(retained.target,"set_color",rgba(1,1,1,1));onLoaded();}
+        release();return;
+      }
+      if(Date.now()-started>20000){release();return;}
+      schedule(50,poll);
+    }catch(error){log(`native UI sprite: ${path}: ${error}`);release();}}
+    schedule(0,poll);
+  }
+  // END android-ui: native-ui-sprites
+
   // BEGIN android-ui: deck-search
   function deckSearchMatches(name,query) {
     const normalize=value=>String(value||"").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g,"").trim();
@@ -2761,22 +2783,32 @@ function uiComponent(go, type) {
       const old=call(gridRect,"get_offsetMax"),offset={x:Number(old.field("x").value),y:Number(old.field("y").value)};
       const stale=call(parent,"Find",Il2Cpp.string("RebornDeckSearch"));
       if(!isNull(stale))ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(stale,"get_gameObject"));
-      const bar=uiNew("RebornDeckSearch",parent);uiPlace(bar,.5,1,.5,1,0,-6,760,88);
+      const bar=uiNew("RebornDeckSearch",parent);uiPlace(bar,.5,1,.5,1,0,-6,760,68);
       const image=uiAdd(bar,"UnityEngine.UI.Image");call(image,"set_color",rgba(.08,.08,.08,.96));
-      const textGO=uiNew("Text",call(bar,"get_transform"));uiStretch(uiRect(textGO));
-      call(uiRect(textGO),"set_offsetMin",vec2(18,8));call(uiRect(textGO),"set_offsetMax",vec2(-116,-8));
+      loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/input-frame",image,()=>{
+        call(image,"set_type",enumBox(image.method("set_type",1).parameters[0].type.class,1));
+      });
+      const viewport=uiNew("TextViewport",call(bar,"get_transform"));uiStretch(uiRect(viewport));
+      call(uiRect(viewport),"set_offsetMin",vec2(18,6));call(uiRect(viewport),"set_offsetMax",vec2(-96,-6));
+      try{uiAdd(viewport,"UnityEngine.UI.RectMask2D");}catch(_){}
+      const textGO=uiNew("Text",call(viewport,"get_transform"));uiStretch(uiRect(textGO));
       const label=uiText(textGO,"",32),input=uiAdd(bar,"TMPro.TMP_InputField");
-      call(input,"set_textViewport",uiRect(textGO));call(input,"set_textComponent",label);call(input,"set_targetGraphic",image);
-      const placeholderGO=uiNew("Placeholder",call(bar,"get_transform"));uiStretch(uiRect(placeholderGO));
-      call(uiRect(placeholderGO),"set_offsetMin",vec2(18,8));call(uiRect(placeholderGO),"set_offsetMax",vec2(-116,-8));
+      call(input,"set_textViewport",uiRect(viewport));call(input,"set_textComponent",label);call(input,"set_targetGraphic",image);
+      call(label,"set_alignment",uiEnum("TMPro.TextAlignmentOptions","Left"));
+      call(label,"set_enableWordWrapping",false);
+      call(input,"set_lineType",enumBox(input.method("set_lineType",1).parameters[0].type.class,0));
+      const placeholderGO=uiNew("Placeholder",call(viewport,"get_transform"));uiStretch(uiRect(placeholderGO));
       const labels={en_us:"Search decks…",ru_ru:"Поиск колод…",de_de:"Decks suchen…",es_es:"Buscar mazos…",es_mx:"Buscar mazos…",fr_fr:"Rechercher un deck…",it_it:"Cerca mazzi…",pl_pl:"Szukaj talii…",pt_br:"Buscar decks…",tr_tr:"Deste ara…"};
-      const hint=uiText(placeholderGO,labels[resourceLanguage()]||labels.en_us,30);call(hint,"set_color",rgba(.65,.65,.65,1));call(input,"set_placeholder",hint);
+      const hint=uiText(placeholderGO,labels[resourceLanguage()]||labels.en_us,30);call(hint,"set_color",rgba(.65,.65,.65,1));call(hint,"set_alignment",uiEnum("TMPro.TextAlignmentOptions","Left"));call(input,"set_placeholder",hint);
       call(input,"set_characterLimit",100);
-      const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});uiPlace(clear,1,.5,1,.5,-8,0,100,72);
+      const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});uiPlace(clear,1,.5,1,.5,-8,0,76,56);
       const clearText=call(call(clear,"get_transform"),"Find",Il2Cpp.string("Label"));
       if(!isNull(clearText))call(uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI"),"set_fontSize",32);
+      loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon",uiComponent(clear,"UnityEngine.UI.Image"),()=>{
+        if(!isNull(clearText))call(call(clearText,"get_gameObject"),"SetActive",false);
+      });
       // Shrink the scroll viewport, not its layout-driven content grid.
-      call(gridRect,"set_offsetMax",vec2(offset.x,offset.y-106));
+      call(gridRect,"set_offsetMax",vec2(offset.x,offset.y-82));
       return {self:self.ref(false),input:input.ref(false),bar:bar.ref(false),grid:gridRect.ref(false),offset,hidden:new Map()};
     }
     Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
@@ -2821,16 +2853,24 @@ function uiComponent(go, type) {
         const node=call(item.ref.target,"get_transform");node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(item.parent.target,true);
         call(node,"SetSiblingIndex",item.sibling);
         if(item.pose)for(const name of Object.keys(item.pose))call(node,"set_"+name,vec2(item.pose[name].x,item.pose[name].y));
-        if(item.button){call(item.button.target,"set_interactable",item.interactable);item.button.free();}
+        if(item.button)call(item.button.target,"set_interactable",item.interactable);
         call(item.ref.target,"SetActive",item.active);
-      }catch(_){}finally{item.ref.free();item.parent.free();}}
+      }catch(_){}finally{
+        if(item.slot){try{ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(item.slot.target);}catch(_){}item.slot.free();}
+        if(item.button)item.button.free();item.ref.free();item.parent.free();}}
     }
     function move(go,parent,button=null) {
       const node=call(go,"get_transform"),original=call(node,"get_parent");if(isNull(original))throw Error("Friends UI has no parent");
-      const item={ref:go.ref(false),parent:original.ref(false),sibling:Number(call(node,"GetSiblingIndex")),active:Boolean(call(go,"get_activeSelf")),pose:null,button:null,interactable:false};
+      const item={ref:go.ref(false),parent:original.ref(false),sibling:Number(call(node,"GetSiblingIndex")),active:Boolean(call(go,"get_activeSelf")),pose:null,button:null,interactable:false,slot:null};
       try {item.pose=matchingFriendsPose(node);}catch(_){}
-      if(button){item.button=button.ref(false);item.interactable=Boolean(call(button,"get_interactable"));call(button,"set_interactable",true);}
-      try{node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(parent,true);call(node,"SetAsLastSibling");call(go,"SetActive",true);}
+      try {if(button){item.button=button.ref(false);item.interactable=Boolean(call(button,"get_interactable"));call(button,"set_interactable",true);
+        const slot=uiNew("RebornFriendsLayoutSlot",original);item.slot=slot.ref(false);
+        const slotRect=call(slot,"get_transform");call(slotRect,"SetSiblingIndex",item.sibling);
+        if(item.pose)for(const name of Object.keys(item.pose))call(slotRect,"set_"+name,vec2(item.pose[name].x,item.pose[name].y));
+        const layout=uiAdd(slot,"UnityEngine.UI.LayoutElement"),bounds=call(node,"get_rect");
+        call(layout,"set_preferredWidth",Number(bounds.field("m_Width").value));call(layout,"set_preferredHeight",Number(bounds.field("m_Height").value));
+      }
+      node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(parent,true);call(node,"SetAsLastSibling");call(go,"SetActive",true);}
       catch(error){restore({items:[item]});throw error;}
       return item;
     }
@@ -2858,7 +2898,14 @@ function uiComponent(go, type) {
         record={items:[]};
         record.items.push(move(call(friend,"get_gameObject"),call(root,"get_parent")));
         record.items.push(move(call(button,"get_gameObject"),root,button));
-        records.set(key,record);log("matching friends: original button enabled; native click handlers preserved");
+        records.set(key,record);
+        // LayoutGroup reflows when its button is removed. Keep a placeholder in
+        // that slot and align the raised button to the slot every frame.
+        const follow=()=>{if(records.get(key)!==record)return;
+          try{const item=record.items.find(x=>x.slot);if(item)call(call(item.ref.target,"get_transform"),"set_position",call(call(item.slot.target,"get_transform"),"get_position"));}catch(_){}
+          schedule(16,follow);
+        };follow();
+        log("matching friends: original button enabled; layout slot preserved");
       }catch(error){if(record)restore(record);log(`matching friends: ${error}`);}finally{ref.free();}});
     }});
     for(const name of ["OnDisable","OnDestroy","HandleOnCancelSearch"]) {
@@ -4333,7 +4380,7 @@ const chatWindows = new Map();
   }
 
   let cachedPortCaption = "";
-  let splashVersionAnchor={x:.5,y:.30},splashAnchorReady=false;
+  let splashVersionAnchor={x:.5,y:.34},splashAnchorReady=false;
   function locateSplashVersion() {
     if(splashAnchorReady)return splashVersionAnchor;
     try {
@@ -4347,7 +4394,7 @@ const chatWindows = new Map();
         let camera=null;try{camera=call(canvas,"get_worldCamera");}catch(_){}
         const screen=ucls("UnityEngine.RectTransformUtility").method("WorldToScreenPoint",2).invoke(camera,world),size=chatScreen();
         const x=Number(screen.field("x").value)/size.width,y=Number(screen.field("y").value)/size.height;
-        if(x>.1&&x<.9&&y>.1&&y<.9){splashVersionAnchor={x,y};splashAnchorReady=true;log("loading version: anchored below native SplashWin logo");}
+        if(x>.1&&x<.9&&y>.1&&y<.9){splashVersionAnchor={x,y:Math.max(.34,y)};splashAnchorReady=true;log("loading version: anchored below native SplashWin logo");}
         break;
       }
     }catch(_){}
@@ -4530,16 +4577,18 @@ const chatWindows = new Map();
         badge = uiNew("PortVersion", call(go, "get_transform"));
         badgeBackground=uiAdd(badge,"UnityEngine.UI.Image");call(badgeBackground,"set_raycastTarget",false);
         call(badgeBackground,"set_color",rgba(0,0,0,.8));
-        try {
-          gradientTexture=ucls("UnityEngine.Texture2D").alloc();gradientTexture.method(".ctor").overload("System.Int32","System.Int32").invoke(420,1);
-          for(let x=0;x<420;x++){const t=x/419;gradientTexture.method("SetPixel").overload("System.Int32","System.Int32","UnityEngine.Color").invoke(x,0,rgba(0,0,0,Math.min(1,Math.min(t,1-t)*3)));}
-          gradientTexture.method("Apply").overload().invoke();
-          gradientSprite=ucls("UnityEngine.Sprite").method("Create").overload("UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single")
-            .invoke(gradientTexture,unityStruct("UnityEngine.Rect",{m_XMin:0,m_YMin:0,m_Width:420,m_Height:1}),vec2(.5,.5),100);
-          call(badgeBackground,"set_sprite",gradientSprite);call(badgeBackground,"set_color",rgba(1,1,1,1));
-        }catch(error){log(`loading version: gradient fallback: ${error}`);}
+        // Render the same fade with UI strips; Sprite.Create overloads are
+        // stripped in this Android player. No texture or fallback rectangle.
+        call(badgeBackground,"set_color",rgba(0,0,0,0));
+        for(let i=0;i<32;i++){
+          const strip=uiNew("Fade"+i,call(badge,"get_transform")),rect=uiRect(strip);
+          call(rect,"set_anchorMin",vec2(i/32,0));call(rect,"set_anchorMax",vec2((i+1)/32,1));
+          call(rect,"set_offsetMin",vec2(0,0));call(rect,"set_offsetMax",vec2(0,0));
+          const graphic=uiAdd(strip,"UnityEngine.UI.Image"),t=(i+.5)/32;
+          call(graphic,"set_color",rgba(0,0,0,Math.min(1,Math.min(t,1-t)*3)*.8));call(graphic,"set_raycastTarget",false);
+        }
         const badgeLabel=uiNew("RebornPluginVersion",call(badge,"get_transform"));uiStretch(uiRect(badgeLabel));
-        badgeText = uiSystemText(badgeLabel, "", 30);
+        badgeText = uiSystemText(badgeLabel, "", 26);
         try{call(badgeText,badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"set_richText":"set_supportRichText",true);}catch(_){}
         call(badgeText,"set_alignment",uiEnum(badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"TMPro.TextAlignmentOptions":"UnityEngine.TextAnchor",badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"Center":"MiddleCenter"));
         call(badgeText, "set_color", rgba(1, 1, 1, 1));
@@ -4571,7 +4620,7 @@ const chatWindows = new Map();
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {}
           const badgeAnchor=locateSplashVersion();
-          uiPlace(badge,badgeAnchor.x,badgeAnchor.y,0.5,1,0,0,Math.min(760,Math.max(240,width)),88);
+          uiPlace(badge,badgeAnchor.x,badgeAnchor.y,0.5,1,0,0,Math.min(620,Math.max(240,width)),72);
           const versionScreen=loadingVersionState();
           call(badge,"SetActive",versionScreen.visible);
           const caption = portVersionCaption();

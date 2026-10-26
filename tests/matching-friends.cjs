@@ -1,5 +1,5 @@
 const vm=require('vm'),assert=require('assert/strict'),{transformSync}=require('esbuild');
-const hooks={},queue=[];let frees=0;
+const hooks={},queue=[];let frees=0;const positionWrites=[];
 const ptr={toString:()=> 'ptr'},modalParent={id:'modal'},root={id:'seeking-root'},original={id:'original'},buttonParent={id:'buttons'};
 const friendGo={handle:{toString:()=> 'friend'},active:true},buttonGo={handle:{toString:()=> 'button'},active:true},go={handle:{toString:()=> 'go1'},active:true};
 const friend={go:friendGo},button={go:buttonGo,interactable:false,nativeClick:'original-handler'},seeker={go};
@@ -10,7 +10,8 @@ for(const node of [friendNode,buttonNode])node.method=()=>({overload:()=>({invok
 const pose={field:key=>({value:key==='x'?1:2})};
 const c={section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='MatchSeekingWin'?{method:()=>({virtualAddress:'Show'}),tryMethod:name=>({virtualAddress:Object.assign({isNull:()=>false},{toString:()=>name})})}:{type:{object:name}},
  Interceptor:{attach:(addr,hook)=>hooks[String(addr)]=hook},Il2Cpp:{Object:function(){return seeker;},string:x=>x},isNull:x=>x==null,schedule:(_,fn)=>queue.push(fn),log:()=>{},vec2:(x,y)=>({x,y}),
- ucls:()=>({method:()=>({overload:()=>({invoke:type=>({length:type==='FriendsWin'||type==='MainMenuOverlayView'?1:0,get:()=>type==='FriendsWin'?friend:{field:()=>({value:button})}})})})}),
+ uiNew:()=>{const slot={active:true,ref:()=>({target:slot,free:()=>frees++})};nodes.set(slot,{parent:buttonParent,sibling:2});return slot;},uiAdd:()=>({}),
+ ucls:name=>({method:()=>({overload:()=>({invoke:type=>(name==='UnityEngine.Object'?undefined:{length:type==='FriendsWin'||type==='MainMenuOverlayView'?1:0,get:()=>type==='FriendsWin'?friend:{field:()=>({value:button})}})})})}),
  call:(obj,name,...args)=>{
   if(name==='get_gameObject')return obj.go||obj;
   if(name==='get_activeInHierarchy'||name==='get_activeSelf')return obj.active;
@@ -21,6 +22,9 @@ const c={section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='MatchSeekingWin'?{met
   if(name==='GetSiblingIndex')return obj.sibling;
   if(name==='SetAsLastSibling'){obj.sibling=99;return;}
   if(name==='SetSiblingIndex'){obj.sibling=args[0];return;}
+  if(name==='get_rect')return {field:()=>({value:48})};
+  if(name==='get_position')return {x:10,y:20,z:0};
+  if(name==='set_position'){positionWrites.push(args[0]);return;}
   if(name==='get_interactable')return obj.interactable;
   if(name==='set_interactable'){obj.interactable=args[0];return;}
   if(name.startsWith('get_'))return pose;
@@ -28,8 +32,8 @@ const c={section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='MatchSeekingWin'?{met
   throw Error(name);
  }};
 vm.createContext(c);vm.runInContext(transformSync(require('./source.cjs')('matching-friends'),{loader:'ts'}).code,c);
-const invocation={};hooks.Show.onEnter.call(invocation,[ptr]);hooks.Show.onLeave.call(invocation);while(queue.length)queue.shift()();
-assert.equal(button.interactable,true);assert.equal(buttonNode.parent,root);assert.equal(friendNode.parent,modalParent);assert.equal(button.nativeClick,'original-handler');
-hooks.OnDisable.onEnter([ptr]);while(queue.length)queue.shift()();assert.equal(buttonNode.parent,buttonParent);assert.equal(friendNode.parent,original);assert.equal(button.interactable,false);assert.equal(buttonNode.sibling,2);assert.equal(friendNode.sibling,3);assert.equal(frees,6);
-hooks.HandleOnCancelSearch.onEnter([ptr]);while(queue.length)queue.shift()();assert.equal(frees,6);
+const invocation={};hooks.Show.onEnter.call(invocation,[ptr]);hooks.Show.onLeave.call(invocation);for(const task of queue.splice(0))task();
+assert.equal(positionWrites.length,1);assert.deepEqual(positionWrites[0],{x:10,y:20,z:0});assert.equal(button.interactable,true);assert.equal(buttonNode.parent,root);assert.equal(friendNode.parent,modalParent);assert.equal(button.nativeClick,'original-handler');
+hooks.OnDisable.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(buttonNode.parent,buttonParent);assert.equal(friendNode.parent,original);assert.equal(button.interactable,false);assert.equal(buttonNode.sibling,2);assert.equal(friendNode.sibling,3);assert.equal(frees,7);
+hooks.HandleOnCancelSearch.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(frees,7);
 console.log('PASS: original friends button is moved/enabled without replacing handlers, original panel/order/interactivity are restored exactly once');

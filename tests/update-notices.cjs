@@ -164,7 +164,7 @@ r.loadingVersionState=()=>({visible:false,scene:'Battle'});fallback.tick();
 assert.equal(objects.filter(o=>o.name==='PortVersion').at(-1).active,false,'version must not remain visible in combat');
 
 const versionPlacements=placements.filter(p=>p[0].name==='PortVersion');
-assert(versionPlacements.length);assert(versionPlacements.every(p=>p[1]===0.5&&p[2]===0.30),'caption centred below logo rather than over its text');
+assert(versionPlacements.length);assert(versionPlacements.every(p=>p[1]===0.5&&p[2]===0.34),'caption centred below logo rather than over its text');
 
 assert(r.startupVersionVisible('',false),'a missing first splash cannot hide the version mid-loading');
 assert(!r.startupVersionVisible('',true),'real menu readiness hides the version even when Scene.get_name is stripped');
