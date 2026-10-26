@@ -2396,6 +2396,65 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     });
   });
 
+  // BEGIN android-ui: store-images
+  function rebornStoreImagePath(value) {
+    return typeof value==="string" && /^AppBase\/UI\/Textures\/Store\/img_-?\d+_2$/.test(value);
+  }
+  function advanceStoreImage(io) {
+    // Operation and callback remain fields of the managed coroutine, so they
+    // stay GC-rooted throughout asynchronous loading without a JS handle map.
+    let state=io.state();
+    if(state===0) {
+      io.setState(1052);
+      io.setOperation(io.load());
+      state=1052;
+    }
+    if(state!==1052)return false;
+    const operation=io.operation();
+    if(operation && !io.isDone(operation)) {io.setCurrent(operation);return true;}
+    // Complete before callback: re-entry or a throwing callback cannot deliver twice.
+    io.setState(-1);io.setCurrent(null);
+    const sprite=operation ? io.asset(operation) : null;
+    io.setOperation(null);
+    if(sprite)io.deliver(sprite);else io.missing();
+    return false;
+  }
+  section("Reborn store image loading",()=>{
+    const owner=cls(img,"StoreImageUtils");
+    const iterator=img.classes.find(c=>c.declaringClass?.name===owner.name && /LoadStoreImageCoroutine/.test(c.name)
+      && c.fields.some(f=>f.name==="imageUrl") && c.fields.some(f=>f.name==="callback"));
+    if(!iterator)throw Error("Store image coroutine metadata unavailable");
+    const state=iterator.fields.find(f=>f.name==="$PC"),current=iterator.fields.find(f=>f.name==="$current");
+    const operation=iterator.fields.find(f=>/operation/i.test(f.name) && /AssetBundleLoadAssetOperation$/.test(f.type.name));
+    const sprite=ucls("UnityEngine.Sprite"),catalog=cls(img,"AssetCatalog");
+    const load=catalog.method("LoadAssetFromPathAsync").overload("System.String","System.Type","System.String");
+    const move=iterator.method("MoveNext",0);
+    if(!state || !current || !operation || move.virtualAddress.isNull())throw Error("Store image coroutine fields unavailable");
+    function report(kind,path) {recordResourceEvent(kind,path);log(`store image: ${kind} ${path}`);}
+    move.implementation=function() {
+      const path=String(this.field("imageUrl").value?.content||"");
+      if(!rebornStoreImagePath(path))return move.invokeRaw(this.handle);
+      const self=this;
+      try {return advanceStoreImage({
+        state:()=>Number(self.field(state.name).value),setState:value=>{self.field(state.name).value=value;},
+        operation:()=>{const value=self.field(operation.name).value;return isNull(value)?null:value;},
+        setOperation:value=>{self.field(operation.name).value=value;},
+        setCurrent:value=>{self.field(current.name).value=value;},
+        load:()=>{report("store-request",path);return catalog.method("get_Instance",0).invoke().method(load.name)
+          .overload("System.String","System.Type","System.String").invoke(Il2Cpp.string(path),sprite.type.object,Il2Cpp.string("png"));},
+        isDone:value=>Boolean(call(value,"IsDone")),
+        asset:value=>{const result=value.method("GetAsset",0).inflate(sprite).invoke();return isNull(result)?null:result;},
+        deliver:value=>{report("store-loaded",path);const callback=self.field("callback").value;if(!isNull(callback))invokeDelegatePtr(callback,value.handle);},
+        missing:()=>report("store-missing",path)
+      });}catch(error){
+        self.field(state.name).value=-1;self.field(current.name).value=null;self.field(operation.name).value=null;
+        report("store-error",path);log(`store image failure: ${error}`);return false;
+      }
+    };
+    log(`store image: direct Sprite/png loading via ${iterator.name}`);
+  });
+  // END android-ui: store-images
+
   // Trace the asset lookups of the localization data: the English text lives
   // in the "appbase/en_us" bundle, and when that lookup fails the whole user
   // interface shows the raw localization keys instead of the text.
