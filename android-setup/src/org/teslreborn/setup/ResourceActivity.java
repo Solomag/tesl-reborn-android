@@ -81,7 +81,7 @@ public class ResourceActivity extends Activity {
       }
       PackInstaller.writeJson(new File(root, "tesl-reborn-setup.json"), new JSONObject()
           .put("api", 1).put("debugInput", "android-key-events")
-          .put("androidBuild", setup.optInt("androidBuild", 46)).put("languageTransition", true));
+          .put("androidBuild", setup.optInt("androidBuild", 50)).put("languageTransition", true));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       uiCode = getPreferences(0).getString("uiLanguage", "en_us");
@@ -194,7 +194,7 @@ public class ResourceActivity extends Activity {
     scroll.addView(box);
     setContentView(scroll);
     TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 46\n" + tr("Game data setup"));
+    heading.setText("TESL Reborn · Android 50\n" + tr("Game data setup"));
     heading.setTextSize(24);
     box.addView(heading);
     TextView hint = new TextView(this);
@@ -818,7 +818,7 @@ public class ResourceActivity extends Activity {
           getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2)
               .putString("language", chosen).commit();
           PackInstaller.writeJson(new File(root, "tesl-reborn-handoff.json"), new JSONObject()
-              .put("androidBuild", 46).put("language", code).put("verified", true)
+              .put("androidBuild", 50).put("language", code).put("verified", true)
               .put("at", System.currentTimeMillis()));
           runOnUiThread(() -> startGame());
         });

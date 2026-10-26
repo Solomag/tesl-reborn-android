@@ -197,7 +197,8 @@ def patch_manifest(path):
             ANDROID + "name": "org.teslreborn.setup.LaunchActivity",
             ANDROID + "exported": "true",
             ANDROID + "process": ":resources",
-            ANDROID + "theme": "@android:style/Theme.NoDisplay",
+            ANDROID + "theme": "@style/TeslRebornTransition",
+            ANDROID + "screenOrientation": game.get(ANDROID + "screenOrientation", "sensorLandscape"),
             ANDROID + "label": "TESL Reborn",
         },
     )
@@ -690,10 +691,11 @@ def build(
         )
         setup = dict(
             schema=1,
-            androidBuild=46,
+            androidBuild=50,
             obb=obb_meta,
             defaultLanguage=default_language,
             hookFeed=hook_feed(),
+            hookRelease=json.loads((data_root() / "runtime/manifest.json").read_text(encoding="utf-8")),
             embeddedPacks=public["packs"] if embedded else [],
         )
         try:
@@ -740,7 +742,7 @@ def build(
                         languages=languages,
                         embedded=embedded,
                         format=format,
-                        androidBuild=46,
+                        androidBuild=50,
                     ),
                     indent=2,
                 ),

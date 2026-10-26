@@ -180,6 +180,8 @@ def main():
                 with zipfile.ZipFile(apk) as z:
                     assert z.testzip() is None
                     settings = json.loads(z.read("assets/tesl-reborn/setup.json"))
+                    assert settings["hookRelease"] == json.loads((repo / "runtime/manifest.json").read_text())
+                    assert any(b"PrelaunchUpdater" in z.read(name) for name in z.namelist() if name.startswith("classes") and name.endswith(".dex"))
                     assert settings["gameActivity"] == PACKAGE + ".UnityPlayerActivity"
                     assert settings["defaultLanguage"] == (
                         "system" if fmt == "apk" else "ru_ru"
@@ -253,7 +255,7 @@ def main():
                 assert "org.teslreborn.setup.ResourceActivity" in text
                 assert "org.teslreborn.setup.ScanActivity" in text
                 assert "org.teslreborn.setup.LaunchActivity" in text
-                assert "Theme.NoDisplay" in text
+                assert "@style/TeslRebornTransition" in text
                 assert "@style/TeslRebornSetup" in text
                 assert "@style/TeslRebornGame" in text
                 from xml.etree import ElementTree as ET

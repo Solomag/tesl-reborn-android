@@ -320,7 +320,7 @@ class BuilderResourcesTest(unittest.TestCase):
                 if a.get(ANDROID + "name").endswith("LaunchActivity")
             )
             self.assertEqual(
-                gate.get(ANDROID + "theme"), "@android:style/Theme.NoDisplay"
+                gate.get(ANDROID + "theme"), "@style/TeslRebornTransition"
             )
             self.assertEqual(
                 gate.find("intent-filter/action").get(ANDROID + "name"),
@@ -382,6 +382,7 @@ class BuilderResourcesTest(unittest.TestCase):
             channel = root / "data/runtime/channel.json"
             channel.parent.mkdir(parents=True)
             channel.write_text('{"feedUrl":"https://example.com/manifest.json"}')
+            (channel.parent / "manifest.json").write_text('{"revision":49}')
 
             def fake_native(base, work, vendor, setup, embedded, catalog, log):
                 out = work / "test.apk"

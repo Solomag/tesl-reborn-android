@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 47,
-  "version": "android-47-settings-event-fallback-and-placement",
-  "bytes": 358836,
-  "sha256": "444d3e872aa5ac5c8b84672cdfd3a08f8bb5b535d03db86b76b077dc2be82d56",
+  "revision": 49,
+  "version": "android-49-prelaunch-update-and-display-diagnostics",
+  "bytes": 364590,
+  "sha256": "d3034ff9f250190fead8274f56dea80932d595f2b2ee051cf4c7e19418f6485c",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "92767381f2dd6b9120ffd9e3c372b7a24c8814109b66329e5cda281644c0da30"
+  "sourceSha256": "98ddec3b305c6f651b7774ffaddb06370c2e7705219d72b801a1ce554f002789"
 }

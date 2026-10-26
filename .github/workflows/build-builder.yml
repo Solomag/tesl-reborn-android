@@ -44,6 +44,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android-setup/test_native.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python android-setup/test_prelaunch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m tests.integration_builder_apk
       - name: Create bundled Java runtime
         shell: pwsh
@@ -64,7 +66,7 @@ jobs:
           path: |
             dist/TESL-Reborn-Builder.exe
             dist/self-test.json
-            dist/android-45-46-check-ru.md
+            dist/android-49-50-check-ru.md
             dist/builder-ru.md
             dist/THIRD_PARTY_BUILDER.md
             dist/third-party-notices
@@ -99,6 +101,7 @@ jobs:
           npm run build
           npm test
           python android-setup/test_native.py
+          python android-setup/test_prelaunch.py
           python -m tests.integration_builder_apk
       - name: Bundle Java and package Linux app
         run: |

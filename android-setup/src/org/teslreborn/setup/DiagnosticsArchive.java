@@ -7,7 +7,7 @@ import java.util.zip.*;
 /** Fixed allowlist, bounded input and redaction before any file is shared. */
 public final class DiagnosticsArchive {
   private static final String[] SNAPSHOTS = {
-    "tesl-reborn-language.json", "tesl-reborn-language-state.json",
+    "tesl-reborn-prelaunch-status.json", "tesl-reborn-display-status.json", "tesl-reborn-language.json", "tesl-reborn-language-state.json",
     "tesl-reborn-update-status.json", "tesl-reborn-setup.json", "tesl-reborn-handoff.json",
     "tesl-reborn-ui-status.json", "tesl-reborn-update-notice.json", "tesl-reborn-resource-status.json"
   };

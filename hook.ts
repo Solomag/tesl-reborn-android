@@ -4199,7 +4199,18 @@ const chatWindows = new Map();
     const loading=/^(?:.*[\/ _-])?(?:loading|bootstrap|splash)(?:screen|scene|canvas|win|controller)?(?:\(clone\))?$/i;
     return loading.test(String(sceneName||"")) || names.some(name=>loading.test(String(name)));
   }
+  let startupVersionComplete=false,startupReadyHooked=false;
   let versionScreenCheck=0,versionScreenState={visible:false,scene:""};
+  function installStartupVersionTracking() {
+    try {
+      const owner=img.classes.find(c=>c.name==="MainMenuNavManager");
+      const init=owner?.methods.find(m=>m.name==="Init" && !m.isStatic && !m.virtualAddress.isNull());
+      if(init) {Interceptor.attach(init.virtualAddress,{onLeave(){startupVersionComplete=true;versionScreenCheck=0;}});startupReadyHooked=true;}
+    }catch(error){log(`loading version readiness: ${error}`);}
+  }
+  function startupVersionVisible(scene,ready) {
+    return !ready && !/^(?:mainmenu|battle|match|gameboard|login)$/i.test(String(scene||""));
+  }
   function loadingVersionState() {
     if(Date.now()<versionScreenCheck)return versionScreenState;
     versionScreenCheck=Date.now()+500;
@@ -4213,7 +4224,19 @@ const chatWindows = new Map();
         for(let i=0;i<values.length;i++){const go=call(values.get(i),"get_gameObject");if(call(go,"get_activeInHierarchy"))names.push(String(call(go,"get_name")?.content||owner.name));}
       }
     }catch(_){}
-    return versionScreenState={visible:isLoadingVersionScreen(scene,names),scene};
+    // The splash component disappears while Unity is still loading resources.
+    // Keep the version until real menu initialization, rather than that splash's lifetime.
+    if(!startupVersionComplete && !startupReadyHooked)try {
+      const owner=img.classes.find(c=>c.name==="MainMenuNavManager");
+      if(owner) {
+        const values=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(owner.type.object);
+        for(let i=0;i<values.length;i++) {
+          const go=call(values.get(i),"get_gameObject");
+          if(call(go,"get_activeInHierarchy") && Number(call(call(go,"get_transform"),"get_childCount"))>0)startupVersionComplete=true;
+        }
+      }
+    }catch(_){}
+    return versionScreenState={visible:startupVersionVisible(scene,startupVersionComplete),scene};
   }
 
   function createUpdateBanner() {
@@ -4337,6 +4360,7 @@ const chatWindows = new Map();
   }
 
   function installUpdateNotices(updater) {
+    installStartupVersionTracking();
     const banner = createUpdateBanner();
     const noticeFile = `${persistentPath()}/tesl-reborn-update-notice.json`;
     const read = path => { try { return JSON.parse(readTextFile(path) || "null"); } catch (_) { return null; } };
@@ -4361,7 +4385,12 @@ const chatWindows = new Map();
     });
     // Public HTTPS requests need no account token. Never wait for this check
     // before starting login, loading resources or entering a match.
-    schedule(1000, () => notices.check((url, callback) => httpGet(url, false, callback, true)));
+    schedule(1000, () => {
+      const prelaunch=read(`${persistentPath()}/tesl-reborn-prelaunch-status.json`);
+      const age=Date.now()-Number(prelaunch?.checkedAt);
+      if(Number.isFinite(age) && age>=0 && age<60000) {log("updater: prelaunch gate handled this start");return;}
+      notices.check((url, callback) => httpGet(url, false, callback, true));
+    });
   }
   // END android-ui: update-notices
 
@@ -4438,6 +4467,73 @@ const chatWindows = new Map();
     });
   });
   // END android-ui: resource-diagnostics
+
+  // BEGIN android-ui: display-diagnostics
+  function createDisplayTrace(write) {
+    let events=[],last="";
+    return (kind,values)=>{
+      const key=kind+JSON.stringify(values);if(kind==="sample" && key===last)return;
+      last=key;events.push({at:Date.now(),kind,...values});if(events.length>60)events.shift();
+      write({schema:1,patch:globalThis.TeslRebornUpdater?.current()?.revision,events:events.slice()});
+    };
+  }
+  section("Settings display diagnostics",()=>{
+    let watchUntil=0,root=null;
+    let pendingReport=null,flushQueued=false,lastFlush=0,lastDimensions="";
+    function flushDisplay() {
+      flushQueued=false;if(!pendingReport)return;
+      writeTextFile(`${persistentPath()}/tesl-reborn-display-status.json`,JSON.stringify(pendingReport));
+      pendingReport=null;lastFlush=Date.now();
+    }
+    const trace=createDisplayTrace(value=>{
+      // Keep every changed frame in memory, but batch disk writes so tracing
+      // does not add a synchronous write to every frame of a close animation.
+      pendingReport=value;
+      if(Date.now()-lastFlush>=100)flushDisplay();
+      else if(!flushQueued){flushQueued=true;schedule(100,flushDisplay);}
+      const event=value.events[value.events.length-1],dimensions=event.width+"x"+event.height;
+      if(event.kind!=="sample" || dimensions!==lastDimensions)log(`settings display: ${JSON.stringify(event)}`);
+      lastDimensions=dimensions;
+    });
+    function capture() {
+      const screen=chatScreen(),value:any={width:screen.width,height:screen.height};
+      if(root)try {
+        const go=root.target,transform=call(go,"get_transform");value.active=Boolean(call(go,"get_activeInHierarchy"));
+        const scale=call(transform,"get_localScale");value.localScale=["x","y","z"].map(k=>Number(scale.field(k).value));
+        const world=call(transform,"get_lossyScale");value.worldScale=["x","y","z"].map(k=>Number(world.field(k).value));
+        value.parents=[];
+        for(let node=call(transform,"get_parent"),depth=0;depth<4 && !isNull(node);depth++,node=call(node,"get_parent")) {
+          const scale=call(node,"get_localScale");
+          value.parents.push({name:String(call(node,"get_name")?.content||"").slice(0,80),scale:["x","y","z"].map(k=>Number(scale.field(k).value))});
+        }
+        const rect=call(transform,"get_rect");value.rect=[Number(rect.field("m_Width").value),Number(rect.field("m_Height").value)];
+        const canvas=go.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+        if(!isNull(canvas))value.canvasScale=Number(call(canvas,"get_scaleFactor"));
+      }catch(_){}
+      trace("sample",value);
+    }
+    const seen=new Set();
+    for(const method of ucls("UnityEngine.Screen").methods.filter(m=>m.name==="SetResolution" && m.isStatic && m.parameterCount>=2)) {
+      const key=method.virtualAddress.toString();if(method.virtualAddress.isNull()||seen.has(key))continue;seen.add(key);
+      Interceptor.attach(method.virtualAddress,{onEnter(args){
+        watchUntil=Date.now()+2000;
+        trace("SetResolution",{width:args[0].toInt32(),height:args[1].toInt32(),signature:method.parameters.map(p=>p.type.name).join(",")});
+      }});
+    }
+    Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
+      try {
+        const now=Date.now();
+        if(resourceSettingsOpen() && Number(ucls("UnityEngine.Input").method("get_touchCount",0).invoke())>0) {
+          watchUntil=now+2000;
+          if(!root)root=resourceSettingsWindow.target.ref(false);
+        }
+        if(now<watchUntil)capture();
+        else if(root){root.free();root=null;}
+      }catch(_){}
+    }});
+    log(`settings display: observing ${seen.size} resolution methods; per-frame samples after Settings touch`);
+  });
+  // END android-ui: display-diagnostics
 
   // BEGIN android-ui: unity-error-log
   let unityLogCallbackRef = null;

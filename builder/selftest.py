@@ -81,6 +81,9 @@ def run(report_path, gui=True):
             != embedded["meta"]["sha256"]
         ):
             raise RuntimeError("Bundled core hash mismatch")
+        manifest = json.loads((root / "runtime/manifest.json").read_text(encoding="utf-8"))
+        if manifest != embedded["meta"]:
+            raise RuntimeError("Prelaunch manifest differs from bundled loader")
         result.update(
             ok=True,
             core=embedded["meta"]["version"],
