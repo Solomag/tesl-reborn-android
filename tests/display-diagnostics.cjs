@@ -11,6 +11,8 @@ console.log('PASS: resolution/Canvas changes are preserved across transient samp
 const current={width:2848,height:1440,fullscreen:true};
 assert(c.redundantSettingsResolution([2848,1440,true],current,true));
 assert(c.redundantSettingsResolution([2848,1440,true,0],current,true));
-for(const [values,settings] of [[[1920,1080,true],true],[[2848,1440,false],true],[[2848,1440,true,60],true],[[2848,1440,true],false]])
+for(const [values,settings] of [[[1920,1080,true],true],[[2848,1440,true,60],true],[[2848,1440,true],false]])
  assert.equal(c.redundantSettingsResolution(values,current,settings),false);
-console.log('PASS: only redundant Settings resolution requests are skipped; real size/fullscreen/refresh changes pass through');
+console.log('PASS: only redundant Settings resolution requests are skipped; real size/refresh changes pass through; mobile fullscreen restoration is ignored');
+
+assert(c.redundantSettingsResolution([2848,1440,false],current,true),"Android Settings false fullscreen must not recreate an identical-size surface");

@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 52,
-  "version": "android-52-reborn-store-images",
-  "bytes": 371221,
-  "sha256": "e8ee186e2e22efcc2565f84880fe1c7727e77173df035844075ad25d305064c5",
+  "revision": 53,
+  "version": "android-53-store-scheduler-and-settings-surface",
+  "bytes": 371454,
+  "sha256": "cee16148e35d434b2dafd8b8d09af371e92e85b4c54e6eaa8f3ac7410aedf0e9",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "25b0a504f870ba88ed686182aa24a620de4e25ff069074903bd78348da4b7993"
+  "sourceSha256": "abbc7fb93a5a2bab11bf01804b7f84a6945b8a17c9cd70176a8b6e722c8520fc"
 }

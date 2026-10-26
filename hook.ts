@@ -2400,25 +2400,6 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   function rebornStoreImagePath(value) {
     return typeof value==="string" && /^AppBase\/UI\/Textures\/Store\/img_-?\d+_2$/.test(value);
   }
-  function advanceStoreImage(io) {
-    // Operation and callback remain fields of the managed coroutine, so they
-    // stay GC-rooted throughout asynchronous loading without a JS handle map.
-    let state=io.state();
-    if(state===0) {
-      io.setState(1052);
-      io.setOperation(io.load());
-      state=1052;
-    }
-    if(state!==1052)return false;
-    const operation=io.operation();
-    if(operation && !io.isDone(operation)) {io.setCurrent(operation);return true;}
-    // Complete before callback: re-entry or a throwing callback cannot deliver twice.
-    io.setState(-1);io.setCurrent(null);
-    const sprite=operation ? io.asset(operation) : null;
-    io.setOperation(null);
-    if(sprite)io.deliver(sprite);else io.missing();
-    return false;
-  }
   section("Reborn store image loading",()=>{
     const owner=cls(img,"StoreImageUtils");
     const iterator=img.classes.find(c=>c.declaringClass?.name===owner.name && /LoadStoreImageCoroutine/.test(c.name)
@@ -2431,26 +2412,55 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const move=iterator.method("MoveNext",0);
     if(!state || !current || !operation || move.virtualAddress.isNull())throw Error("Store image coroutine fields unavailable");
     function report(kind,path) {recordResourceEvent(kind,path);log(`store image: ${kind} ${path}`);}
+    const jobs=new Map();
+    function finish(job) {
+      if(jobs.get(job.key)!==job)return;
+      jobs.delete(job.key);
+      try {const self=job.ref.target;self.field(state.name).value=-1;self.field(current.name).value=null;self.field(operation.name).value=null;}catch(_){}
+      job.ref.free();
+    }
+    function poll(job) {
+      if(jobs.get(job.key)!==job)return;
+      try {
+        const self=job.ref.target;
+        if(!job.started) {
+          job.started=true;report("store-request",job.path);
+          // Start outside the MoveNext interceptor. Nested Frida callbacks are
+          // suppressed: starting here lets the Android bundle-path hooks run.
+          const result=catalog.method("get_Instance",0).invoke().method(load.name)
+            .overload("System.String","System.Type","System.String").invoke(Il2Cpp.string(job.path),sprite.type.object,Il2Cpp.string("png"));
+          if(isNull(result)){report("store-missing",job.path);finish(job);return;}
+          self.field(operation.name).value=result;
+        }
+        const op=self.field(operation.name).value;
+        if(call(op,"IsDone")) {
+          const asset=op.method("GetAsset",0).inflate(sprite).invoke();
+          // Terminal before callback, including callbacks that dispose/re-enter.
+          self.field(state.name).value=-1;
+          if(isNull(asset))report("store-missing",job.path);
+          else {report("store-loaded",job.path);const callback=self.field("callback").value;
+            if(!isNull(callback))invokeDelegatePtr(callback,asset.handle);}
+          finish(job);return;
+        }
+        if(Date.now()>job.deadline){report("store-timeout",job.path);finish(job);return;}
+        schedule(50,()=>poll(job));
+      }catch(error){report("store-error",job.path);log(`store image failure: ${error}`);finish(job);}
+    }
     move.implementation=function() {
       const path=String(this.field("imageUrl").value?.content||"");
       if(!rebornStoreImagePath(path))return move.invokeRaw(this.handle);
-      const self=this;
-      try {return advanceStoreImage({
-        state:()=>Number(self.field(state.name).value),setState:value=>{self.field(state.name).value=value;},
-        operation:()=>{const value=self.field(operation.name).value;return isNull(value)?null:value;},
-        setOperation:value=>{self.field(operation.name).value=value;},
-        setCurrent:value=>{self.field(current.name).value=value;},
-        load:()=>{report("store-request",path);return catalog.method("get_Instance",0).invoke().method(load.name)
-          .overload("System.String","System.Type","System.String").invoke(Il2Cpp.string(path),sprite.type.object,Il2Cpp.string("png"));},
-        isDone:value=>Boolean(call(value,"IsDone")),
-        asset:value=>{const result=value.method("GetAsset",0).inflate(sprite).invoke();return isNull(result)?null:result;},
-        deliver:value=>{report("store-loaded",path);const callback=self.field("callback").value;if(!isNull(callback))invokeDelegatePtr(callback,value.handle);},
-        missing:()=>report("store-missing",path)
-      });}catch(error){
-        self.field(state.name).value=-1;self.field(current.name).value=null;self.field(operation.name).value=null;
-        report("store-error",path);log(`store image failure: ${error}`);return false;
+      const value=Number(this.field(state.name).value);
+      if(value===0) {
+        this.field(state.name).value=1052;this.field(current.name).value=null;
+        const job={key:this.handle.toString(),ref:this.ref(false),path,deadline:Date.now()+20000,started:false};
+        jobs.set(job.key,job);schedule(0,()=>poll(job));
       }
+      return Number(this.field(state.name).value)===1052;
     };
+    const dispose=iterator.tryMethod("Dispose",0);
+    if(dispose && !dispose.virtualAddress.isNull())Interceptor.attach(dispose.virtualAddress,{onEnter(args){
+      const job=jobs.get(args[0].toString());if(job)finish(job);
+    }});
     log(`store image: direct Sprite/png loading via ${iterator.name}`);
   });
   // END android-ui: store-images
@@ -4551,7 +4561,7 @@ const chatWindows = new Map();
   // BEGIN android-ui: display-diagnostics
   function redundantSettingsResolution(values, current, inSettings) {
     return inSettings && values.length>=3 && values[0]===current.width && values[1]===current.height
-      && typeof values[2]==="boolean" && values[2]===current.fullscreen
+      && typeof values[2]==="boolean"
       && (values.length===3 || values.length===4 && values[3]===0);
   }
   function createDisplayTrace(write) {
@@ -4607,7 +4617,7 @@ const chatWindows = new Map();
         const settings=Boolean(root) && Date.now()<watchUntil || resourceSettingsOpen();
         let skip=false;
         try {const screen=chatScreen();skip=redundantSettingsResolution(values,{
-          width:screen.width,height:screen.height,fullscreen:Boolean(ucls("UnityEngine.Screen").method("get_fullScreen",0).invoke())
+          width:screen.width,height:screen.height,fullscreen:null
         },settings);}catch(_){}
         watchUntil=Date.now()+2000;
         trace(skip?"SetResolution-skipped":"SetResolution",{width:values[0],height:values[1],fullscreen:values[2],
