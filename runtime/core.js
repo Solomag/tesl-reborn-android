@@ -6736,15 +6736,23 @@ Il2Cpp.perform(() => {
   section("friends while matchmaking", () => {
     const seeking = cls(img, "MatchSeekingWin"), friends = cls(img, "FriendsWin"), records = /* @__PURE__ */ new Map();
     const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-    function restore(record) {
+    function restore(record, returningToMenu = false) {
       for (const item of record.items) {
         try {
           const node = call(item.ref.target, "get_transform");
           node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(item.parent.target, true);
           call(node, "SetSiblingIndex", item.sibling);
           if (item.pose) for (const name of Object.keys(item.pose)) call(node, "set_" + name, vec2(item.pose[name].x, item.pose[name].y));
-          if (item.button) call(item.button.target, "set_interactable", item.interactable);
           call(item.ref.target, "SetActive", item.active);
+          if (item.button) {
+            let interactable = item.interactable;
+            if (returningToMenu && item.active) try {
+              const parentGo = call(item.parent.target, "get_gameObject");
+              if (call(parentGo, "get_activeInHierarchy")) interactable = true;
+            } catch (_) {
+            }
+            call(item.button.target, "set_interactable", interactable);
+          }
         } catch (_) {
         } finally {
           if (item.slot) {
@@ -6864,7 +6872,7 @@ Il2Cpp.perform(() => {
           const key = call(new Il2Cpp.Object(args[0]), "get_gameObject").handle.toString(), record = records.get(key);
           if (record) {
             records.delete(key);
-            schedule(0, () => restore(record));
+            schedule(0, () => restore(record, true));
           }
         } catch (error) {
           log(`matching friends restore: ${error}`);
