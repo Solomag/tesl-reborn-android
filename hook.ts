@@ -2762,6 +2762,24 @@ function uiComponent(go, type) {
   // END android-ui: native-ui-sprites
 
   // BEGIN android-ui: deck-search
+  function deckSearchText(go,text,size) {
+    // Same text/input family as the PC Reborn DeckSearchField. The legacy
+    // InputField clips its own generated text and needs no TMP RectMask2D.
+    const label=uiAdd(go,"UnityEngine.UI.Text");
+    const font=ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type","System.String")
+      .invoke(ucls("UnityEngine.Font").type.object,Il2Cpp.string("Arial.ttf"));
+    if(isNull(font))throw Error("Deck search font unavailable");
+    call(label,"set_font",font);call(label,"set_fontSize",size);call(label,"set_resizeTextForBestFit",false);
+    call(label,"set_alignment",uiEnum("UnityEngine.TextAnchor","MiddleLeft"));call(label,"set_supportRichText",false);
+    call(label,"set_color",rgba(1,1,1,1));call(label,"set_raycastTarget",false);call(label,"set_text",Il2Cpp.string(text));
+    return label;
+  }
+  function deckSearchInput(go,label,image) {
+    const input=uiAdd(go,"UnityEngine.UI.InputField");
+    call(input,"set_textComponent",label);call(input,"set_targetGraphic",image);
+    call(input,"set_lineType",enumBox(input.method("set_lineType",1).parameters[0].type.class,0));
+    call(input,"set_characterLimit",100);return input;
+  }
   function deckSearchMatches(name,query) {
     const normalize=value=>String(value||"").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g,"").trim();
     return normalize(name).includes(normalize(query));
@@ -2790,17 +2808,11 @@ function uiComponent(go, type) {
       });
       const viewport=uiNew("TextViewport",call(bar,"get_transform"));uiStretch(uiRect(viewport));
       call(uiRect(viewport),"set_offsetMin",vec2(18,6));call(uiRect(viewport),"set_offsetMax",vec2(-96,-6));
-      try{uiAdd(viewport,"UnityEngine.UI.RectMask2D");}catch(_){}
       const textGO=uiNew("Text",call(viewport,"get_transform"));uiStretch(uiRect(textGO));
-      const label=uiText(textGO,"",32),input=uiAdd(bar,"TMPro.TMP_InputField");
-      call(input,"set_textViewport",uiRect(viewport));call(input,"set_textComponent",label);call(input,"set_targetGraphic",image);
-      call(label,"set_alignment",uiEnum("TMPro.TextAlignmentOptions","Left"));
-      call(label,"set_enableWordWrapping",false);
-      call(input,"set_lineType",enumBox(input.method("set_lineType",1).parameters[0].type.class,0));
+      const label=deckSearchText(textGO,"",32),input=deckSearchInput(bar,label,image);
       const placeholderGO=uiNew("Placeholder",call(viewport,"get_transform"));uiStretch(uiRect(placeholderGO));
       const labels={en_us:"Search decks…",ru_ru:"Поиск колод…",de_de:"Decks suchen…",es_es:"Buscar mazos…",es_mx:"Buscar mazos…",fr_fr:"Rechercher un deck…",it_it:"Cerca mazzi…",pl_pl:"Szukaj talii…",pt_br:"Buscar decks…",tr_tr:"Deste ara…"};
-      const hint=uiText(placeholderGO,labels[resourceLanguage()]||labels.en_us,30);call(hint,"set_color",rgba(.65,.65,.65,1));call(hint,"set_alignment",uiEnum("TMPro.TextAlignmentOptions","Left"));call(input,"set_placeholder",hint);
-      call(input,"set_characterLimit",100);
+      const hint=deckSearchText(placeholderGO,labels[resourceLanguage()]||labels.en_us,30);call(hint,"set_color",rgba(.65,.65,.65,1));call(input,"set_placeholder",hint);
       const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});uiPlace(clear,1,.5,1,.5,-8,0,76,56);
       const clearText=call(call(clear,"get_transform"),"Find",Il2Cpp.string("Label"));
       if(!isNull(clearText))call(uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI"),"set_fontSize",32);

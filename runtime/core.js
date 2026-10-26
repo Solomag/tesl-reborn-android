@@ -6472,6 +6472,28 @@ Il2Cpp.perform(() => {
     }
     schedule(0, poll);
   }
+  function deckSearchText(go, text, size) {
+    const label = uiAdd(go, "UnityEngine.UI.Text");
+    const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
+    if (isNull(font)) throw Error("Deck search font unavailable");
+    call(label, "set_font", font);
+    call(label, "set_fontSize", size);
+    call(label, "set_resizeTextForBestFit", false);
+    call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleLeft"));
+    call(label, "set_supportRichText", false);
+    call(label, "set_color", rgba(1, 1, 1, 1));
+    call(label, "set_raycastTarget", false);
+    call(label, "set_text", Il2Cpp.string(text));
+    return label;
+  }
+  function deckSearchInput(go, label, image) {
+    const input = uiAdd(go, "UnityEngine.UI.InputField");
+    call(input, "set_textComponent", label);
+    call(input, "set_targetGraphic", image);
+    call(input, "set_lineType", enumBox(input.method("set_lineType", 1).parameters[0].type.class, 0));
+    call(input, "set_characterLimit", 100);
+    return input;
+  }
   function deckSearchMatches(name, query) {
     const normalize = (value) => String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g, "").trim();
     return normalize(name).includes(normalize(query));
@@ -6520,27 +6542,15 @@ Il2Cpp.perform(() => {
       uiStretch(uiRect(viewport));
       call(uiRect(viewport), "set_offsetMin", vec2(18, 6));
       call(uiRect(viewport), "set_offsetMax", vec2(-96, -6));
-      try {
-        uiAdd(viewport, "UnityEngine.UI.RectMask2D");
-      } catch (_) {
-      }
       const textGO = uiNew("Text", call(viewport, "get_transform"));
       uiStretch(uiRect(textGO));
-      const label = uiText(textGO, "", 32), input = uiAdd(bar, "TMPro.TMP_InputField");
-      call(input, "set_textViewport", uiRect(viewport));
-      call(input, "set_textComponent", label);
-      call(input, "set_targetGraphic", image);
-      call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Left"));
-      call(label, "set_enableWordWrapping", false);
-      call(input, "set_lineType", enumBox(input.method("set_lineType", 1).parameters[0].type.class, 0));
+      const label = deckSearchText(textGO, "", 32), input = deckSearchInput(bar, label, image);
       const placeholderGO = uiNew("Placeholder", call(viewport, "get_transform"));
       uiStretch(uiRect(placeholderGO));
       const labels = { en_us: "Search decks\u2026", ru_ru: "\u041F\u043E\u0438\u0441\u043A \u043A\u043E\u043B\u043E\u0434\u2026", de_de: "Decks suchen\u2026", es_es: "Buscar mazos\u2026", es_mx: "Buscar mazos\u2026", fr_fr: "Rechercher un deck\u2026", it_it: "Cerca mazzi\u2026", pl_pl: "Szukaj talii\u2026", pt_br: "Buscar decks\u2026", tr_tr: "Deste ara\u2026" };
-      const hint = uiText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30);
+      const hint = deckSearchText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30);
       call(hint, "set_color", rgba(0.65, 0.65, 0.65, 1));
-      call(hint, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Left"));
       call(input, "set_placeholder", hint);
-      call(input, "set_characterLimit", 100);
       const clear = uiLabeledButton("Clear", call(bar, "get_transform"), "X", -8, -8, 100, () => {
         call(input, "set_text", Il2Cpp.string(""));
       });
