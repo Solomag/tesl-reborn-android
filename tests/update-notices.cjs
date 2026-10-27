@@ -281,29 +281,37 @@ console.log('PASS: with set_renderMode stripped the banner nests under a game ov
 }
 
 // Report 33: on the login form the version covered the login button. While a
-// LoginWin is open, the badge goes under its lowest button; otherwise below
-// the splash logo as before.
+// LoginWin is open, the badge goes under its lowest button, by world Y within
+// CanvasRoot (no TransformPoint: its overloads failed on the phone); otherwise
+// below the splash logo as before.
 {
- const button=(y)=>({go:{active:true},y});
- const login={buttons:{_loginBtn:button(.30),_unameForgotBtn:button(.24),_pwdForgotBtn:{go:{active:false},y:.05}},active:true};
- const saved={call:r.call,ucls:r.ucls,cls:r.cls,unityAlive:r.unityAlive,unityStruct:r.unityStruct};
- r.unityAlive=x=>x!=null;r.unityStruct=(_,f)=>f;r.cls=()=>({type:{object:'LoginWin'}});
- r.ucls=name=>name==='UnityEngine.Resources'?{method:()=>({overload:()=>({invoke:()=>({length:login.active?1:0,get:()=>login})})})}
-  :name==='UnityEngine.RectTransformUtility'?{method:()=>({invoke:(camera,world)=>({field:k=>({value:k==='y'?world.y*screen.height:world.x})})})}:saved.ucls(name);
+ const vec=(x,y)=>({field:k=>({value:k==='x'?x:y})});
+ // World units: the badge frame spans -5..5 (height 10); buttons by bottom edge.
+ const node=(y,height,scale=1)=>({pos:y,rect:{yMin:-height/2,height},scale});
+ const login={active:true,buttons:{_loginBtn:{go:{active:true},t:node(-1,1)},_unameForgotBtn:{go:{active:true},t:node(0.5,1)},_pwdForgotBtn:{go:{active:false},t:node(-4,1)}}};
+ const frame=node(0,10);
+ const saved={call:r.call,ucls:r.ucls,cls:r.cls,unityAlive:r.unityAlive};
+ r.unityAlive=x=>x!=null;r.cls=()=>({type:{object:'LoginWin'}});
+ r.ucls=name=>name==='UnityEngine.Resources'?{method:()=>({overload:()=>({invoke:()=>({length:login.active?1:0,get:()=>login})})})}:saved.ucls(name);
  login.field=n=>({value:login.buttons[n]});
  r.call=(o,n,...a)=>{
   if(o===login&&n==='get_gameObject')return {active:login.active};
-  for(const b of Object.values(login.buttons)){
-   if(o===b&&n==='get_gameObject')return b.go;if(o===b&&n==='get_transform')return b;
-   if(o===b&&n==='get_rect')return {field:k=>({value:k==='m_YMin'?0:0})};
-   if(o===b&&n==='TransformPoint')return {x:.5,y:b.y};if(o===b&&n==='get_canvas')return {};
+  for(const b of Object.values(login.buttons)){if(o===b&&n==='get_gameObject')return b.go;if(o===b&&n==='get_transform')return b.t;}
+  for(const t of [frame,...Object.values(login.buttons).map(b=>b.t)]){
+   if(o!==t)continue;
+   if(n==='get_position')return vec(0,t.pos);if(n==='get_lossyScale')return vec(t.scale,t.scale);
+   if(n==='get_rect')return {field:k=>({value:k==='m_YMin'?t.rect.yMin:t.rect.height})};
   }
-  if(n==='get_activeInHierarchy')return o.active;if(n==='get_worldCamera')return null;
+  if(n==='TransformPoint')throw Error('TransformPoint must not be used');
+  if(n==='get_activeInHierarchy')return o.active;
   return saved.call(o,n,...a);
  };
- clock+=1000;const anchor=r.locateLoginVersion();
- assert.equal(anchor.x,.5);assert(Math.abs(anchor.y-.22)<1e-9,'just under the lowest visible form button (0.24 - 0.02)');
- clock+=1000;login.active=false;assert.equal(r.locateLoginVersion(),null,'no form: the splash anchor applies');
+ clock+=1000;const anchor=r.locateLoginVersion(frame);
+ assert.equal(anchor.x,.5);
+ // Lowest visible bottom: login button at -1 - 0.5 = -1.5 -> (-1.5 + 5) / 10 = 0.35, minus 0.02.
+ assert(Math.abs(anchor.y-.33)<1e-9,'just under the lowest visible form button, hidden ones ignored: '+anchor.y);
+ assert(logs.includes('loading version: below the login form at 0.33'));
+ clock+=1000;login.active=false;assert.equal(r.locateLoginVersion(frame),null,'no form: the splash anchor applies');
  Object.assign(r,saved);
- console.log('PASS: on the login form the version goes under its lowest button, not over the login button');
+ console.log('PASS: on the login form the version goes under its lowest button, by world position within CanvasRoot');
 }

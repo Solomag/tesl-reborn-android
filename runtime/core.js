@@ -8934,7 +8934,12 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     return splashVersionAnchor;
   }
   let loginAnchorCheck = 0, loginAnchor = null, loginAnchorLogged = false;
-  function locateLoginVersion() {
+  let loginAnchorError = "";
+  function worldBottom(node) {
+    const rect = call(node, "get_rect"), scale = Number(call(node, "get_lossyScale").field("y").value);
+    return Number(call(node, "get_position").field("y").value) + Number(rect.field("m_YMin").value) * scale;
+  }
+  function locateLoginVersion(frame) {
     if (Date.now() < loginAnchorCheck) return loginAnchor;
     loginAnchorCheck = Date.now() + 500;
     loginAnchor = null;
@@ -8943,35 +8948,30 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       for (let i = 0; i < values.length; i++) {
         const self = values.get(i);
         if (!unityAlive(self) || !call(call(self, "get_gameObject"), "get_activeInHierarchy")) continue;
-        const size = chatScreen();
         let low = Infinity;
         for (const name of ["_loginBtn", "_unameForgotBtn", "_pwdForgotBtn"]) {
           const button = self.field(name).value;
           if (!unityAlive(button) || !call(call(button, "get_gameObject"), "get_activeInHierarchy")) continue;
-          const rect = call(button, "get_transform"), bounds = call(rect, "get_rect");
-          const point = unityStruct("UnityEngine.Vector3", {
-            x: Number(bounds.field("m_XMin").value) + Number(bounds.field("m_Width").value) / 2,
-            y: Number(bounds.field("m_YMin").value),
-            z: 0
-          });
-          const world = call(rect, "TransformPoint", point);
-          let camera = null;
-          try {
-            camera = call(call(button, "get_canvas"), "get_worldCamera");
-          } catch (_) {
-          }
-          const screen = ucls("UnityEngine.RectTransformUtility").method("WorldToScreenPoint", 2).invoke(camera, world);
-          low = Math.min(low, Number(screen.field("y").value) / size.height);
+          low = Math.min(low, worldBottom(call(button, "get_transform")));
         }
         if (!Number.isFinite(low)) continue;
-        loginAnchor = { x: 0.5, y: Math.max(0.12, low - 0.02) };
+        const frameRect = call(frame, "get_rect"), frameScale = Number(call(frame, "get_lossyScale").field("y").value);
+        const height = Number(frameRect.field("m_Height").value) * frameScale;
+        if (!(height > 0)) continue;
+        const y = (low - worldBottom(frame)) / height;
+        loginAnchor = { x: 0.5, y: Math.min(0.9, Math.max(0.08, y - 0.02)) };
         if (!loginAnchorLogged) {
           loginAnchorLogged = true;
           log(`loading version: below the login form at ${loginAnchor.y.toFixed(2)}`);
         }
         break;
       }
-    } catch (_) {
+    } catch (error) {
+      const detail = String(error);
+      if (detail !== loginAnchorError) {
+        loginAnchorError = detail;
+        log(`loading version: login form placement failed: ${detail}`);
+      }
     }
     return loginAnchor;
   }
@@ -9261,7 +9261,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {
           }
-          const badgeAnchor = locateLoginVersion() || locateSplashVersion();
+          const badgeAnchor = locateLoginVersion(call(root.target, "get_transform")) || locateSplashVersion();
           uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
           call(badge, "SetActive", versionScreen.visible);
           if (shownVersion !== versionScreen.visible) {
