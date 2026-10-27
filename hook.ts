@@ -3609,11 +3609,80 @@ const historyRows = new Map(), historyTargets = new Map();
 // END android-ui: history-ui
 
   // BEGIN android-ui: title-intro
-  // Temporarily disabled while investigating a crash on match entry. This hook
-  // runs in SequenceMatchIntro.Execute, the first custom hook reached as a
-  // battle opens. Restore only after an on-device match-entry check.
-  section("match intro title colour (temporarily disabled)", () => {
-    log("titles UI: match intro tint skipped during battle-entry crash investigation");
+  function titleDataByName(name) {
+    const manager = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
+    const titles = manager.field("Config").value.field("Titles").value;
+    const count = Number(call(titles, "get_Count"));
+    for (let i = 0; i < count; i++) {
+      const title = titles.method("get_Item", 1).invoke(i);
+      const id = title.field("ResourceId").value;
+      if (String(id.field("UniqueName").value?.content || "") === name) return title;
+    }
+    return null;
+  }
+  // Mirrors SequenceMatchIntroPatch in PC. SequenceMatchIntro.Execute is a
+  // coroutine: returning from it only creates the iterator, before the intro
+  // panels are filled. Execute remembers the match data; the tint runs as a
+  // scheduled task after MatchIntroWin.Show, when the panels exist. Disabled
+  // from OTA 63 to 77 while the battle-entry crash was investigated; that
+  // crash came from the friends restore (reports 20-22).
+  section("match intro title colour", () => {
+    const sequence = cls(img, "SPTESL.SequenceMatchIntro");
+    const execute = sequence.methods.find(m => m.name === "Execute" && m.parameterCount === 2 &&
+      /MatchLogAnimationData$/.test(m.parameters[0].type.name) && /BoardState$/.test(m.parameters[1].type.name));
+    if (!execute) throw Error("SequenceMatchIntro.Execute(data, boardState) not found");
+    const show = cls(img, "MatchIntroWin").tryMethod("Show", 0);
+    if (!show || show.virtualAddress.isNull()) throw Error("MatchIntroWin.Show not found");
+    const unityObject = ucls("UnityEngine.Object");
+    const alive = value => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
+    let pending = null;
+    const forget = () => { if (pending) { pending.data.free(); pending.board.free(); pending = null; } };
+    Interceptor.attach(execute.virtualAddress, {
+      onEnter(args) {
+        const start = execute.isStatic ? 0 : 1;
+        forget();
+        pending = { data: new Il2Cpp.Object(args[start]).ref(false), board: new Il2Cpp.Object(args[start + 1]).ref(false) };
+      }
+    });
+    function tint(data, board) {
+      const players = call(data.field("ActionData").value, "get_MatchIntroPlayers");
+      if (isNull(players)) return;
+      const win = board.field("MatchUI").value.field("MatchIntroWin").value;
+      if (!alive(win)) return;
+      const network = cls(img, "SPTESL.GameNetworkManager").method("get_Instance").invoke();
+      let tinted = 0;
+      for (let i = 0, count = Number(call(players, "get_Count")); i < count; i++) {
+        const player = players.method("get_Item", 1).invoke(i);
+        const types = call(player, "get_InventoryTypes");
+        const titleIndex = Number(types.method("IndexOf", 1).invoke(Il2Cpp.string("title")));
+        if (titleIndex < 0) continue;
+        const titleName = String(call(player, "get_InventoryValues").method("get_Item", 1).invoke(titleIndex)?.content || "");
+        const title = titleDataByName(titleName);
+        if (isNull(title) || enumVal(title.field("Rarity").value) !== RARITY_LEGENDARY) continue;
+        const own = enumVal(network.method("GetPlayerControllerType", 1).invoke(call(player, "get_PlayerInstanceId"))) === 0;
+        const panel = win.field(own ? "MyInfoPanel" : "UrInfoPanel").value;
+        if (!alive(panel)) continue;
+        const banner = panel.field("TitleBanner").value;
+        if (!alive(banner)) continue;
+        const resources = cls(img, "UIResourceManager").method("get_Instance").invoke();
+        const sprite = resources.method("GetTitleBannerSprite", 1).invoke(enumBox(cls(img, "SPTESL.CardRarity"), 0));
+        if (!isNull(sprite)) call(banner, "set_overrideSprite", sprite);
+        call(banner, "set_color", rgba(1, 0.75, 0, 1));
+        tinted++;
+      }
+      log(`titles UI: match intro ${tinted ? `legendary banner tinted (${tinted})` : "has no legendary title"}`);
+    }
+    Interceptor.attach(show.virtualAddress, {
+      onLeave() {
+        const match = pending; pending = null;
+        if (!match) return;
+        schedule(0, () => {
+          try { tint(match.data.target, match.board.target); }
+          catch (error) { log(`titles UI: intro tint failed: ${error}`); }
+          finally { match.data.free(); match.board.free(); }
+        }, "match intro tint");
+      }
+    });
   });
   // END android-ui: title-intro
 
@@ -4635,7 +4704,12 @@ const chatWindows = new Map();
       root = go.ref(false);
       try {
         canvas = uiAdd(go, "UnityEngine.Canvas");
-        noticeCanvasProperty(canvas, "set_renderMode", 0); // Unity ScreenSpaceOverlay.
+        // This player strips Canvas.set_renderMode but keeps the getter, and a
+        // new Canvas already renders ScreenSpaceOverlay (0). Since OTA 69 the
+        // missing setter disabled the version badge and the update banner.
+        if (canvas.tryMethod("set_renderMode", 1)) noticeCanvasProperty(canvas, "set_renderMode", 0);
+        else if (enumVal(noticeCanvasProperty(canvas, "get_renderMode")) !== 0)
+          throw Object.assign(new Error("Notice Canvas is not ScreenSpaceOverlay and set_renderMode is stripped"), { noticeCanvasUnavailable: true });
         noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
         noticeCanvasProperty(canvas, "set_scaleFactor", 1);
         canvasScale = 1;

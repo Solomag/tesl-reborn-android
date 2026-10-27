@@ -159,6 +159,7 @@ strippedBanner.show('downloading',42);strippedBanner.tick();
 assert.equal(calls.length,afterFailure,'a disabled banner stops building and retrying entirely');
 r.uiAdd=oldUiAdd;
 
+
 assert(r.isLoadingVersionScreen('Loading',[]));assert(r.isLoadingVersionScreen('', ['LoadingScreen(Clone)']));
 assert(!r.isLoadingVersionScreen('MainMenu',[]));assert(!r.isLoadingVersionScreen('Battle',[]));
 assert(!r.isLoadingVersionScreen('Login',[]));
@@ -173,3 +174,21 @@ assert(!r.startupVersionVisible('',true),'real menu readiness hides the version 
 assert(!r.startupVersionVisible('Battle',false));
 
 assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('Reborn 1.3.1-beta\n')&&String(v).includes('Android')),'original Reborn version and Android version have separate lines');
+
+// The phone's player (report 23): set_renderMode is stripped, the getter and
+// the other setters remain, and a new Canvas is already ScreenSpaceOverlay.
+// The banner and the version badge must be built, not disabled.
+const overlayOnly=(mode)=>(go,type)=>{if(type!=='UnityEngine.Canvas')return oldUiAdd(go,type);
+  const canvas=object(type),setter=canvas.tryMethod;
+  canvas.tryMethod=name=>name==='set_renderMode'?null:name==='get_renderMode'?{invoke:()=>mode}:setter(name);
+  return canvas;};
+r.uiAdd=overlayOnly(0);
+const overlayBanner=r.createUpdateBanner();overlayBanner.show('applied',41);overlayBanner.tick();
+assert(objects.some(o=>o.name==='RebornUpdateNotice'&&!o.dead),'a default overlay Canvas builds the banner without set_renderMode');
+assert(objects.some(o=>o.name==='PortVersion'&&!o.dead),'the version badge is built too');
+r.uiAdd=overlayOnly(1);
+const notices=objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).length;
+const cameraBanner=r.createUpdateBanner();cameraBanner.show('applied',41);cameraBanner.tick();
+assert.equal(objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).length,notices,'a non-overlay Canvas without the setter still disables the banner');
+r.uiAdd=oldUiAdd;
+console.log('PASS: a stripped set_renderMode no longer disables the banner when the Canvas is already ScreenSpaceOverlay');
