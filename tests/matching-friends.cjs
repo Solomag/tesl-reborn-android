@@ -62,10 +62,14 @@ assert.equal(button.interactable,true,'the button state is left to the game');
 assert.ok(logs.includes('matching friends: raised above the search window (order 40)'));
 console.log('PASS: the friends button and window are raised over the search window without being moved');
 
-// Cancel: everything goes back to the values it had. Our Canvas stays,
-// switched off; the friends window's own Canvas gets its original sorting.
+// Cancel: the sorting goes back to the values it had. Our Canvas stays
+// without the override, and our raycaster stays on: graphics under a nested
+// Canvas are only hit by that Canvas's own raycaster (report 23: switching it
+// off left a button that no longer took taps).
 hooks.HandleOnCancelSearch.onEnter([{}]);run();
-assert.equal(buttonCanvas.overrideSorting,false);assert.equal(buttonCanvas.sortingOrder,0);assert.equal(buttonRay.enabled,false);
+assert.equal(buttonCanvas.overrideSorting,false);assert.equal(buttonCanvas.sortingOrder,0);
+assert.equal(buttonRay.enabled,true,'the button keeps receiving taps after the search');
+assert.equal(friendsGo.components.get('UnityEngine.UI.GraphicRaycaster').enabled,true,'the friends panel keeps receiving taps');
 assert.equal(friendsCanvas.overrideSorting,false);assert.equal(friendsCanvas.sortingOrder,2,'an existing Canvas gets its own sorting back');
 assert.ok(logs.includes('matching friends: lowered (HandleOnCancelSearch; 2 items)'));
 hooks.OnDisable.onEnter([{}]);run();

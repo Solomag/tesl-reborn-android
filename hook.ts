@@ -3003,15 +3003,19 @@ function uiComponent(go, type) {
       else{canvas=uiAdd(go,"UnityEngine.Canvas");saved=original(canvas,()=>({override:false,order:0,layer:0}));}
       let ray=go.method("GetComponent").overload("System.Type").invoke(rayType),rayEnabled;
       if(alive(ray))rayEnabled=original(ray,()=>Boolean(call(ray,"get_enabled")));
-      else{ray=uiAdd(go,"UnityEngine.UI.GraphicRaycaster");rayEnabled=original(ray,()=>false);}
+      // A nested Canvas takes its graphics away from the parent canvas's
+      // raycaster, so the raycaster we add has to stay on after the search,
+      // or the button and the friends panel stop receiving taps (report 23).
+      else{ray=uiAdd(go,"UnityEngine.UI.GraphicRaycaster");rayEnabled=original(ray,()=>true);}
       const item={go:go.ref(false),canvas:canvas.ref(false),ray:ray.ref(false),...saved,rayEnabled};
       call(canvas,"set_overrideSorting",true);call(canvas,"set_sortingLayerID",layer);call(canvas,"set_sortingOrder",order);
       call(ray,"set_enabled",true);
       return item;
     }
     function lower(item) {
-      // A Canvas or GraphicRaycaster we added stays, switched off: removing a
-      // Canvas its raycaster depends on is refused by Unity.
+      // A Canvas or GraphicRaycaster we added stays: removing a Canvas its
+      // raycaster depends on is refused by Unity. The Canvas stops overriding
+      // the sorting; the raycaster stays on to serve the nested Canvas.
       try{
         if(alive(item.canvas.target)){call(item.canvas.target,"set_sortingLayerID",item.layer);call(item.canvas.target,"set_sortingOrder",item.order);call(item.canvas.target,"set_overrideSorting",item.override);}
         if(alive(item.ray.target))call(item.ray.target,"set_enabled",item.rayEnabled);

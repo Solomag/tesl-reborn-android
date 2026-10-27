@@ -6802,7 +6802,7 @@ Il2Cpp.perform(() => {
       if (alive(ray)) rayEnabled = original(ray, () => Boolean(call(ray, "get_enabled")));
       else {
         ray = uiAdd(go, "UnityEngine.UI.GraphicRaycaster");
-        rayEnabled = original(ray, () => false);
+        rayEnabled = original(ray, () => true);
       }
       const item = { go: go.ref(false), canvas: canvas.ref(false), ray: ray.ref(false), ...saved, rayEnabled };
       call(canvas, "set_overrideSorting", true);
