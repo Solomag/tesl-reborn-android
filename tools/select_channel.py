@@ -27,7 +27,14 @@ def main():
     name = channel_for(repository, ref)
     config["feedUrl"] = config["channels"][name]
     path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    print(f"CHANNEL: {name} for {repository} {ref}")
+    # The Builder's own version: it updates itself from the builder-<channel>
+    # release of the main repository (builder/selfupdate.py). Only that
+    # repository's builds count; others stay at build 0.
+    official = repository == STABLE_REPOSITORY
+    version = dict(channel=name, build=int(os.environ.get("GITHUB_RUN_NUMBER", "0")) if official else 0,
+                   commit=os.environ.get("GITHUB_SHA", ""))
+    (path.parents[1] / "builder/version.json").write_text(json.dumps(version) + "\n", encoding="utf-8")
+    print(f"CHANNEL: {name} for {repository} {ref}; Builder build {version['build']}")
 
 
 if __name__ == "__main__":

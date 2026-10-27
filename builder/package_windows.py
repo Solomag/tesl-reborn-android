@@ -52,6 +52,9 @@ def main():
     (bundle / "builder").mkdir()
     shutil.copyfile(ROOT / "builder/ui-text.json", bundle / "builder/ui-text.json")
     shutil.copyfile(ROOT / "builder/apk-download.js", bundle / "builder/apk-download.js")
+    # Written by tools/select_channel.py in CI; a local package is build 0.
+    if (ROOT / "builder/version.json").is_file():
+        shutil.copyfile(ROOT / "builder/version.json", bundle / "builder/version.json")
     shutil.copyfile(ROOT / "hook.js", bundle / "hook.js")
     shutil.copyfile(
         ROOT / "JNIBridge_a.patched.smali", bundle / "JNIBridge_a.patched.smali"

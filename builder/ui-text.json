@@ -790,5 +790,53 @@
     "ru_ru": "TESL Reborn · Android builder",
     "tr_tr": "TESL Reborn · Android builder",
     "es_mx": "TESL Reborn · Android builder"
+  },
+  "Check for updates": {
+    "en_us": "Check for updates",
+    "de_de": "Nach Updates suchen",
+    "es_es": "Buscar actualizaciones",
+    "es_mx": "Buscar actualizaciones",
+    "fr_fr": "Rechercher des mises à jour",
+    "it_it": "Controlla aggiornamenti",
+    "pl_pl": "Sprawdź aktualizacje",
+    "pt_br": "Verificar atualizações",
+    "ru_ru": "Проверить обновления",
+    "tr_tr": "Güncellemeleri denetle"
+  },
+  "You have the latest Builder.": {
+    "en_us": "You have the latest Builder.",
+    "de_de": "Du hast den neuesten Builder.",
+    "es_es": "Tienes el Builder más reciente.",
+    "es_mx": "Tienes el Builder más reciente.",
+    "fr_fr": "Vous avez le Builder le plus récent.",
+    "it_it": "Hai il Builder più recente.",
+    "pl_pl": "Masz najnowszy Builder.",
+    "pt_br": "Você tem o Builder mais recente.",
+    "ru_ru": "У вас последняя версия Builder.",
+    "tr_tr": "En güncel Builder sizde."
+  },
+  "Wait for the build to finish, then update.": {
+    "en_us": "Wait for the build to finish, then update.",
+    "de_de": "Warte, bis der Build fertig ist, und aktualisiere dann.",
+    "es_es": "Espera a que termine la compilación y luego actualiza.",
+    "es_mx": "Espera a que termine la compilación y luego actualiza.",
+    "fr_fr": "Attendez la fin de la compilation, puis mettez à jour.",
+    "it_it": "Attendi la fine della build, poi aggiorna.",
+    "pl_pl": "Poczekaj na koniec budowania, potem zaktualizuj.",
+    "pt_br": "Aguarde o fim da compilação e depois atualize.",
+    "ru_ru": "Дождитесь окончания сборки, затем обновите.",
+    "tr_tr": "Derlemenin bitmesini bekleyin, sonra güncelleyin."
+  },
+  "A new Builder is available. Update and restart now?": {
+    "en_us": "A new Builder is available. Update and restart now?",
+    "de_de": "Ein neuer Builder ist verfügbar. Jetzt aktualisieren und neu starten?",
+    "es_es": "Hay un Builder nuevo. ¿Actualizar y reiniciar ahora?",
+    "es_mx": "Hay un Builder nuevo. ¿Actualizar y reiniciar ahora?",
+    "fr_fr": "Un nouveau Builder est disponible. Mettre à jour et redémarrer maintenant ?",
+    "it_it": "È disponibile un nuovo Builder. Aggiornare e riavviare ora?",
+    "pl_pl": "Dostępny jest nowy Builder. Zaktualizować i uruchomić ponownie?",
+    "pt_br": "Há um novo Builder disponível. Atualizar e reiniciar agora?",
+    "ru_ru": "Доступен новый Builder. Обновить и перезапустить сейчас?",
+    "tr_tr": "Yeni bir Builder var. Şimdi güncellenip yeniden başlatılsın mı?"
   }
 }

@@ -15,7 +15,8 @@ from tkinter import ttk, filedialog, messagebox
 from tkinter import font as tkfont
 from urllib.parse import urlsplit
 
-from .build import build, application_directory
+from .build import build, application_directory, data_root
+from . import selfupdate
 from .resources import LANGUAGES, NAMES, find_assets, ensure_outside, source_roots
 from .server import ResourceServer
 
@@ -243,6 +244,16 @@ class BuilderWindow:
         )
         ttk.Checkbutton(uirow, text="Expert mode", variable=self.expert,
                         command=self.expert_changed).pack(side="right")
+        # The Builder updates itself from the main repository's releases
+        # (builder/selfupdate.py): checked at start, and on demand here.
+        self.version = selfupdate.current(data_root())
+        updates = ttk.Frame(root)
+        updates.pack(fill="x", pady=2)
+        self.version_label = ttk.Label(updates, text=self.version_text())
+        self.version_label.pack(side="left")
+        self.update_button = ttk.Button(updates, text="Check for updates",
+                                        command=lambda: self.check_updates(manual=True))
+        self.update_button.pack(side="right")
         self.translated_widgets = {}
         self.game = tk.StringVar()
         games = steam_games()
@@ -344,6 +355,55 @@ class BuilderWindow:
         self.text.pack(fill="both", expand=True, pady=8)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.after(100, self.poll)
+        if getattr(sys, "frozen", False):
+            selfupdate.cleanup()
+            self.window.after(1500, self.check_updates)
+
+    def version_text(self):
+        build = self.version["build"]
+        return "Builder " + (f"build {build}" if build else "local build") + " · " + self.version["channel"]
+
+    def check_updates(self, manual=False):
+        """Ask the release of this Builder's channel in the background."""
+        self.update_button.state(["disabled"])
+
+        def work():
+            try:
+                self.events.put(("update-offer", (selfupdate.check(self.version), manual)))
+            except Exception as error:
+                self.events.put(("update-error", (str(error), manual)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def offer_update(self, offer, manual):
+        self.update_button.state(["!disabled"])
+        if not offer:
+            if manual:
+                messagebox.showinfo("Builder", self.tr("You have the latest Builder.") + "\n" + self.version_text())
+            return
+        if not getattr(sys, "frozen", False):
+            self.log(f"Builder build {offer['build']} is available; a source checkout does not update itself.")
+            return
+        if self.running:
+            if manual:
+                messagebox.showinfo("Builder", self.tr("Wait for the build to finish, then update."))
+            return
+        if not messagebox.askyesno(
+            "Builder",
+            self.tr("A new Builder is available. Update and restart now?")
+            + f"\n{self.version_text()} → build {offer['build']}",
+        ):
+            return
+        self.update_button.state(["disabled"])
+        self.log(f"Downloading Builder build {offer['build']}…")
+
+        def work():
+            try:
+                self.events.put(("update-installed", selfupdate.install(offer)))
+            except Exception as error:
+                self.events.put(("update-error", (str(error), True)))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def translate_ui(self, parent):
         translations = json.loads(
@@ -721,6 +781,20 @@ class BuilderWindow:
                     self.stop_button.pack(side="left")
                     self.connect_button.pack(side="left", padx=8)
                     self.show_connection()
+                elif kind == "update-offer":
+                    self.offer_update(*value)
+                elif kind == "update-error":
+                    message, manual = value
+                    self.update_button.state(["!disabled"])
+                    self.log("Builder update check failed: " + message)
+                    if manual:
+                        messagebox.showerror("Builder", message)
+                elif kind == "update-installed":
+                    self.log("Builder updated. Restarting…")
+                    self.stop_server()
+                    selfupdate.restart(value)
+                    self.window.destroy()
+                    return
                 elif kind == "server-error":
                     self.server_starting = False
                     self.start_button.state(["!disabled"])

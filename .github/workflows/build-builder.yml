@@ -4,7 +4,7 @@ on:
   push:
     # main of the main repository builds the stable channel (tools/select_channel.py).
     branches: [main, android-ui-and-update-loader, portable-builder-and-resources, "sync-upstream-*"]
-    paths: ['builder/**', 'android-setup/**', '.github/workflows/build-builder.yml', 'hook.ts', 'runtime/**', 'tools/select_channel.py']
+    paths: ['builder/**', 'android-setup/**', '.github/workflows/build-builder.yml', 'hook.ts', 'runtime/**', 'tools/select_channel.py', 'tools/publish_builder.py']
 permissions:
   contents: read
 env:
@@ -12,6 +12,8 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -74,9 +76,18 @@ jobs:
             dist/THIRD_PARTY_BUILDER.md
             dist/third-party-notices
           retention-days: 14
+      - name: Publish Builder for self-update
+        # Only the main repository's channels: builder-stable from main,
+        # builder-test from the test branch (tools/publish_builder.py).
+        if: github.repository == 'ssorgatem/tesl-reborn-android' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python tools/publish_builder.py
 
   linux:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -121,3 +132,10 @@ jobs:
             dist/TESL-Reborn-Builder-Linux-x86_64.tar.gz
             dist/self-test.json
           retention-days: 14
+      - name: Publish Builder for self-update
+        # Only the main repository's channels: builder-stable from main,
+        # builder-test from the test branch (tools/publish_builder.py).
+        if: github.repository == 'ssorgatem/tesl-reborn-android' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python tools/publish_builder.py

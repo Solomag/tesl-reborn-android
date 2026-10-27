@@ -48,3 +48,4 @@ dist/
 build/
 output/
 *.spec
+builder/version.json
