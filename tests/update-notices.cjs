@@ -74,7 +74,7 @@ const objects=[],calls=[],placements=[],logs=[];
 function object(name) {
  const value={name,active:true,dead:false,class:{type:{name:"UnityEngine.UI.Text"}}};
  value.tryMethod=(method)=>({parameters:[{type:{class:{isEnum:false}}}],invoke:(...args)=>{calls.push([value,method,...args]);}});
- value.handle={equals:other=>other===value.handle};
+ const address='0x'+(objects.length+1).toString(16);value.handle={equals:other=>other===value.handle,toString:()=>address};
  value.method=method=>({overload:()=>({invoke:(...args)=>calls.push([value,method,...args])})});
  value.ref=()=>({target:value,free:()=>calls.push([value,'free'])});
  objects.push(value);return value;
@@ -235,7 +235,41 @@ console.log('PASS: with set_renderMode stripped the banner nests under a game ov
  const cameraBanner=r.createUpdateBanner();cameraBanner.show('applied',80);cameraBanner.tick();
  assert(calls.some(([v,m,p])=>m==='SetParent'&&p===camera),'the camera-space CanvasRoot hosts the notice');
  assert(!calls.some(([v,m,p])=>m==='SetParent'&&p===world),'a WorldSpace root never hosts it');
- assert(logs.some(m=>m==='update notice: nested under CanvasRoot (order 1)'));
+ assert(logs.some(m=>m.startsWith('update notice: nested under CanvasRoot (order 1); live roots')));
  r.call=call;canvasStripped=false;hosts=[];
  console.log('PASS: the camera-space CanvasRoot hosts the notice, a world-space root never does');
+}
+
+// Report 27: built under CanvasRoot, yet never seen. A loading screen can add
+// an overlay root later; while the badge should show, the notice moves there.
+{
+ canvasStripped=true;
+ const camera=object('CanvasRoot'),overlay=object('LoadingOverlay');
+ const modes=new Map([[camera,1],[overlay,0]]);
+ const call=r.call;
+ r.call=(value,method,...args)=>{
+  if(modes.has(value)&&method==='get_isRootCanvas')return true;
+  if(modes.has(value)&&method==='get_renderMode')return modes.get(value);
+  if(modes.has(value)&&method==='get_sortingOrder')return 1;
+  if(method==='get_rootCanvas')return camera;
+  if(method==='get_name')return {content:value.name};
+  return call(value,method,...args);
+ };
+ r.loadingVersionState=()=>({visible:true,scene:'Loading'});
+ hosts=[camera];clock+=60000;
+ const moving=r.createUpdateBanner();moving.tick();
+ const first=objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).at(-1);
+ assert(calls.some(([v,m,p])=>v===first&&m==='SetParent'&&p===camera));
+ hosts=[camera,overlay];clock+=500;moving.tick();
+ assert(!first.dead,'the host is not re-checked on every tick');
+ clock+=2000;moving.tick();
+ assert(first.dead,'the notice leaves the covered host');
+ assert(calls.some(([v,m,p])=>m==='SetParent'&&p===overlay),'and is rebuilt under the overlay root');
+ assert(logs.some(m=>m==='loading version: shown (scene "Loading")'));
+ // Hidden badge and no message: no further host searches.
+ r.loadingVersionState=()=>({visible:false,scene:'MainMenu'});
+ const searches=finds;clock+=5000;moving.tick();clock+=5000;moving.tick();
+ assert.equal(finds,searches,'no host search while nothing should show');
+ r.call=call;canvasStripped=false;hosts=[];
+ console.log('PASS: the notice moves to a screen Canvas that appears above its host while it should show');
 }

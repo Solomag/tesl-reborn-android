@@ -4680,6 +4680,7 @@ const chatWindows = new Map();
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
+    let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     // Unity's own null check: a destroyed object compares equal to null
@@ -4693,7 +4694,7 @@ const chatWindows = new Map();
       const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
         .invoke(ucls("UnityEngine.Canvas").type.object);
       let host = null, rank = -Infinity;
-      const seen = [];
+      const seen = hostRoots = [];
       for (let i = 0; i < values.length; i++) {
         const candidate = values.get(i);
         if (!alive(candidate) || !call(candidate, "get_isRootCanvas")) continue;
@@ -4723,12 +4724,23 @@ const chatWindows = new Map();
       gradientTexture=gradientSprite=badgeBackground=null;
       root = label = canvas = panel = badge = badgeText = null;
     }
-    function ensure() {
+    function ensure(wanted) {
       if (disabled) return;
+      let better = null;
       if (root) {
         // A banner nested in a game Canvas goes away with that Canvas's scene.
-        if (alive(root.target)) return;
-        discard();
+        if (!alive(root.target)) discard();
+        else {
+          // The host is chosen as soon as one exists, and a loading screen may
+          // put a later screen Canvas above it (report 27: built under
+          // CanvasRoot, yet never seen). While the badge or a message should
+          // show, move to a better host when one appears.
+          if (!nested || !wanted || Date.now() < hostCheckAt) return;
+          hostCheckAt = Date.now() + 2000;
+          better = overlayHost();
+          if (!better || better.handle.toString() === hostKey) return;
+          discard();
+        }
       }
       // This player strips Canvas.set_renderMode, and a new root Canvas does
       // not render as an overlay (report 24); since OTA 69 that hid the
@@ -4737,12 +4749,13 @@ const chatWindows = new Map();
       // mechanism that raises the friends button. Game UI is never moved.
       // Without a host yet (early startup), look again in 2 s, building nothing.
       nested = !ucls("UnityEngine.Canvas").tryMethod("set_renderMode", 1);
-      let host = null;
-      if (nested) {
+      let host = better;
+      if (nested && !host) {
         if (Date.now() < hostRetryAt) return;
         host = overlayHost();
         if (!host) { hostRetryAt = Date.now() + 2000; return; }
       }
+      if (host) { hostKey = host.handle.toString(); hostCheckAt = Date.now() + 2000; }
       // The first frame may precede the game's fonts. Keep the message queued
       // and retry later instead of delaying authentication or failing startup.
       const go = newWith(ucls("UnityEngine.GameObject"), Il2Cpp.string("RebornUpdateNotice"),
@@ -4761,7 +4774,7 @@ const chatWindows = new Map();
           noticeCanvasProperty(canvas, "set_overrideSorting", true);
           noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
           canvasScale = Number(call(host, "get_scaleFactor")) || 1;
-          log(`update notice: nested under ${String(call(call(host, "get_gameObject"), "get_name")?.content || "?")} (order ${Number(call(host, "get_sortingOrder"))})`);
+          log(`update notice: nested under ${String(call(call(host, "get_gameObject"), "get_name")?.content || "?")} (order ${Number(call(host, "get_sortingOrder"))}); live roots ${hostRoots.slice(0, 12).join(", ")}`);
         }
         // No CanvasScaler or CanvasGroup: both may lose unused setters in this
         // mobile player. Every graphic is non-raycastable and has no handlers.
@@ -4815,7 +4828,8 @@ const chatWindows = new Map();
           message = null;
         }
         try {
-          ensure();
+          const versionScreen=loadingVersionState();
+          ensure(versionScreen.visible || Boolean(message));
           // No host yet: nothing was built; the message stays queued (report 25:
           // this tick went on with a null Canvas and never got past it).
           if (!root) return;
@@ -4836,8 +4850,12 @@ const chatWindows = new Map();
           } catch (_) {}
           const badgeAnchor=locateSplashVersion();
           uiPlace(badge,badgeAnchor.x,badgeAnchor.y,0.5,1,0,0,Math.min(620,Math.max(240,width)),72);
-          const versionScreen=loadingVersionState();
           call(badge,"SetActive",versionScreen.visible);
+          // The status file keeps only the last state; the log keeps each change.
+          if (shownVersion !== versionScreen.visible) {
+            shownVersion = versionScreen.visible;
+            log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);
+          }
           const caption = portVersionCaption();
           call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android")+"</size>"));
           const signature=caption+":"+versionScreen.visible+":"+versionScreen.scene;

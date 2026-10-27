@@ -8902,13 +8902,14 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
+    let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
     function overlayHost() {
       const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
       let host = null, rank = -Infinity;
-      const seen = [];
+      const seen = hostRoots = [];
       for (let i = 0; i < values.length; i++) {
         const candidate = values.get(i);
         if (!alive(candidate) || !call(candidate, "get_isRootCanvas")) continue;
@@ -8945,21 +8946,32 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
       gradientTexture = gradientSprite = badgeBackground = null;
       root = label = canvas = panel = badge = badgeText = null;
     }
-    function ensure() {
+    function ensure(wanted) {
       if (disabled) return;
+      let better = null;
       if (root) {
-        if (alive(root.target)) return;
-        discard();
+        if (!alive(root.target)) discard();
+        else {
+          if (!nested2 || !wanted || Date.now() < hostCheckAt) return;
+          hostCheckAt = Date.now() + 2e3;
+          better = overlayHost();
+          if (!better || better.handle.toString() === hostKey) return;
+          discard();
+        }
       }
       nested2 = !ucls("UnityEngine.Canvas").tryMethod("set_renderMode", 1);
-      let host = null;
-      if (nested2) {
+      let host = better;
+      if (nested2 && !host) {
         if (Date.now() < hostRetryAt) return;
         host = overlayHost();
         if (!host) {
           hostRetryAt = Date.now() + 2e3;
           return;
         }
+      }
+      if (host) {
+        hostKey = host.handle.toString();
+        hostCheckAt = Date.now() + 2e3;
       }
       const go = newWith(
         ucls("UnityEngine.GameObject"),
@@ -8980,7 +8992,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
           noticeCanvasProperty(canvas, "set_overrideSorting", true);
           noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
           canvasScale = Number(call(host, "get_scaleFactor")) || 1;
-          log(`update notice: nested under ${String(call(call(host, "get_gameObject"), "get_name")?.content || "?")} (order ${Number(call(host, "get_sortingOrder"))})`);
+          log(`update notice: nested under ${String(call(call(host, "get_gameObject"), "get_name")?.content || "?")} (order ${Number(call(host, "get_sortingOrder"))}); live roots ${hostRoots.slice(0, 12).join(", ")}`);
         }
         panel = uiNew("Banner", call(go, "get_transform"));
         const background = uiAdd(panel, "UnityEngine.UI.Image");
@@ -9040,7 +9052,8 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
           message = null;
         }
         try {
-          ensure();
+          const versionScreen = loadingVersionState();
+          ensure(versionScreen.visible || Boolean(message));
           if (!root) return;
           const screen = chatScreen();
           const scale = nested2 ? Math.max(0.1, Number(call(call(canvas, "get_rootCanvas"), "get_scaleFactor")) || canvasScale) : Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
@@ -9058,8 +9071,11 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
           }
           const badgeAnchor = locateSplashVersion();
           uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
-          const versionScreen = loadingVersionState();
           call(badge, "SetActive", versionScreen.visible);
+          if (shownVersion !== versionScreen.visible) {
+            shownVersion = versionScreen.visible;
+            log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);
+          }
           const caption = portVersionCaption();
           call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android") + "</size>"));
           const signature = caption + ":" + versionScreen.visible + ":" + versionScreen.scene;

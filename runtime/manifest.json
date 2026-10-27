@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 81,
-  "version": "android-81-notice-in-camera-canvas",
-  "bytes": 397156,
-  "sha256": "56be22315bef7cacc1e19cce5b38b415c14e46155331e87b28e835831f5782b0",
+  "revision": 82,
+  "version": "android-82-notice-follows-better-host",
+  "bytes": 397967,
+  "sha256": "891c1e26765d3235f3463bc301b0c95cb71e8e1315819f409c62b6760401371d",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "20382c9bd1a8c1c9b400f3f6c48a313036e66c416c156c19af08a929ced23c33"
+  "sourceSha256": "ea9047e7ddb3bd70a24370c46aee605d66439790132c8b88c0df49154f1956ce"
 }
