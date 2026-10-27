@@ -140,7 +140,9 @@ public final class LaunchActivity extends Activity {
         if(!found.newer()){startGame("running-"+found.status);return;}
         handler.removeCallbacksAndMessages(null);
         screen("");
-        progress.setText(String.format(tr("Reborn update %d is available. Restart the game to apply it. An unfinished match will be lost."),
+        // Matches live on the server: the restarted game rejoins one in
+        // progress (api/match/rejoin at startup), so nothing is lost.
+        progress.setText(String.format(tr("Reborn update %d is available. Restart the game to apply it."),
           found.manifest.optLong("revision")));
         button("Restart now",()->restart(root,setup));
         button("Back to the game",()->startGame("running-declined"));

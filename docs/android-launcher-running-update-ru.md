@@ -20,7 +20,7 @@ APK в Builder.
   без скачивания и без записи состояния — пока Unity работает, менять
   `state.json` нельзя.
 - Есть новая ревизия → экран «Reborn update N is available. Restart the game to
-  apply it. An unfinished match will be lost.» с кнопками **Restart now** и
+  apply it.» с кнопками **Restart now** и
   **Back to the game**.
 - **Restart now**: процесс игры завершается (`GameProcess.stop`, тот же код, что
   уже использовал `ResourceActivity`), затем обычная предзапусковая проверка
