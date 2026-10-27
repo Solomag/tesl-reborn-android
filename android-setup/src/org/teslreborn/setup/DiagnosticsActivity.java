@@ -37,18 +37,17 @@ public final class DiagnosticsActivity extends Activity {
 
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
-    getWindow().setStatusBarColor(0xff171b22); getWindow().setNavigationBarColor(0xff171b22);
-    LinearLayout box = new LinearLayout(this); box.setOrientation(1); box.setPadding(28,28,28,28);
-    ScrollView scroll = new ScrollView(this); scroll.addView(box); setContentView(scroll);
-    TextView heading = new TextView(this); heading.setText(tr("Diagnostics")); heading.setTextSize(26); box.addView(heading);
-    status = new TextView(this); status.setTextIsSelectable(true);
+    LinearLayout box = UiStyle.page(this);
+    UiStyle.heading(this, box, tr("Diagnostics"));
     String version = "TESL Reborn · APK 50";
     try {
       JSONObject current = PackInstaller.json(new File(getExternalFilesDir(null), "tesl-reborn-update-status.json")).optJSONObject("current");
       if (current != null) version += "\nPatch " + current.optInt("revision") + " · " + current.optString("version");
     } catch (Exception ignored) {}
-    status.setText(version + "\n\n" + tr("Share logs and version details.")); box.addView(status);
-    share = new Button(this); share.setText(tr("Share diagnostic report")); box.addView(share);
+    status = UiStyle.body(this, box, version + "\n\n" + tr("Share logs and version details."));
+    status.setTextIsSelectable(true);
+    share = new Button(this); share.setText(tr("Share diagnostic report"));
+    UiStyle.button(this, share, true); box.addView(share);
     share.setOnClickListener(view -> export());
   }
 

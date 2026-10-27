@@ -187,26 +187,20 @@ public class ResourceActivity extends Activity {
 
   private void buildUi() {
     actions.clear();
-    ScrollView scroll = new ScrollView(this);
-    LinearLayout box = new LinearLayout(this);
-    box.setOrientation(1);
-    box.setPadding(24, 24, 24, 24);
-    scroll.addView(box);
-    setContentView(scroll);
-    TextView heading = new TextView(this);
-    heading.setText("TESL Reborn · Android 50\n" + tr("Game data setup"));
-    heading.setTextSize(24);
-    box.addView(heading);
-    TextView hint = new TextView(this);
-    hint.setText(
+    // The game's look: dark page, gold titles and actions, sizes in dp, and a
+    // centred column instead of controls spanning a wide landscape screen.
+    LinearLayout box = UiStyle.page(this);
+    UiStyle.heading(this, box, tr("Game data setup"));
+    UiStyle.version(this, box, setup.optInt("androidBuild", 50));
+    UiStyle.body(
+        this,
+        box,
         tr(
             "Choose a game language. To download from your PC, start transfer in the builder and"
                 + " scan its QR code. Wi-Fi and Tailscale need no certificate."));
-    box.addView(hint);
-    TextView interfaceLabel = new TextView(this);
-    interfaceLabel.setText(tr("Interface language"));
-    box.addView(interfaceLabel);
+    UiStyle.label(this, box, tr("Interface language"));
     uiLanguage = new Spinner(this);
+    UiStyle.field(this, uiLanguage);
     uiLanguage.setAdapter(
         new ArrayAdapter<String>(
             this,
@@ -234,11 +228,10 @@ public class ResourceActivity extends Activity {
             }
           }
         });
-    TextView gameLabel = new TextView(this);
-    gameLabel.setText(tr("Game language at launch"));
-    box.addView(gameLabel);
+    UiStyle.label(this, box, tr("Game language at launch"));
     String savedGameSelection = selection();
     language = new Spinner(this);
+    UiStyle.field(this, language);
     language.setAdapter(
         new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, LABELS));
     box.addView(language);
@@ -247,6 +240,7 @@ public class ResourceActivity extends Activity {
     Button system = new Button(this);
     system.setText(tr("Use system language for the game"));
     system.setOnClickListener(v -> language.setSelection(0));
+    UiStyle.button(this, system, false);
     box.addView(system);
     actions.add(system);
     LinearLayout advanced = new LinearLayout(this);
@@ -258,6 +252,7 @@ public class ResourceActivity extends Activity {
     address.setInputType(
         android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
     address.setText(getPreferences(0).getString("address", ""));
+    UiStyle.field(this, address);
     advanced.addView(address);
     token = new EditText(this);
     token.setSingleLine(true);
@@ -265,6 +260,7 @@ public class ResourceActivity extends Activity {
     token.setInputType(
         android.text.InputType.TYPE_CLASS_TEXT
             | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+    UiStyle.field(this, token);
     advanced.addView(token);
     button(
         box,
@@ -278,6 +274,7 @@ public class ResourceActivity extends Activity {
     cancelConnection.setText(android.R.string.cancel);
     cancelConnection.setVisibility(View.GONE);
     cancelConnection.setOnClickListener(v -> cancelCatalog());
+    UiStyle.button(this, cancelConnection, false);
     box.addView(cancelConnection);
     button(
         advanced,
@@ -320,9 +317,9 @@ public class ResourceActivity extends Activity {
     addDiagnosticsAndUpdates(advanced);
     box.addView(advanced);
     launch = button(box, "Launch game", () -> launchGame());
-    status = new TextView(this);
+    UiStyle.button(this, launch, true);
+    status = UiStyle.body(this, box, "");
     status.setTextIsSelectable(true);
-    box.addView(status);
     language.setOnItemSelectedListener(
         new android.widget.AdapterView.OnItemSelectedListener() {
           public void onNothingSelected(android.widget.AdapterView<?> parent) {}
@@ -357,6 +354,7 @@ public class ResourceActivity extends Activity {
       Switch updates = new Switch(this);
       updates.setText(tr("Automatic patch updates"));
       updates.setChecked(config.optBoolean("enabled", true));
+      updates.setTextColor(UiStyle.TEXT);
       updates.setOnCheckedChangeListener(
           (button, enabled) -> {
             try {
@@ -382,9 +380,11 @@ public class ResourceActivity extends Activity {
       }
       if (config.optBoolean("safeMode", false)) info += "\nSafe mode";
       updateInfo.setText(info);
+      updateInfo.setTextColor(UiStyle.TEXT);
       box.addView(updateInfo);
       TextView source = new TextView(this);
       source.setText(config.optString("feedUrl", ""));
+      source.setTextColor(UiStyle.MUTED);
       source.setTextIsSelectable(true);
       box.addView(source);
       Switch marker = new Switch(this);
@@ -397,6 +397,7 @@ public class ResourceActivity extends Activity {
       } catch (Exception ignored) {
       }
       marker.setChecked(visible);
+      marker.setTextColor(UiStyle.TEXT);
       marker.setOnCheckedChangeListener(
           (button, enabled) -> {
             try {
@@ -418,6 +419,7 @@ public class ResourceActivity extends Activity {
     actions.add(b);
     b.setText(tr(text));
     b.setOnClickListener(v -> action.run());
+    UiStyle.button(this, b, false);
     box.addView(b);
     return b;
   }
