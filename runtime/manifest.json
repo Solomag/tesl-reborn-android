@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 72,
-  "version": "android-72-friends-restore-and-hot-path-fixes",
-  "bytes": 390779,
-  "sha256": "97954140c2a9d387a774a99d95331db21f4d76d67668510cf88e94eb0b77d665",
+  "revision": 73,
+  "version": "android-73-friends-diagnostics-and-stall-attribution",
+  "bytes": 395730,
+  "sha256": "779c963767a018d5c6bcbc8575b7624d6a50c78ff8c313d0454aa7ad1214960f",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "718f85af2eea3247e7e345a02c00e8a27127805a45b0e4c9813d771253b26524"
+  "sourceSha256": "91f2e653b57f7b76c0d0f4dbff7f6059d4396b70d77abb717d17d7513d861087"
 }

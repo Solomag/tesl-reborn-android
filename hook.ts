@@ -879,9 +879,9 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // handed to Unity's synchronisation context: calling managed code straight
   // from inside a hook would nest the interceptor callbacks, and Frida cannot
   // run those (the request would then not be rewritten).
-  const pending: { at: number; fn: () => void }[] = [];
-  function schedule(delayMs: number, fn: () => void) {
-    pending.push({ at: Date.now() + delayMs, fn });
+  const pending: { at: number; fn: () => void; tag?: string }[] = [];
+  function schedule(delayMs: number, fn: () => void, tag?: string) {
+    pending.push({ at: Date.now() + delayMs, fn, tag });
   }
   function runPending() {
     const now = Date.now();
@@ -890,7 +890,15 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       const task = pending.splice(i, 1)[0];
       try {
         Il2Cpp.mainThread.schedule(() => {
+          const started = Date.now();
           try { task.fn(); } catch (e) { log(`scheduled task failed: ${e}`); }
+          // Deferred hook work runs on the main thread, so a slow task is a
+          // hitch the player feels. Name it instead of folding it into a
+          // faceless stall report, and count it for the stall probe.
+          const took = Date.now() - started;
+          const probe = (globalThis as any).__teslRebornStallProbe;
+          if (probe) probe.tasks++;
+          if (took >= 100) log(`scheduled task slow ${took}ms (${task.tag || "untagged"})`);
         });
       } catch (e) { log(`could not schedule a task: ${e}`); }
     }
@@ -906,18 +914,25 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // blocked: every hook writes timestamped messages to the port log, so the
   // last message before a reported stall names the code that ran right before
   // it. The probe only observes; long gaps after the app was backgrounded are
-  // ignored, and it reports at most once per second.
+  // ignored, and it reports at most once per second. Hitches the player feels
+  // in a match are shorter than the loading ones, so 200ms is the floor, and
+  // the report carries counters of what the blocked window executed: deferred
+  // hook tasks and asset lookups (the trace counts each lookup once even when
+  // nested overloads deliver it twice).
   // BEGIN android-ui: stall-probe
   section("main loop stall probe", () => {
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    const probe = (globalThis as any).__teslRebornStallProbe = { loads: 0, tasks: 0 };
     let last = Date.now(), quietUntil = 0;
     Interceptor.attach(update.virtualAddress, {
       onEnter() {
         const now = Date.now(), gap = now - last;
         last = now;
-        if (gap >= 400 && gap < 60000 && now >= quietUntil) {
+        const loads = probe.loads, tasks = probe.tasks;
+        probe.loads = 0; probe.tasks = 0;
+        if (gap >= 200 && gap < 60000 && now >= quietUntil) {
           quietUntil = now + 1000;
-          log(`main loop stalled ${gap}ms`);
+          log(`main loop stalled ${gap}ms` + ((loads || tasks) ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
         }
       },
     });
@@ -1008,7 +1023,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       const method = cls(img, "SparkleServices.Inventory").method(name);
       if (!method) continue;
       Interceptor.attach(method.virtualAddress, {
-        onLeave() { schedule(1000, () => refreshDeckStats(true)); },
+        onLeave() { schedule(1000, () => refreshDeckStats(true), "deck stats refresh"); },
       });
     }
 
@@ -2371,8 +2386,8 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       Interceptor.attach(render.virtualAddress, { onEnter() { maintainTitleListColours(); } });
       log("titles UI: list colour guard uses Canvas render callback");
     } else {
-      const tick = () => { maintainTitleListColours(); schedule(100, tick); };
-      schedule(100, tick);
+      const tick = () => { maintainTitleListColours(); schedule(100, tick, "title colours"); };
+      schedule(100, tick, "title colours");
       log("titles UI: list colour guard uses main-thread scheduler");
     }
   });
@@ -2472,7 +2487,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           finish(job);return;
         }
         if(Date.now()>job.deadline){report("store-timeout",job.path);finish(job);return;}
-        schedule(50,()=>poll(job));
+        schedule(50,()=>poll(job),"store image poll");
       }catch(error){report("store-error",job.path);log(`store image failure: ${error}`);finish(job);}
     }
     // Intercept the factory itself: Unity may dispatch IEnumerator.MoveNext
@@ -2490,7 +2505,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         if(jobs.size>=64){report("store-busy",path);return;}
         const key=self.handle.toString();if(jobs.has(key))return;
         const job={key,ref:self.ref(false),path,deadline:Date.now()+20000,started:false};
-        jobs.set(key,job);report("store-queued",path);schedule(0,()=>poll(job));
+        jobs.set(key,job);report("store-queued",path);schedule(0,()=>poll(job),"store image poll");
       }catch(error){log(`store image factory failure: ${error}`);}
     }});
     log(`store image: direct Sprite/png loading via ${iterator.name}`);
@@ -2502,10 +2517,19 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // interface shows the raw localization keys instead of the text.
   section("localization asset trace", () => {
     const catalog = cls(img, "AssetCatalog");
+    let lastEnterPath = "", lastLoggedPath = "", lastLoggedAt = 0;
     for (const m of catalog.methods.filter(x => x.name === "LoadAssetFromPathAsync")) {
       Interceptor.attach(m.virtualAddress, {
         onEnter(args) {
           this.path = rawStr(args[1]);
+          // The overloads call each other, so one lookup enters both hooks
+          // back to back with the same path: count the pair once for the
+          // stall probe.
+          if (this.path !== lastEnterPath) {
+            lastEnterPath = this.path;
+            const probe = (globalThis as any).__teslRebornStallProbe;
+            if (probe) probe.loads++;
+          }
           // Only the localization assets depend on the selected language, and
           // this hook runs for every asset load: reading the preference file
           // for the rest of them is pure disk traffic on the loading path.
@@ -2522,6 +2546,10 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           recordResourceEvent(ret.isNull() ? "asset-null" : "asset-operation", this.path);
           const path = this.path ?? "";
           if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
+          // The twin hook reports the same lookup a moment later: collapsing
+          // the repeat keeps the port log readable without losing a failure.
+          if (path === lastLoggedPath && Date.now() - lastLoggedAt < 100) return;
+          lastLoggedPath = path; lastLoggedAt = Date.now();
           log(`LoadAssetFromPathAsync("${path}") -> ${ret.isNull() ? "NULL (not in the asset map)" : "ok"}`);
         },
       });
@@ -2931,7 +2959,7 @@ function uiComponent(go, type) {
         // A failed scan does not mean that an open window was closed.
         if(scanned){for(const [key,record] of records)if(!live.has(key)){cleanup(record);records.delete(key);}
           for(const key of retries.keys())if(!live.has(key))retries.delete(key);}
-      });
+      },"deck search scan");
     }});
   });
   // END android-ui: deck-search
@@ -2945,7 +2973,22 @@ function uiComponent(go, type) {
   section("friends while matchmaking",()=>{
     const seeking=cls(img,"MatchSeekingWin"),friends=cls(img,"FriendsWin"),records=new Map();
     const find=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-    function restore(record, returningToMenu = false) {
+    // Whichever menu view exposes _friendsBtn and is the most live wins; the
+    // search window and the menu check both ask for it the same way.
+    function findFriendsButton() {
+      let button=null,score=-1;
+      for(const name of ["MainMenuOverlayView","MainMenuWin","OverlayMenu"])try{
+        const values=find.invoke(cls(img,name).type.object);
+        for(let i=0;i<values.length;i++){
+          const value=values.get(i).field("_friendsBtn").value;if(isNull(value))continue;
+          const owner=call(value,"get_gameObject"),rank=call(owner,"get_activeInHierarchy")?2:call(owner,"get_activeSelf")?1:0;
+          if(rank>score){button=value;score=rank;}
+        }
+      }catch(_){}
+      return button;
+    }
+    function restore(record, returningToMenu = false, source = "close") {
+      log(`matching friends: restore (${source}${returningToMenu ? ", returning to menu" : ""}; ${record.items.length} item${record.items.length === 1 ? "" : "s"})`);
       for(const item of record.items){try{
         const node=call(item.ref.target,"get_transform");node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(item.parent.target,true);
         call(node,"SetSiblingIndex",item.sibling);
@@ -2964,23 +3007,34 @@ function uiComponent(go, type) {
             const button=item.button.target.ref(false),parent=item.parent.target.ref(false),self=item.ref.target.ref(false);
             let waits=0,applies=0;
             const settle=()=>{
-              let again=false;
+              let again=false,stopped="";
               try{
                 if(call(call(parent.target,"get_gameObject"),"get_activeInHierarchy")){
                   call(self.target,"SetActive",true);
                   call(button.target,"set_interactable",true);
                   again=++applies<4;
                 }else again=++waits<60;
-              }catch(_){again=false;}
-              if(again)schedule(500,settle);
-              else{button.free();parent.free();self.free();}
+              }catch(error){again=false;stopped=` (${error})`;}
+              if(again)schedule(500,settle,"matching friends settle");
+              else{
+                // This line is what the device log has to show: the button
+                // came back, the menu never became active, or the objects went
+                // away underneath the wait.
+                if(stopped)log(`matching friends: re-assert stopped${stopped}`);
+                else if(applies)log(`matching friends: re-assert applied ${applies}x`);
+                else log(`matching friends: re-assert gave up: the menu never became active`);
+                button.free();parent.free();self.free();
+              }
             };
             settle();
+          } else if(returningToMenu) {
+            log(`matching friends: re-assert skipped: the button was ${item.active ? "hidden" : "inactive"} when it was moved`);
           }
         }
       }catch(_){}finally{
         if(item.slot){try{ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(item.slot.target);}catch(_){}item.slot.free();}
         if(item.button)item.button.free();item.ref.free();item.parent.free();}}
+      if(record.window)record.window.free();
     }
     function move(go,parent,button=null) {
       const node=call(go,"get_transform"),original=call(node,"get_parent");if(isNull(original))throw Error("Friends UI has no parent");
@@ -2994,7 +3048,7 @@ function uiComponent(go, type) {
         call(layout,"set_preferredWidth",Number(bounds.field("m_Width").value));call(layout,"set_preferredHeight",Number(bounds.field("m_Height").value));
       }
       node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(parent,true);call(node,"SetAsLastSibling");call(go,"SetActive",true);}
-      catch(error){restore({items:[item]});throw error;}
+      catch(error){restore({items:[item]},false,"move rollback");throw error;}
       return item;
     }
     const show=seeking.method("Show");
@@ -3002,42 +3056,89 @@ function uiComponent(go, type) {
       const ref=new Il2Cpp.Object(this.self).ref(false);schedule(0,()=>{let record=null,key="";try{
         const go=call(ref.target,"get_gameObject"),root=call(go,"get_transform");key=go.handle.toString();
         if(!call(go,"get_activeInHierarchy"))return;
-        if(records.has(key)){restore(records.get(key));records.delete(key);}
+        if(records.has(key)){const stale=records.get(key);records.delete(key);restore(stale,false,"search reopened");}
         // Remove the obsolete custom button if a previous version left one.
         const old=call(root,"Find",Il2Cpp.string("RebornMatchingFriends"));if(!isNull(old))ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old,"get_gameObject"));
-        let button=null,score=-1;
-        for(const name of ["MainMenuOverlayView","MainMenuWin","OverlayMenu"])try{
-          const values=find.invoke(cls(img,name).type.object);
-          for(let i=0;i<values.length;i++){
-            const value=values.get(i).field("_friendsBtn").value;if(isNull(value))continue;
-            const owner=call(value,"get_gameObject"),rank=call(owner,"get_activeInHierarchy")?2:call(owner,"get_activeSelf")?1:0;
-            if(rank>score){button=value;score=rank;}
-          }
-        }catch(_){}
+        const button=findFriendsButton();
         if(!button)throw Error("Original _friendsBtn unavailable");
         const windows=find.invoke(friends.type.object);let friend=null;
         for(let i=0;i<windows.length;i++){const value=windows.get(i);if(call(call(value,"get_gameObject"),"get_activeInHierarchy")){friend=value;break;}}
         if(!friend)throw Error("Active FriendsWin unavailable");
-        record={items:[]};
+        record={items:[],window:ref.target.ref(false)};
         record.items.push(move(call(friend,"get_gameObject"),call(root,"get_parent")));
         record.items.push(move(call(button,"get_gameObject"),root,button));
         records.set(key,record);
+        armWatch();
         // LayoutGroup reflows when its button is removed. Keep a placeholder in
         // that slot and align the raised button to the slot every frame.
         const follow=()=>{if(records.get(key)!==record)return;
           try{const item=record.items.find(x=>x.slot);if(item)call(call(item.ref.target,"get_transform"),"set_position",call(call(item.slot.target,"get_transform"),"get_position"));}catch(_){}
-          schedule(16,follow);
+          schedule(16,follow,"matching friends follow");
         };follow();
         log("matching friends: original button enabled; layout slot preserved");
-      }catch(error){if(record)restore(record);log(`matching friends: ${error}`);}finally{ref.free();}});
+      }catch(error){if(record){records.delete(key);restore(record,false,"show failure rollback");}log(`matching friends: ${error}`);}finally{ref.free();}},"matching friends show");
     }});
+    const closed=[],absent=[];
     for(const name of ["OnDisable","OnDestroy","HandleOnCancelSearch"]) {
-      const method=seeking.tryMethod(name,0);if(!method||method.virtualAddress.isNull())continue;
+      const method=seeking.tryMethod(name,0);if(!method||method.virtualAddress.isNull()){absent.push(name);continue;}
+      closed.push(name);
       Interceptor.attach(method.virtualAddress,{onEnter(args){try{
         const key=call(new Il2Cpp.Object(args[0]),"get_gameObject").handle.toString(),record=records.get(key);
-        if(record){records.delete(key);schedule(0,()=>restore(record,true));}
+        if(record){records.delete(key);schedule(0,()=>restore(record,true,name),"matching friends restore");}
+        else log(`matching friends: ${name}: no moved record`);
       }catch(error){log(`matching friends restore: ${error}`);}}});
     }
+    log(`matching friends: close hooks ${closed.join(", ")}${absent.length?` (missing ${absent.join(", ")})`:""}`);
+    // The close hooks can miss a path (a stripped method, a window the game
+    // hides some other way): while a moved record exists, a window that is no
+    // longer live means the search ended somewhere we did not see. The
+    // watchdog restores it and says so, so a silent miss cannot leave the
+    // button behind in the matchmaking layout.
+    let watching=false;
+    const armWatch=()=>{if(records.size&&!watching){watching=true;schedule(1000,watch,"matching friends watchdog");}};
+    const watch=()=>{
+      watching=false;
+      for(const [key,record] of records){
+        if(!record.window)continue;
+        let live=true;try{live=call(call(record.window.target,"get_gameObject"),"get_activeInHierarchy");}catch(_){}
+        if(live)continue;
+        records.delete(key);
+        restore(record,true,"watchdog");
+      }
+      armWatch();
+    };
+    // The button can be dead in the menu with no moved record at all (the
+    // matchmaking state machine disabling it across a restart, or a close path
+    // that never runs our hooks). Every menu activation announces the button
+    // state and repairs the two failures the player sees - hidden, or not
+    // interactable - while no search of ours is holding the button.
+    const menuViews=["MainMenuOverlayView","MainMenuWin","OverlayMenu"];
+    let menuHooks=0;
+    const inspectMenu=(name,repair)=>{
+      try{
+        const button=findFriendsButton();
+        if(!button){log(`matching friends: menu ${name}: no _friendsBtn`);return;}
+        const go=call(button,"get_gameObject");
+        const live=Boolean(call(go,"get_activeInHierarchy")),self=Boolean(call(go,"get_activeSelf")),clickable=Boolean(call(button,"get_interactable"));
+        log(`matching friends: menu ${name}: button live=${live} self=${self} interactable=${clickable} moved records=${records.size}`);
+        if(!repair||records.size)return;
+        let touched=false;
+        if(!self){call(go,"SetActive",true);touched=true;}
+        if(!clickable){call(button,"set_interactable",true);touched=true;}
+        if(touched){
+          log(`matching friends: menu ${name}: repaired a dead button`);
+          schedule(1000,()=>inspectMenu(name,false),"matching friends menu recheck");
+        }
+      }catch(error){log(`matching friends: menu check failed: ${error}`);}
+    };
+    for(const name of menuViews)try{
+      const owner=img.tryClass(name);if(!owner)continue;
+      const enabled=owner.tryMethod("OnEnable",0);
+      if(!enabled||enabled.virtualAddress.isNull())continue;
+      menuHooks++;
+      Interceptor.attach(enabled.virtualAddress,{onLeave(){schedule(0,()=>inspectMenu(name,true),"matching friends menu check");}});
+    }catch(_){}
+    log(`matching friends: menu hooks ${menuHooks}/${menuViews.length}`);
   });
   // END android-ui: matching-friends
 
@@ -3822,7 +3923,7 @@ const emojiByName = new Map(), emojiByAscii = new Map();
     if (render && !render.virtualAddress.isNull()) {
       Interceptor.attach(render.virtualAddress, { onEnter() { chatRefreshMessageSizes(); } });
     } else {
-      const tick = () => { chatRefreshMessageSizes(); schedule(100, tick); }; schedule(100, tick);
+      const tick = () => { chatRefreshMessageSizes(); schedule(100, tick, "chat message sizes"); }; schedule(100, tick, "chat message sizes");
     }
   });
 // END android-ui: chat-emojis
@@ -3953,7 +4054,7 @@ const messagePreviews = new Map();
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) Interceptor.attach(render.virtualAddress, { onEnter() { refreshMessagePreviews(); } });
-    else { const tick = () => { refreshMessagePreviews(); schedule(100, tick); }; schedule(100, tick); }
+    else { const tick = () => { refreshMessagePreviews(); schedule(100, tick, "message previews"); }; schedule(100, tick, "message previews"); }
     log(`emoji preview: hooks installed callbacks=${seen.size}`);
   });
 // END android-ui: message-preview
@@ -4859,7 +4960,7 @@ const chatWindows = new Map();
       // does not add a synchronous write to every frame of a close animation.
       pendingReport=value;
       if(Date.now()-lastFlush>=100)flushDisplay();
-      else if(!flushQueued){flushQueued=true;schedule(100,flushDisplay);}
+      else if(!flushQueued){flushQueued=true;schedule(100,flushDisplay,"display flush");}
       const event=value.events[value.events.length-1],dimensions=event.width+"x"+event.height;
       if(event.kind!=="sample" || dimensions!==lastDimensions)log(`settings display: ${JSON.stringify(event)}`);
       lastDimensions=dimensions;

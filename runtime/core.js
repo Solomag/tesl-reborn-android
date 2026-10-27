@@ -4410,8 +4410,8 @@ Il2Cpp.perform(() => {
   let statsFinishedLoading = false;
   let statsLoadingSince = 0;
   const pending = [];
-  function schedule(delayMs, fn) {
-    pending.push({ at: Date.now() + delayMs, fn });
+  function schedule(delayMs, fn, tag) {
+    pending.push({ at: Date.now() + delayMs, fn, tag });
   }
   function runPending() {
     const now = Date.now();
@@ -4420,11 +4420,16 @@ Il2Cpp.perform(() => {
       const task = pending.splice(i, 1)[0];
       try {
         Il2Cpp.mainThread.schedule(() => {
+          const started = Date.now();
           try {
             task.fn();
           } catch (e) {
             log(`scheduled task failed: ${e}`);
           }
+          const took = Date.now() - started;
+          const probe = globalThis.__teslRebornStallProbe;
+          if (probe) probe.tasks++;
+          if (took >= 100) log(`scheduled task slow ${took}ms (${task.tag || "untagged"})`);
         });
       } catch (e) {
         log(`could not schedule a task: ${e}`);
@@ -4441,14 +4446,18 @@ Il2Cpp.perform(() => {
   });
   section("main loop stall probe", () => {
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    const probe = globalThis.__teslRebornStallProbe = { loads: 0, tasks: 0 };
     let last = Date.now(), quietUntil = 0;
     Interceptor.attach(update.virtualAddress, {
       onEnter() {
         const now = Date.now(), gap = now - last;
         last = now;
-        if (gap >= 400 && gap < 6e4 && now >= quietUntil) {
+        const loads = probe.loads, tasks = probe.tasks;
+        probe.loads = 0;
+        probe.tasks = 0;
+        if (gap >= 200 && gap < 6e4 && now >= quietUntil) {
           quietUntil = now + 1e3;
-          log(`main loop stalled ${gap}ms`);
+          log(`main loop stalled ${gap}ms` + (loads || tasks ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
         }
       }
     });
@@ -4542,7 +4551,7 @@ Il2Cpp.perform(() => {
       if (!method) continue;
       Interceptor.attach(method.virtualAddress, {
         onLeave() {
-          schedule(1e3, () => refreshDeckStats(true));
+          schedule(1e3, () => refreshDeckStats(true), "deck stats refresh");
         }
       });
     }
@@ -5969,9 +5978,9 @@ Il2Cpp.perform(() => {
     } else {
       const tick = () => {
         maintainTitleListColours();
-        schedule(100, tick);
+        schedule(100, tick, "title colours");
       };
-      schedule(100, tick);
+      schedule(100, tick, "title colours");
       log("titles UI: list colour guard uses main-thread scheduler");
     }
   });
@@ -6096,7 +6105,7 @@ Il2Cpp.perform(() => {
           finish(job);
           return;
         }
-        schedule(50, () => poll(job));
+        schedule(50, () => poll(job), "store image poll");
       } catch (error) {
         report("store-error", job.path);
         log(`store image failure: ${error}`);
@@ -6121,7 +6130,7 @@ Il2Cpp.perform(() => {
         const job = { key, ref: self.ref(false), path, deadline: Date.now() + 2e4, started: false };
         jobs.set(key, job);
         report("store-queued", path);
-        schedule(0, () => poll(job));
+        schedule(0, () => poll(job), "store image poll");
       } catch (error) {
         log(`store image factory failure: ${error}`);
       }
@@ -6130,10 +6139,16 @@ Il2Cpp.perform(() => {
   });
   section("localization asset trace", () => {
     const catalog = cls(img, "AssetCatalog");
+    let lastEnterPath = "", lastLoggedPath = "", lastLoggedAt = 0;
     for (const m of catalog.methods.filter((x) => x.name === "LoadAssetFromPathAsync")) {
       Interceptor.attach(m.virtualAddress, {
         onEnter(args) {
           this.path = rawStr(args[1]);
+          if (this.path !== lastEnterPath) {
+            lastEnterPath = this.path;
+            const probe = globalThis.__teslRebornStallProbe;
+            if (probe) probe.loads++;
+          }
           const selected = /\/Localization\/(?:Text|Audio)\//i.test(this.path) ? resourceLanguage() : "";
           const next = localizedAssetPath(this.path, selected);
           if (next !== this.path) {
@@ -6148,6 +6163,9 @@ Il2Cpp.perform(() => {
           recordResourceEvent(ret.isNull() ? "asset-null" : "asset-operation", this.path);
           const path = this.path ?? "";
           if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
+          if (path === lastLoggedPath && Date.now() - lastLoggedAt < 100) return;
+          lastLoggedPath = path;
+          lastLoggedAt = Date.now();
           log(`LoadAssetFromPathAsync("${path}") -> ${ret.isNull() ? "NULL (not in the asset map)" : "ok"}`);
         }
       });
@@ -6745,7 +6763,7 @@ Il2Cpp.perform(() => {
           }
           for (const key of retries.keys()) if (!live.has(key)) retries.delete(key);
         }
-      });
+      }, "deck search scan");
     } });
   });
   function matchingFriendsPose(node) {
@@ -6759,7 +6777,25 @@ Il2Cpp.perform(() => {
   section("friends while matchmaking", () => {
     const seeking = cls(img, "MatchSeekingWin"), friends = cls(img, "FriendsWin"), records = /* @__PURE__ */ new Map();
     const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-    function restore(record, returningToMenu = false) {
+    function findFriendsButton() {
+      let button = null, score = -1;
+      for (const name of ["MainMenuOverlayView", "MainMenuWin", "OverlayMenu"]) try {
+        const values = find.invoke(cls(img, name).type.object);
+        for (let i = 0; i < values.length; i++) {
+          const value = values.get(i).field("_friendsBtn").value;
+          if (isNull(value)) continue;
+          const owner = call(value, "get_gameObject"), rank = call(owner, "get_activeInHierarchy") ? 2 : call(owner, "get_activeSelf") ? 1 : 0;
+          if (rank > score) {
+            button = value;
+            score = rank;
+          }
+        }
+      } catch (_) {
+      }
+      return button;
+    }
+    function restore(record, returningToMenu = false, source = "close") {
+      log(`matching friends: restore (${source}${returningToMenu ? ", returning to menu" : ""}; ${record.items.length} item${record.items.length === 1 ? "" : "s"})`);
       for (const item of record.items) {
         try {
           const node = call(item.ref.target, "get_transform");
@@ -6773,24 +6809,30 @@ Il2Cpp.perform(() => {
               const button = item.button.target.ref(false), parent = item.parent.target.ref(false), self = item.ref.target.ref(false);
               let waits = 0, applies = 0;
               const settle = () => {
-                let again = false;
+                let again = false, stopped = "";
                 try {
                   if (call(call(parent.target, "get_gameObject"), "get_activeInHierarchy")) {
                     call(self.target, "SetActive", true);
                     call(button.target, "set_interactable", true);
                     again = ++applies < 4;
                   } else again = ++waits < 60;
-                } catch (_) {
+                } catch (error) {
                   again = false;
+                  stopped = ` (${error})`;
                 }
-                if (again) schedule(500, settle);
+                if (again) schedule(500, settle, "matching friends settle");
                 else {
+                  if (stopped) log(`matching friends: re-assert stopped${stopped}`);
+                  else if (applies) log(`matching friends: re-assert applied ${applies}x`);
+                  else log(`matching friends: re-assert gave up: the menu never became active`);
                   button.free();
                   parent.free();
                   self.free();
                 }
               };
               settle();
+            } else if (returningToMenu) {
+              log(`matching friends: re-assert skipped: the button was ${item.active ? "hidden" : "inactive"} when it was moved`);
             }
           }
         } catch (_) {
@@ -6807,6 +6849,7 @@ Il2Cpp.perform(() => {
           item.parent.free();
         }
       }
+      if (record.window) record.window.free();
     }
     function move(go, parent, button = null) {
       const node = call(go, "get_transform"), original = call(node, "get_parent");
@@ -6834,7 +6877,7 @@ Il2Cpp.perform(() => {
         call(node, "SetAsLastSibling");
         call(go, "SetActive", true);
       } catch (error) {
-        restore({ items: [item] });
+        restore({ items: [item] }, false, "move rollback");
         throw error;
       }
       return item;
@@ -6851,25 +6894,13 @@ Il2Cpp.perform(() => {
           key = go.handle.toString();
           if (!call(go, "get_activeInHierarchy")) return;
           if (records.has(key)) {
-            restore(records.get(key));
+            const stale = records.get(key);
             records.delete(key);
+            restore(stale, false, "search reopened");
           }
           const old = call(root, "Find", Il2Cpp.string("RebornMatchingFriends"));
           if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
-          let button = null, score = -1;
-          for (const name of ["MainMenuOverlayView", "MainMenuWin", "OverlayMenu"]) try {
-            const values = find.invoke(cls(img, name).type.object);
-            for (let i = 0; i < values.length; i++) {
-              const value = values.get(i).field("_friendsBtn").value;
-              if (isNull(value)) continue;
-              const owner = call(value, "get_gameObject"), rank = call(owner, "get_activeInHierarchy") ? 2 : call(owner, "get_activeSelf") ? 1 : 0;
-              if (rank > score) {
-                button = value;
-                score = rank;
-              }
-            }
-          } catch (_) {
-          }
+          const button = findFriendsButton();
           if (!button) throw Error("Original _friendsBtn unavailable");
           const windows = find.invoke(friends.type.object);
           let friend = null;
@@ -6881,10 +6912,11 @@ Il2Cpp.perform(() => {
             }
           }
           if (!friend) throw Error("Active FriendsWin unavailable");
-          record = { items: [] };
+          record = { items: [], window: ref.target.ref(false) };
           record.items.push(move(call(friend, "get_gameObject"), call(root, "get_parent")));
           record.items.push(move(call(button, "get_gameObject"), root, button));
           records.set(key, record);
+          armWatch();
           const follow = () => {
             if (records.get(key) !== record) return;
             try {
@@ -6892,33 +6924,106 @@ Il2Cpp.perform(() => {
               if (item) call(call(item.ref.target, "get_transform"), "set_position", call(call(item.slot.target, "get_transform"), "get_position"));
             } catch (_) {
             }
-            schedule(16, follow);
+            schedule(16, follow, "matching friends follow");
           };
           follow();
           log("matching friends: original button enabled; layout slot preserved");
         } catch (error) {
-          if (record) restore(record);
+          if (record) {
+            records.delete(key);
+            restore(record, false, "show failure rollback");
+          }
           log(`matching friends: ${error}`);
         } finally {
           ref.free();
         }
-      });
+      }, "matching friends show");
     } });
+    const closed = [], absent = [];
     for (const name of ["OnDisable", "OnDestroy", "HandleOnCancelSearch"]) {
       const method = seeking.tryMethod(name, 0);
-      if (!method || method.virtualAddress.isNull()) continue;
+      if (!method || method.virtualAddress.isNull()) {
+        absent.push(name);
+        continue;
+      }
+      closed.push(name);
       Interceptor.attach(method.virtualAddress, { onEnter(args) {
         try {
           const key = call(new Il2Cpp.Object(args[0]), "get_gameObject").handle.toString(), record = records.get(key);
           if (record) {
             records.delete(key);
-            schedule(0, () => restore(record, true));
-          }
+            schedule(0, () => restore(record, true, name), "matching friends restore");
+          } else log(`matching friends: ${name}: no moved record`);
         } catch (error) {
           log(`matching friends restore: ${error}`);
         }
       } });
     }
+    log(`matching friends: close hooks ${closed.join(", ")}${absent.length ? ` (missing ${absent.join(", ")})` : ""}`);
+    let watching = false;
+    const armWatch = () => {
+      if (records.size && !watching) {
+        watching = true;
+        schedule(1e3, watch, "matching friends watchdog");
+      }
+    };
+    const watch = () => {
+      watching = false;
+      for (const [key, record] of records) {
+        if (!record.window) continue;
+        let live = true;
+        try {
+          live = call(call(record.window.target, "get_gameObject"), "get_activeInHierarchy");
+        } catch (_) {
+        }
+        if (live) continue;
+        records.delete(key);
+        restore(record, true, "watchdog");
+      }
+      armWatch();
+    };
+    const menuViews = ["MainMenuOverlayView", "MainMenuWin", "OverlayMenu"];
+    let menuHooks = 0;
+    const inspectMenu = (name, repair) => {
+      try {
+        const button = findFriendsButton();
+        if (!button) {
+          log(`matching friends: menu ${name}: no _friendsBtn`);
+          return;
+        }
+        const go = call(button, "get_gameObject");
+        const live = Boolean(call(go, "get_activeInHierarchy")), self = Boolean(call(go, "get_activeSelf")), clickable = Boolean(call(button, "get_interactable"));
+        log(`matching friends: menu ${name}: button live=${live} self=${self} interactable=${clickable} moved records=${records.size}`);
+        if (!repair || records.size) return;
+        let touched = false;
+        if (!self) {
+          call(go, "SetActive", true);
+          touched = true;
+        }
+        if (!clickable) {
+          call(button, "set_interactable", true);
+          touched = true;
+        }
+        if (touched) {
+          log(`matching friends: menu ${name}: repaired a dead button`);
+          schedule(1e3, () => inspectMenu(name, false), "matching friends menu recheck");
+        }
+      } catch (error) {
+        log(`matching friends: menu check failed: ${error}`);
+      }
+    };
+    for (const name of menuViews) try {
+      const owner = img.tryClass(name);
+      if (!owner) continue;
+      const enabled = owner.tryMethod("OnEnable", 0);
+      if (!enabled || enabled.virtualAddress.isNull()) continue;
+      menuHooks++;
+      Interceptor.attach(enabled.virtualAddress, { onLeave() {
+        schedule(0, () => inspectMenu(name, true), "matching friends menu check");
+      } });
+    } catch (_) {
+    }
+    log(`matching friends: menu hooks ${menuHooks}/${menuViews.length}`);
   });
   section("native Settings language selection", () => {
     const owner = img.classes.find((c) => c.name === "LanguageSelectDropdown");
@@ -7876,9 +7981,9 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     } else {
       const tick = () => {
         chatRefreshMessageSizes();
-        schedule(100, tick);
+        schedule(100, tick, "chat message sizes");
       };
-      schedule(100, tick);
+      schedule(100, tick, "chat message sizes");
     }
   });
   const messagePreviews = /* @__PURE__ */ new Map();
@@ -8058,9 +8163,9 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     else {
       const tick = () => {
         refreshMessagePreviews();
-        schedule(100, tick);
+        schedule(100, tick, "message previews");
       };
-      schedule(100, tick);
+      schedule(100, tick, "message previews");
     }
     log(`emoji preview: hooks installed callbacks=${seen.size}`);
   });
@@ -9186,7 +9291,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
       if (Date.now() - lastFlush >= 100) flushDisplay();
       else if (!flushQueued) {
         flushQueued = true;
-        schedule(100, flushDisplay);
+        schedule(100, flushDisplay, "display flush");
       }
       const event = value.events[value.events.length - 1], dimensions = event.width + "x" + event.height;
       if (event.kind !== "sample" || dimensions !== lastDimensions) log(`settings display: ${JSON.stringify(event)}`);
