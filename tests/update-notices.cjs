@@ -279,3 +279,31 @@ console.log('PASS: with set_renderMode stripped the banner nests under a game ov
  r.call=call;canvasStripped=false;hosts=[];
  console.log('PASS: the notice moves to a screen Canvas that appears above its host while it should show');
 }
+
+// Report 33: on the login form the version covered the login button. While a
+// LoginWin is open, the badge goes under its lowest button; otherwise below
+// the splash logo as before.
+{
+ const button=(y)=>({go:{active:true},y});
+ const login={buttons:{_loginBtn:button(.30),_unameForgotBtn:button(.24),_pwdForgotBtn:{go:{active:false},y:.05}},active:true};
+ const saved={call:r.call,ucls:r.ucls,cls:r.cls,unityAlive:r.unityAlive,unityStruct:r.unityStruct};
+ r.unityAlive=x=>x!=null;r.unityStruct=(_,f)=>f;r.cls=()=>({type:{object:'LoginWin'}});
+ r.ucls=name=>name==='UnityEngine.Resources'?{method:()=>({overload:()=>({invoke:()=>({length:login.active?1:0,get:()=>login})})})}
+  :name==='UnityEngine.RectTransformUtility'?{method:()=>({invoke:(camera,world)=>({field:k=>({value:k==='y'?world.y*screen.height:world.x})})})}:saved.ucls(name);
+ login.field=n=>({value:login.buttons[n]});
+ r.call=(o,n,...a)=>{
+  if(o===login&&n==='get_gameObject')return {active:login.active};
+  for(const b of Object.values(login.buttons)){
+   if(o===b&&n==='get_gameObject')return b.go;if(o===b&&n==='get_transform')return b;
+   if(o===b&&n==='get_rect')return {field:k=>({value:k==='m_YMin'?0:0})};
+   if(o===b&&n==='TransformPoint')return {x:.5,y:b.y};if(o===b&&n==='get_canvas')return {};
+  }
+  if(n==='get_activeInHierarchy')return o.active;if(n==='get_worldCamera')return null;
+  return saved.call(o,n,...a);
+ };
+ clock+=1000;const anchor=r.locateLoginVersion();
+ assert.equal(anchor.x,.5);assert(Math.abs(anchor.y-.22)<1e-9,'just under the lowest visible form button (0.24 - 0.02)');
+ clock+=1000;login.active=false;assert.equal(r.locateLoginVersion(),null,'no form: the splash anchor applies');
+ Object.assign(r,saved);
+ console.log('PASS: on the login form the version goes under its lowest button, not over the login button');
+}

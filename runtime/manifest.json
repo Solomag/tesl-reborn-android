@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 89,
-  "version": "android-89-destroyed-object-guards",
-  "bytes": 405988,
-  "sha256": "ea5c83c11dc9bf742685433b94bbcf198cb24116cbee8549607b776340c44d7d",
+  "revision": 90,
+  "version": "android-90-version-below-login",
+  "bytes": 408001,
+  "sha256": "ab275098b52a92bb445fc7b4f30badb24990032ec9670b2cd0fb9eee867771cf",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "655135b500147267f22da204bb282437ac09371c57fe53db1824e7a02bdd6f6b"
+  "sourceSha256": "148fa7a3e412dc65f0251d7796fadd7cf465f60419c72d944825d5f4e6908d7e"
 }
