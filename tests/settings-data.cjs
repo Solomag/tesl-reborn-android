@@ -38,38 +38,57 @@ event.tryMethod=()=>null;event.class={hierarchy:function*(){yield {fields:[]};}}
 vm.runInContext('closingSettings.clear()',c);c.settingsButtonPressed(fakeButton);
 assert(vm.runInContext('closingSettings.has("settings")',c),'stripped event introspection must not disable button-name routing');
 
-// Report 30: the plain grey button looked foreign. It takes the Audio tab's
-// sprite, font, size and colours and joins the tab row; a missing tab group
-// keeps the plain button instead of failing.
-{
- const tabArt={class:{type:{name:'UnityEngine.UI.Image'}}},tabLabel={},tabNode={},row={},tabGo={};
- const ourImage={},ourLabel={},ourNode={},ourGo={},layout={},writes=[];
- const tab={};const toggles={length:2,get:()=>tab};
+// Report 30/31: Game data becomes a third tab with the tab look and size.
+// Without a row layout it goes one tab step past the last tab and the row
+// moves back half a step; with a HorizontalLayoutGroup the layout places it.
+function tabFixture(flow){
+ const v=(x,y)=>({field:f=>({value:f==='x'?x:y})});
+ const tabArt={class:{type:{name:'UnityEngine.UI.Image'}}},tabLabel={},row={pos:{x:0,y:-40}};
+ const audio={go:{},node:{pos:{x:-150,y:0}}},prefs={go:{},node:{pos:{x:150,y:0}}};
+ const ourImage={},ourLabel={},ourNode={},layout={},writes=[];
+ const button={method:()=>({overload:()=>({invoke:()=>ourLabel})})};
+ const toggles={length:2,get:i=>i?prefs:audio};
  const tabSelf={field:n=>({value:n==='_tabNavigation'?{field:()=>({value:toggles})}:null})};
- const style=vm.runInContext('styleAsSettingsTab',c);
- const prev=c.call,prevComponent=c.uiComponent,prevPlace=c.uiPlace;
- c.uiComponent=(o,type)=>type==='UnityEngine.UI.Image'?ourImage:null;
- c.uiPlace=(o,...a)=>writes.push(['place',...a]);
+ audio.go.method=()=>({overload:()=>({invoke:()=>tabLabel})});
+ row.method=()=>({overload:()=>({invoke:()=>flow?{}:null})});
+ ourNode.method=()=>({overload:()=>({invoke:(parent,keep)=>writes.push(['SetParent',parent,keep])})});
+ const prev=c.call,prevComponent=c.uiComponent,prevVec=c.vec2;
+ c.uiComponent=(o,type)=>type==='UnityEngine.UI.Image'?ourImage:null;c.vec2=(x,y)=>({x,y});
  c.call=(o,n,...a)=>{
-  if(o===tab&&n==='get_gameObject')return tabGo;if(o===tabGo&&n==='get_transform')return tabNode;
-  if(o===tabNode&&n==='get_parent')return row;if(o===tab&&n==='get_targetGraphic')return tabArt;
+  for(const t of [audio,prefs]){if(o===t&&n==='get_gameObject')return t.go;if(o===t.go&&n==='get_transform')return t.node;if(o===t.node&&n==='get_anchoredPosition')return v(t.node.pos.x,t.node.pos.y);}
+  if(o===prefs.node&&n==='get_parent')return row;if(o===audio&&n==='get_targetGraphic')return tabArt;
   if(o===tabArt)return n==='get_sprite'?'frame':n==='get_type'?'sliced':'white';
-  if(o===tabLabel)return n==='get_font'?'game-font':n==='get_fontSize'?36:'gold';
-  if(o===tabNode&&n==='get_rect')return {field:f=>({value:f==='m_Width'?280:64})};
-  if(o===tabNode&&n==='get_localScale')return 'scale';
-  if(o==='button'&&n==='get_transform')return ourNode;if(o==='button'&&n==='get_gameObject')return ourGo;
+  if(o===tabLabel)return n==='get_font'?'game-font':n==='get_enableAutoSizing'?true:n==='get_fontSizeMin'?18:n==='get_fontSizeMax'?36:n==='get_fontSize'?36:'gold';
+  if(o===prefs.node&&n==='get_rect')return {field:f=>({value:f==='m_Width'?280:64})};
+  if(o===prefs.node&&n.startsWith('get_'))return n;
+  if(o===row&&n==='get_anchoredPosition')return v(row.pos.x,row.pos.y);
+  if(o===row&&n==='set_anchoredPosition'){row.pos=a[0];return;}
+  if(o===button&&n==='get_transform')return ourNode;
   if(n.startsWith('set_')||n==='SetAsLastSibling'){writes.push([o,n,...a]);return;}
   return prev(o,n,...a);
  };
- tabGo.method=()=>({overload:()=>({invoke:()=>tabLabel})});ourGo.method=()=>({overload:()=>({invoke:()=>ourLabel})});
- ourNode.method=()=>({overload:()=>({invoke:(parent,keep)=>writes.push(['SetParent',parent,keep])})});
- style(tabSelf,'button',layout);
- const has=(o,n,v)=>writes.some(w=>w[0]===o&&w[1]===n&&(v===undefined||w[2]===v));
- assert(has(ourImage,'set_sprite','frame')&&has(ourImage,'set_type','sliced'),'the tab frame sprite is used');
- assert(has(ourLabel,'set_font','game-font')&&has(ourLabel,'set_fontSize',36)&&has(ourLabel,'set_color','gold'),'the tab font is used');
- assert(writes.some(w=>w[0]==='SetParent'&&w[1]===row&&w[2]===false),'it joins the tab row');
- assert(has(layout,'set_ignoreLayout',false)&&has(layout,'set_preferredWidth',280)&&has(layout,'set_preferredHeight',64),'laid out like a tab');
- assert.throws(()=>style({field:()=>({value:null})},'button',layout),/_tabNavigation/);
- c.call=prev;c.uiComponent=prevComponent;c.uiPlace=prevPlace;
- console.log('PASS: Game data takes the settings tab look and joins the tab row; without tabs the plain button stays');
+ const style=vm.runInContext('styleAsSettingsTab',c);
+ return {style,tabSelf,button,layout,writes,ourImage,ourLabel,ourNode,row,restore(){c.call=prev;c.uiComponent=prevComponent;c.vec2=prevVec;}};
 }
+{
+ const f=tabFixture(false);f.style(f.tabSelf,f.button,f.layout);
+ const has=(o,n,v)=>f.writes.some(w=>w[0]===o&&w[1]===n&&(v===undefined||JSON.stringify(w[2])===JSON.stringify(v)));
+ assert(has(f.ourImage,'set_sprite','frame')&&has(f.ourImage,'set_type','sliced'),'the tab frame sprite is used');
+ assert(has(f.ourLabel,'set_font','game-font')&&has(f.ourLabel,'set_enableAutoSizing',true)&&has(f.ourLabel,'set_fontSizeMax',36),'the tab font and sizing are used');
+ assert(f.writes.some(w=>w[0]==='SetParent'&&w[1]===f.row&&w[2]===false),'it joins the tab row');
+ assert(has(f.ourNode,'set_sizeDelta','get_sizeDelta')&&has(f.ourNode,'set_anchorMin','get_anchorMin'),'same size and anchors as the tabs');
+ assert(has(f.ourNode,'set_anchoredPosition',{x:450,y:0}),'one tab step past Preferences');
+ assert.deepEqual(f.row.pos,{x:-150,y:-40},'the row moves back half a step: -150/150/450 centre on 0');
+ f.restore();
+}
+{
+ const f=tabFixture(true);f.style(f.tabSelf,f.button,f.layout);
+ assert(f.writes.some(w=>w[0]===f.layout&&w[1]==='set_ignoreLayout'&&w[2]===false),'the row layout places the third tab');
+ assert.deepEqual(f.row.pos,{x:0,y:-40},'a laid-out row is not moved');
+ f.restore();
+}
+{
+ const style=vm.runInContext('styleAsSettingsTab',c);
+ assert.throws(()=>style({field:()=>({value:null})},{},{}),/tab group: Error: no _tabNavigation/,'the failing step is named');
+}
+console.log('PASS: Game data becomes a third settings tab of the same size, centred with the other two; the failing step is named');

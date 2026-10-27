@@ -7110,43 +7110,72 @@ Il2Cpp.perform(() => {
     call(layout, "set_ignoreLayout", true);
     try {
       styleAsSettingsTab(self, button, layout);
-      log("settings button: Game data styled as a settings tab");
     } catch (error) {
       log(`settings button: kept the plain Game data button: ${error}`);
     }
   }
   function styleAsSettingsTab(self, button, layout) {
-    const group = self.field("_tabNavigation").value;
-    if (isNull(group)) throw Error("no _tabNavigation");
-    const toggles = group.field("_toggles").value;
-    if (isNull(toggles) || !toggles.length) throw Error("no settings tabs");
-    const tab = toggles.get(0), tabGo = call(tab, "get_gameObject"), tabNode = call(tabGo, "get_transform");
-    const row = call(tabNode, "get_parent");
-    if (isNull(row)) throw Error("settings tab has no row");
-    const art = call(tab, "get_targetGraphic"), image = uiComponent(button, "UnityEngine.UI.Image");
-    if (!isNull(art) && art.class.type.name === "UnityEngine.UI.Image" && !isNull(image)) {
-      call(image, "set_sprite", call(art, "get_sprite"));
-      call(image, "set_type", call(art, "get_type"));
-      call(image, "set_color", call(art, "get_color"));
+    let step = "tab group";
+    try {
+      const group = self.field("_tabNavigation").value;
+      if (isNull(group)) throw Error("no _tabNavigation");
+      const toggles = group.field("_toggles").value;
+      if (isNull(toggles) || !toggles.length) throw Error("no settings tabs");
+      const first = toggles.get(0), last = toggles.get(toggles.length - 1);
+      const firstNode = call(call(first, "get_gameObject"), "get_transform"), lastNode = call(call(last, "get_gameObject"), "get_transform");
+      const row = call(lastNode, "get_parent");
+      if (isNull(row)) throw Error("settings tab has no row");
+      step = "frame";
+      const art = call(first, "get_targetGraphic"), image = uiComponent(button, "UnityEngine.UI.Image");
+      if (!isNull(art) && art.class.type.name === "UnityEngine.UI.Image" && !isNull(image)) {
+        call(image, "set_sprite", call(art, "get_sprite"));
+        call(image, "set_type", call(art, "get_type"));
+        call(image, "set_color", call(art, "get_color"));
+      }
+      step = "label";
+      const tmp = ucls("TMPro.TextMeshProUGUI").type.object;
+      const tabLabel = call(first, "get_gameObject").method("GetComponentInChildren").overload("System.Type").invoke(tmp);
+      const label = button.method("GetComponentInChildren").overload("System.Type").invoke(tmp);
+      if (!isNull(tabLabel) && !isNull(label)) {
+        call(label, "set_font", call(tabLabel, "get_font"));
+        call(label, "set_color", call(tabLabel, "get_color"));
+        const auto = Boolean(call(tabLabel, "get_enableAutoSizing"));
+        call(label, "set_enableAutoSizing", auto);
+        if (auto) {
+          call(label, "set_fontSizeMin", call(tabLabel, "get_fontSizeMin"));
+          call(label, "set_fontSizeMax", call(tabLabel, "get_fontSizeMax"));
+        }
+        call(label, "set_fontSize", call(tabLabel, "get_fontSize"));
+      }
+      step = "size";
+      const bounds = call(lastNode, "get_rect");
+      const width = Number(bounds.field("m_Width").value), height = Number(bounds.field("m_Height").value);
+      const vec = (value) => ({ x: Number(value.field("x").value), y: Number(value.field("y").value) });
+      step = "row";
+      const node = call(button, "get_transform");
+      node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(row, false);
+      call(node, "SetAsLastSibling");
+      call(node, "set_localScale", call(lastNode, "get_localScale"));
+      for (const name of ["anchorMin", "anchorMax", "pivot"]) call(node, "set_" + name, call(lastNode, "get_" + name));
+      call(node, "set_sizeDelta", call(lastNode, "get_sizeDelta"));
+      call(layout, "set_preferredWidth", width);
+      call(layout, "set_preferredHeight", height);
+      const flow = row.method("GetComponent").overload("System.Type").invoke(ucls("UnityEngine.UI.HorizontalLayoutGroup").type.object);
+      if (!isNull(flow)) {
+        call(layout, "set_ignoreLayout", false);
+        log(`settings button: third tab in the row layout (${Math.round(width)}x${Math.round(height)})`);
+        return;
+      }
+      step = "position";
+      const a = vec(call(firstNode, "get_anchoredPosition")), b = vec(call(lastNode, "get_anchoredPosition"));
+      const gap = toggles.length > 1 ? (b.x - a.x) / (toggles.length - 1) : width + 16;
+      call(node, "set_anchoredPosition", vec2(b.x + gap, b.y));
+      const rowPos = vec(call(row, "get_anchoredPosition"));
+      call(row, "set_anchoredPosition", vec2(rowPos.x - gap / 2, rowPos.y));
+      log(`settings button: third tab at step ${Math.round(gap)} (${Math.round(width)}x${Math.round(height)}), row centred`);
+    } catch (error) {
+      throw Error(`${step}: ${error}`);
     }
-    const tmp = ucls("TMPro.TextMeshProUGUI").type.object;
-    const tabLabel = tabGo.method("GetComponentInChildren").overload("System.Type").invoke(tmp);
-    const label = call(button, "get_gameObject").method("GetComponentInChildren").overload("System.Type").invoke(tmp);
-    if (!isNull(tabLabel) && !isNull(label)) {
-      call(label, "set_font", call(tabLabel, "get_font"));
-      call(label, "set_fontSize", call(tabLabel, "get_fontSize"));
-      call(label, "set_color", call(tabLabel, "get_color"));
-    }
-    const bounds = call(tabNode, "get_rect");
-    const width = Number(bounds.field("m_Width").value), height = Number(bounds.field("m_Height").value);
-    const node = call(button, "get_transform");
-    node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(row, false);
-    call(node, "SetAsLastSibling");
-    call(node, "set_localScale", call(tabNode, "get_localScale"));
-    uiPlace(button, 0.5, 0.5, 0.5, 0.5, 0, 0, width, height);
-    call(layout, "set_ignoreLayout", false);
-    call(layout, "set_preferredWidth", width);
-    call(layout, "set_preferredHeight", height);
   }
   function findGameDataButton(root) {
     const direct = call(root, "Find", Il2Cpp.string("RebornGameData"));
