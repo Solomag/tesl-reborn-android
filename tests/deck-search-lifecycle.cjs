@@ -5,7 +5,7 @@ const source=transformSync(require('./source.cjs')('deck-search'),{loader:'ts'})
 // failures. Helpers for rendering/assets are replaced; scheduling and cleanup
 // remain the production code.
 function fixture(){
-  let tick=1000,update,open=true,failures=0,scanError=false,refs=0,id=0;
+  let tick=1000,update,updateUi,open=true,failures=0,scanError=false,refs=0,id=0;
   const bars=[],messages=[];
   const value=(x,y)=>({field:n=>({value:n==='x'?x:y})});
   function object(name){
@@ -37,9 +37,9 @@ function fixture(){
     throw Error('Unexpected call '+n);
   }
   const c={Date:{now:()=>tick},section:(_,fn)=>fn(),img:{},
-    cls:()=>({type:{object:{}},method:()=>({virtualAddress:1})}),
-    Interceptor:{attach:(_,callbacks)=>{update=callbacks.onLeave;}},
-    schedule:(_,fn)=>fn(),call,isNull:x=>x==null,Il2Cpp:{string:x=>x},
+    cls:()=>({type:{object:{}},method:()=>({virtualAddress:1}),tryMethod:n=>n==='UpdateUi'?{virtualAddress:{isNull:()=>false,tag:'UpdateUi'}}:null}),
+    Interceptor:{attach:(address,callbacks)=>{if(address?.tag==='UpdateUi')updateUi=callbacks;else update=callbacks.onLeave;}},
+    schedule:(_,fn)=>fn(),call,isNull:x=>x==null,Il2Cpp:{string:x=>x,Object:function(p){return p;}},
     uiEnum:()=>0,enumBox:(_,v)=>v,rgba:()=>({}),vec2:(x,y)=>({x,y}),
     resourceLanguage:()=> 'en_us',uiRect:o=>o,uiStretch:()=>{},uiPlace:()=>{},
     loadNativeUiSprite:()=>{},uiComponent:()=>object('component'),
@@ -54,7 +54,7 @@ function fixture(){
     }};}})
   };
   vm.createContext(c);vm.runInContext(source,c);
-  return{bars,messages,rect,refs:()=>refs,fail:n=>{failures=n;},open:v=>{open=v;},scanError:v=>{scanError=v;},step(ms=250){tick+=ms;update();}};
+  return{bars,messages,rect,refs:()=>refs,openList(){const t={};updateUi.onEnter.call(t,[self]);updateUi.onLeave.call(t);},fail:n=>{failures=n;},open:v=>{open=v;},scanError:v=>{scanError=v;},step(ms=250){tick+=ms;update();}};
 }
 
 const a=fixture();a.fail(1);a.step(0);a.step();assert.equal(a.bars.length,0,'wait for UI to settle');
@@ -72,3 +72,11 @@ assert.equal(b.bars.length,3,'bounded initialization failures');assert(b.bars.ev
 b.open(false);b.step();b.fail(0);b.open(true);b.step();b.step(500);assert.equal(b.bars.length,4);assert(b.bars[3].active);
 assert.equal(b.messages.filter(m=>m.includes('initialization attempt')).length,3);
 console.log('PASS: persistent failures stop after three attempts; reopening retries without restarting the client');
+
+// The game's UpdateUi fills the grid: the bar is installed right then, not
+// after the 500 ms polling gate (report 29: Search appeared late).
+const d=fixture();d.openList();
+assert.equal(d.bars.length,1,'installed with the deck list');assert(d.bars[0].active);
+assert(d.messages.includes('deck search: installed with the deck list'));
+d.step(0);d.step();assert.equal(d.bars.length,1,'the poll does not install a second bar');
+console.log('PASS: the search bar is installed with the deck list from UpdateUi, without the polling delay');

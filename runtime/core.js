@@ -6495,8 +6495,19 @@ Il2Cpp.perform(() => {
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave: check });
     schedule(0, check);
   });
+  const nativeUiSprites = /* @__PURE__ */ new Map();
   function loadNativeUiSprite(path, image, onLoaded = () => {
   }) {
+    const cached = nativeUiSprites.get(path);
+    if (cached) try {
+      if (!isNull(cached.target)) {
+        call(image, "set_sprite", cached.target);
+        call(image, "set_color", rgba(1, 1, 1, 1));
+        onLoaded();
+        return;
+      }
+    } catch (_) {
+    }
     const retained = image.ref(false), started = Date.now();
     let operation = null;
     function release() {
@@ -6520,6 +6531,7 @@ Il2Cpp.perform(() => {
         if (call(operation.target, "IsDone")) {
           const sprite = operation.target.method("GetAsset", 0).inflate(ucls("UnityEngine.Sprite")).invoke();
           if (!isNull(sprite)) {
+            if (!nativeUiSprites.has(path)) nativeUiSprites.set(path, sprite.ref(false));
             call(retained.target, "set_sprite", sprite);
             call(retained.target, "set_color", rgba(1, 1, 1, 1));
             onLoaded();
@@ -6695,6 +6707,76 @@ Il2Cpp.perform(() => {
         for (const root of roots.reverse()) root.free();
       }
     }
+    function scanPicker(self, go, immediate) {
+      const key = self.handle.toString();
+      let record = records.get(key);
+      if (!record) {
+        let gate = retries.get(key);
+        if (!gate) {
+          gate = uiRetryGate(() => Date.now());
+          retries.set(key, gate);
+        }
+        if (!immediate && !gate.allow()) return key;
+        try {
+          record = install(self);
+          records.set(key, record);
+          gate.success();
+          log(`deck search: installed${immediate ? " with the deck list" : ""}`);
+        } catch (error) {
+          gate.fail();
+          log(`deck search: initialization attempt ${gate.count()}/3: ${error}`);
+          return key;
+        }
+      }
+      const query = String(call(record.input.target, "get_text")?.content || "");
+      if (!query && !record.hidden.size) {
+        record.lastQuery = "";
+        return key;
+      }
+      const tiles = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tile.type.object, true), tilesRoot = tiles.object.ref(false);
+      try {
+        if (query === record.lastQuery && tiles.length === record.lastCount) return key;
+        for (let j = 0; j < tiles.length; j++) {
+          const item = tiles.get(j), child = call(item, "get_gameObject"), id = child.handle.toString();
+          if (!call(child, "get_activeSelf") && !record.hidden.has(id)) continue;
+          const name = String(call(item.field("DeckNameText").value, "get_text")?.content || "");
+          const show = deckSearchMatches(name, query), hidden = record.hidden.get(id);
+          if (!show && !hidden) {
+            record.hidden.set(id, child.ref(false));
+            call(child, "SetActive", false);
+          } else if (show && hidden) {
+            call(child, "SetActive", true);
+            hidden.free();
+            record.hidden.delete(id);
+          }
+        }
+        record.lastQuery = query;
+        record.lastCount = tiles.length;
+      } finally {
+        tilesRoot.free();
+      }
+      return key;
+    }
+    const updateUi = picker.tryMethod("UpdateUi", 0);
+    if (updateUi && !updateUi.virtualAddress.isNull()) Interceptor.attach(updateUi.virtualAddress, { onEnter(args) {
+      this.self = args[0];
+    }, onLeave() {
+      const ref = new Il2Cpp.Object(this.self).ref(false);
+      schedule(0, () => {
+        try {
+          const go = call(ref.target, "get_gameObject");
+          if (call(go, "get_activeInHierarchy")) {
+            const record = records.get(ref.target.handle.toString());
+            if (record) record.lastCount = -1;
+            scanPicker(ref.target, go, true);
+          }
+        } catch (error) {
+          log(`deck search: ${error}`);
+        } finally {
+          ref.free();
+        }
+      }, "deck search install");
+    } });
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
       if (Date.now() < next) return;
       next = Date.now() + 250;
@@ -6707,47 +6789,7 @@ Il2Cpp.perform(() => {
             for (let i = 0; i < values.length; i++) {
               const self = values.get(i), go = call(self, "get_gameObject");
               if (!call(go, "get_activeInHierarchy")) continue;
-              const key = self.handle.toString();
-              live.add(key);
-              let record = records.get(key);
-              if (!record) {
-                let gate = retries.get(key);
-                if (!gate) {
-                  gate = uiRetryGate(() => Date.now());
-                  retries.set(key, gate);
-                }
-                if (!gate.allow()) continue;
-                try {
-                  record = install(self);
-                  records.set(key, record);
-                  gate.success();
-                  log("deck search: installed");
-                } catch (error) {
-                  gate.fail();
-                  log(`deck search: initialization attempt ${gate.count()}/3: ${error}`);
-                  continue;
-                }
-              }
-              const query = String(call(record.input.target, "get_text")?.content || "");
-              const tiles = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tile.type.object, true), tilesRoot = tiles.object.ref(false);
-              try {
-                for (let j = 0; j < tiles.length; j++) {
-                  const item = tiles.get(j), child = call(item, "get_gameObject"), id = child.handle.toString();
-                  if (!call(child, "get_activeSelf") && !record.hidden.has(id)) continue;
-                  const name = String(call(item.field("DeckNameText").value, "get_text")?.content || "");
-                  const show = deckSearchMatches(name, query), hidden = record.hidden.get(id);
-                  if (!show && !hidden) {
-                    record.hidden.set(id, child.ref(false));
-                    call(child, "SetActive", false);
-                  } else if (show && hidden) {
-                    call(child, "SetActive", true);
-                    hidden.free();
-                    record.hidden.delete(id);
-                  }
-                }
-              } finally {
-                tilesRoot.free();
-              }
+              live.add(scanPicker(self, go, false));
             }
             scanned = true;
           } finally {
