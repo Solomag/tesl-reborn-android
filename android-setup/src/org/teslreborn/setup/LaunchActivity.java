@@ -173,7 +173,9 @@ public final class LaunchActivity extends Activity {
   private void startGame(String status) {
     if(launched || isDestroyed())return;
     cancel.cancel();launched=true;handler.removeCallbacksAndMessages(null);record(status);
-    destination.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+    // This gate lives in its own task (taskAffinity in the builder manifest),
+    // so the game, new or resumed, is started into the game's task.
+    destination.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION | Intent.FLAG_ACTIVITY_NEW_TASK);
     startActivity(destination);finish();
   }
   @Override public void onBackPressed(){startGame("skipped");}

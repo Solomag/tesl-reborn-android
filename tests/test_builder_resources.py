@@ -322,6 +322,9 @@ class BuilderResourcesTest(unittest.TestCase):
             self.assertEqual(
                 gate.get(ANDROID + "theme"), "@style/TeslRebornTransition"
             )
+            # The icon must reach the gate while the game runs: a task of its own.
+            self.assertEqual(gate.get(ANDROID + "taskAffinity"), PACKAGE + ".tesl-reborn-launcher")
+            self.assertEqual(gate.get(ANDROID + "excludeFromRecents"), "true")
             self.assertEqual(
                 gate.find("intent-filter/action").get(ANDROID + "name"),
                 "android.intent.action.MAIN",
