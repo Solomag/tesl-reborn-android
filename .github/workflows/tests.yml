@@ -1,0 +1,50 @@
+name: Hook Tests
+on:
+  push:
+    branches: [android-ui-and-update-loader, portable-builder-and-resources, "sync-upstream-*"]
+    paths:
+      - 'hook.ts'
+      - 'tests/**'
+      - 'runtime/**'
+      - 'tools/**'
+      - 'builder/**'
+      - 'build_single_apk.py'
+      - 'resources/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    paths:
+      - 'hook.ts'
+      - 'tests/**'
+      - 'runtime/**'
+      - 'tools/**'
+      - 'builder/**'
+      - 'build_single_apk.py'
+      - 'resources/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/tests.yml'
+permissions:
+  contents: read
+env:
+  PYTHONUTF8: '1'
+jobs:
+  tests:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # The python suite imports builder.gui, which needs tkinter, so the
+      # distribution python3 with its apt-installed python3-tk is used as-is.
+      - name: Install tkinter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
