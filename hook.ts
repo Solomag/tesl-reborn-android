@@ -2987,6 +2987,25 @@ function uiComponent(go, type) {
       }catch(_){}
       return button;
     }
+    // Report 21: after a cancel the button was active and interactable by
+    // every check we made, yet the player could not press it. Name what else
+    // can swallow a tap: a disabled Button component or a CanvasGroup above it.
+    function friendsButtonBlockers(button) {
+      try{
+        const found=[];
+        if(!call(button,"get_enabled"))found.push("Button component disabled");
+        const group=ucls("UnityEngine.CanvasGroup").type.object;
+        let node=call(call(button,"get_gameObject"),"get_transform");
+        for(let depth=0;depth<12&&!isNull(node);depth++,node=call(node,"get_parent")){
+          const go=call(node,"get_gameObject"),canvas=go.method("GetComponent").overload("System.Type").invoke(group);
+          if(isNull(canvas))continue;
+          const name=String(call(go,"get_name")?.content||"?");
+          if(!call(canvas,"get_interactable"))found.push(`${name}: CanvasGroup not interactable`);
+          if(!call(canvas,"get_blocksRaycasts"))found.push(`${name}: CanvasGroup blocks no raycasts`);
+        }
+        return found.length?`blockers: ${found.join(", ")}`:"no blockers found";
+      }catch(error){return `blocker check failed: ${error}`;}
+    }
     function restore(record, returningToMenu = false, source = "close") {
       log(`matching friends: restore (${source}${returningToMenu ? ", returning to menu" : ""}; ${record.items.length} item${record.items.length === 1 ? "" : "s"})`);
       for(const item of record.items){try{
@@ -3021,7 +3040,7 @@ function uiComponent(go, type) {
                 // came back, the menu never became active, or the objects went
                 // away underneath the wait.
                 if(stopped)log(`matching friends: re-assert stopped${stopped}`);
-                else if(applies)log(`matching friends: re-assert applied ${applies}x`);
+                else if(applies)log(`matching friends: re-assert applied ${applies}x; ${friendsButtonBlockers(button.target)}`);
                 else log(`matching friends: re-assert gave up: the menu never became active`);
                 button.free();parent.free();self.free();
               }
@@ -3084,7 +3103,11 @@ function uiComponent(go, type) {
       closed.push(name);
       Interceptor.attach(method.virtualAddress,{onEnter(args){try{
         const key=call(new Il2Cpp.Object(args[0]),"get_gameObject").handle.toString(),record=records.get(key);
-        if(record){records.delete(key);schedule(0,()=>restore(record,true,name),"matching friends restore");}
+        // Only an explicit cancel returns to the menu. OnDisable/OnDestroy also
+        // fire when a match is found, and the re-assert then touched menu
+        // objects the battle scene was destroying: a NullReferenceException
+        // ~1.6s after the restore, then the setjmp abort (reports 20, 21).
+        if(record){records.delete(key);schedule(0,()=>restore(record,name==="HandleOnCancelSearch",name),"matching friends restore");}
         else log(`matching friends: ${name}: no moved record`);
       }catch(error){log(`matching friends restore: ${error}`);}}});
     }
@@ -3103,51 +3126,10 @@ function uiComponent(go, type) {
         let live=true;try{live=call(call(record.window.target,"get_gameObject"),"get_activeInHierarchy");}catch(_){}
         if(live)continue;
         records.delete(key);
-        restore(record,true,"watchdog");
+        restore(record,false,"watchdog");
       }
       armWatch();
     };
-    // The button can be dead in the menu with no moved record at all (the
-    // matchmaking state machine disabling it after our re-assert ended, or a
-    // close path that never runs our hooks). The menu views declare no
-    // OnEnable of their own (report 20: "menu hooks 0/3"), so the menu is
-    // polled instead: once a second, against a cached button, and only while
-    // the button's own parent is live - the menu is on screen, not a battle.
-    // It repairs the two failures the player sees - hidden, or not
-    // interactable - while no search of ours is holding the button.
-    let cached=null,nextFind=0,nextCheck=0,checking=false,repairs=0;
-    const menuButton=()=>{
-      if(cached){try{call(cached.target,"get_gameObject");return cached.target;}catch(_){cached.free();cached=null;}}
-      // FindObjectsOfTypeAll is the expensive part: at most every 5s.
-      if(Date.now()<nextFind)return null;
-      nextFind=Date.now()+5000;
-      const button=findFriendsButton();
-      if(button)cached=button.ref(false);
-      return button;
-    };
-    const inspectMenu=()=>{
-      checking=false;
-      try{
-        if(records.size)return;
-        const button=menuButton();if(!button)return;
-        const go=call(button,"get_gameObject"),parent=call(call(go,"get_transform"),"get_parent");
-        if(isNull(parent)||!call(call(parent,"get_gameObject"),"get_activeInHierarchy"))return;
-        const self=Boolean(call(go,"get_activeSelf")),clickable=Boolean(call(button,"get_interactable"));
-        if(self&&clickable)return;
-        if(!self)call(go,"SetActive",true);
-        if(!clickable)call(button,"set_interactable",true);
-        repairs++;
-        if(repairs<=5||repairs%20===0)log(`matching friends: menu repaired a dead button (self=${self} interactable=${clickable}; ${repairs} repair${repairs===1?"":"s"})`);
-      }catch(error){log(`matching friends: menu check failed: ${error}`);if(cached){cached.free();cached=null;}}
-    };
-    try{
-      Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
-        if(checking||Date.now()<nextCheck)return;
-        nextCheck=Date.now()+1000;checking=true;
-        schedule(0,inspectMenu,"matching friends menu check");
-      }});
-      log("matching friends: menu check every 1s");
-    }catch(error){log(`matching friends: menu check unavailable: ${error}`);}
   });
   // END android-ui: matching-friends
 

@@ -8,8 +8,7 @@ const nodes=new Map([[friendGo,friendNode],[buttonGo,buttonNode],[go,root]]);
 for(const obj of [friendGo,buttonGo,original,buttonParent,button,seeker])obj.ref=()=>({target:obj,free:()=>frees++});
 for(const node of [friendNode,buttonNode])node.method=()=>({overload:()=>({invoke:(parent,keep)=>{assert.equal(keep,true);node.parent=parent;}})});
 const pose={field:key=>({value:key==='x'?1:2})};
-let now=1000;
-const c={Date:class extends Date{static now(){return now;}},section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='SparkleServices.ServicesManager'?{method:()=>({virtualAddress:'Update'})}:name==='MatchSeekingWin'?{method:()=>({virtualAddress:'Show'}),tryMethod:name=>({virtualAddress:Object.assign({isNull:()=>false},{toString:()=>name})})}:{type:{object:name}},
+const c={section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='MatchSeekingWin'?{method:()=>({virtualAddress:'Show'}),tryMethod:name=>({virtualAddress:Object.assign({isNull:()=>false},{toString:()=>name})})}:{type:{object:name}},
  Interceptor:{attach:(addr,hook)=>hooks[String(addr)]=hook},Il2Cpp:{Object:function(){return seeker;},string:x=>x},isNull:x=>x==null,schedule:(_,fn)=>queue.push(fn),log:m=>logs.push(m),vec2:(x,y)=>({x,y}),
  uiNew:()=>{const slot={active:true,ref:()=>({target:slot,free:()=>frees++})};nodes.set(slot,{parent:buttonParent,sibling:2});return slot;},uiAdd:()=>({}),
  ucls:name=>({method:()=>({overload:()=>({invoke:type=>(name==='UnityEngine.Object'?undefined:{length:type==='FriendsWin'||type==='MainMenuOverlayView'?1:0,get:()=>type==='FriendsWin'?friend:{field:()=>({value:button})}})})})}),
@@ -36,13 +35,23 @@ vm.createContext(c);vm.runInContext(transformSync(require('./source.cjs')('match
 assert.ok(logs.some(m=>/^matching friends: close hooks OnDisable, OnDestroy, HandleOnCancelSearch/.test(m)),'the installed close hooks are announced');
 const invocation={};hooks.Show.onEnter.call(invocation,[ptr]);hooks.Show.onLeave.call(invocation);for(const task of queue.splice(0))task();
 assert.equal(positionWrites.length,1);assert.deepEqual(positionWrites[0],{x:10,y:20,z:0});assert.equal(button.interactable,true);assert.equal(buttonNode.parent,root);assert.equal(friendNode.parent,modalParent);assert.equal(button.nativeClick,'original-handler');
-hooks.OnDisable.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(buttonNode.parent,buttonParent);assert.equal(friendNode.parent,original);assert.equal(button.interactable,false,'the menu is not interactive yet, so the stale value goes back first');assert.equal(buttonNode.sibling,2);assert.equal(friendNode.sibling,3);assert.equal(frees,8,'the re-assert roots and the window ref are still held');
-assert.ok(logs.some(m=>m==='matching friends: restore (OnDisable, returning to menu; 2 items)'),'the close hook names itself as the restore source');
+hooks.HandleOnCancelSearch.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(buttonNode.parent,buttonParent);assert.equal(friendNode.parent,original);assert.equal(button.interactable,false,'the menu is not interactive yet, so the stale value goes back first');assert.equal(buttonNode.sibling,2);assert.equal(friendNode.sibling,3);assert.equal(frees,8,'the re-assert roots and the window ref are still held');
+assert.ok(logs.some(m=>m==='matching friends: restore (HandleOnCancelSearch, returning to menu; 2 items)'),'the close hook names itself as the restore source');
 buttonParent.active=true;for(const task of queue.splice(0))task();
 assert.equal(buttonGo.active,true,'the button is visible again once the menu is active');assert.equal(button.interactable,true,'the button is clickable again once the menu is active');assert.equal(frees,8);
 for(let round=0;round<3;round++)for(const task of queue.splice(0))task();assert.equal(frees,11,'the re-asserts stop and release their roots');
-assert.ok(logs.some(m=>m==='matching friends: re-assert applied 4x'),'the completed re-assert is logged');
-hooks.HandleOnCancelSearch.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(frees,11);
+assert.ok(logs.some(m=>m.startsWith('matching friends: re-assert applied 4x; ')),'the completed re-assert is logged with the blocker check');
+hooks.OnDisable.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(frees,11);
+
+// A match found also closes the search window (OnDisable), while the battle
+// scene tears the menu down: the button goes back as it was, and nothing is
+// scheduled that would touch menu objects afterwards.
+const matched={};hooks.Show.onEnter.call(matched,[ptr]);hooks.Show.onLeave.call(matched);for(const task of queue.splice(0))task();
+assert.equal(buttonNode.parent,root);
+hooks.OnDisable.onEnter([ptr]);for(const task of queue.splice(0))task();
+assert.equal(buttonNode.parent,buttonParent,'the button is put back when the match is found');
+assert.equal(queue.length,0,'no re-assert after a match is found');
+assert.ok(logs.some(m=>m==='matching friends: restore (OnDisable; 2 items)'),'the match-found restore does not claim a return to the menu');
 
 // A close path that fires none of the lifecycle hooks is caught by the
 // watchdog: a window that is no longer live ends the search for it.
@@ -52,21 +61,6 @@ assert.equal(buttonNode.parent,root,'the button is moved for the second search')
 go.active=false;
 for(let round=0;round<3;round++)for(const task of queue.splice(0))task();
 assert.equal(buttonNode.parent,buttonParent,'the watchdog puts the button back when no close hook fires');
-assert.equal(button.interactable,true,'the watchdog restores an interactive button');
-assert.ok(logs.slice(seen).some(m=>m.startsWith('matching friends: restore (watchdog, returning to menu')),'the watchdog restore is logged');
+assert.equal(button.interactable,true,'the watchdog restores the state the button had');
+assert.ok(logs.slice(seen).some(m=>m.startsWith('matching friends: restore (watchdog;')),'the watchdog restore is logged');
 console.log('PASS: original friends button is moved/enabled without replacing handlers, restores are logged with their source, and the watchdog covers a close path without hooks');
-
-// The menu views declare no OnEnable, so the menu is polled: a button the game
-// killed after our re-assert ended is repaired while the menu is on screen,
-// and left alone while its parent is not live (a battle, a loading screen).
-assert.ok(logs.some(m=>m==='matching friends: menu check every 1s'),'the menu poll is installed');
-while(queue.length)for(const task of queue.splice(0))task();
-const menuTick=()=>{now+=1001;hooks.Update.onLeave();for(const task of queue.splice(0))task();};
-buttonParent.active=false;button.interactable=false;menuTick();
-assert.equal(button.interactable,false,'no repair while the menu is not live');
-buttonParent.active=true;menuTick();
-assert.equal(button.interactable,true,'a dead button is repaired in the live menu');
-assert.ok(logs.some(m=>m.startsWith('matching friends: menu repaired a dead button (self=true interactable=false; 1 repair)')),'the repair is logged');
-const repaired=logs.length;menuTick();
-assert.equal(logs.length,repaired,'a healthy button is not touched or logged');
-console.log('PASS: the menu poll repairs a dead friends button only while the menu is live');
