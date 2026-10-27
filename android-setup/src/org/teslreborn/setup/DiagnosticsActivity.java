@@ -31,7 +31,15 @@ public final class DiagnosticsActivity extends Activity {
           .setShortLabel("Diagnostics").setLongLabel("TESL Reborn diagnostics")
           .setIcon(Icon.createWithResource(context, android.R.drawable.ic_menu_info_details))
           .setIntent(intent).build();
-      manager.addDynamicShortcuts(Collections.singletonList(shortcut));
+      // Game Data without starting the game or signing in: the same screen
+      // the in-game Settings tab opens (teslreborn://resources).
+      Intent data = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("teslreborn://resources"))
+          .setClass(context, ResourceActivity.class);
+      ShortcutInfo gameData = new ShortcutInfo.Builder(context, "tesl-game-data")
+          .setShortLabel("Game data").setLongLabel("TESL Reborn game data")
+          .setIcon(Icon.createWithResource(context, android.R.drawable.ic_menu_manage))
+          .setIntent(data).build();
+      manager.addDynamicShortcuts(java.util.Arrays.asList(gameData, shortcut));
     } catch (Exception ignored) {}
   }
 
