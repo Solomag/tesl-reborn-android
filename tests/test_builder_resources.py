@@ -323,7 +323,14 @@ class BuilderResourcesTest(unittest.TestCase):
                 gate.get(ANDROID + "theme"), "@style/TeslRebornTransition"
             )
             # The icon must reach the gate while the game runs: a task of its own.
-            self.assertEqual(gate.get(ANDROID + "taskAffinity"), PACKAGE + ".tesl-reborn-launcher")
+            self.assertEqual(gate.get(ANDROID + "taskAffinity"), PACKAGE + ".tesl_reborn_launcher")
+            # PackageParser validates taskAffinity like a package name; a hyphen
+            # made the whole APK "invalid" for the installer.
+            import re
+            for activity in activities:
+                affinity = activity.get(ANDROID + "taskAffinity")
+                if affinity:
+                    self.assertRegex(affinity, r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$")
             self.assertEqual(gate.get(ANDROID + "excludeFromRecents"), "true")
             self.assertEqual(
                 gate.find("intent-filter/action").get(ANDROID + "name"),

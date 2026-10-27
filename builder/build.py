@@ -200,7 +200,7 @@ def patch_manifest(path):
             # Its own task: the launcher icon must create this gate again while
             # the game runs, or Android just resumes the game task and the
             # update offer is never reached. The game goes to its own task.
-            ANDROID + "taskAffinity": PACKAGE + ".tesl-reborn-launcher",
+            ANDROID + "taskAffinity": PACKAGE + ".tesl_reborn_launcher",
             ANDROID + "excludeFromRecents": "true",
             ANDROID + "theme": "@style/TeslRebornTransition",
             ANDROID + "screenOrientation": game.get(ANDROID + "screenOrientation", "sensorLandscape"),
