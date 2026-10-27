@@ -3269,15 +3269,17 @@ function uiComponent(go, type) {
       }
       step = "label";
       const tmp = ucls("TMPro.TextMeshProUGUI").type.object;
-      const tabLabel = call(first, "get_gameObject").method("GetComponentInChildren").overload("System.Type").invoke(tmp);
-      const label = button.method("GetComponentInChildren").overload("System.Type").invoke(tmp);
+      // GameObject.GetComponentInChildren(Type) is stripped in this player
+      // (report 31); GetComponentsInChildren(Type, bool) is kept.
+      const firstIn = go => { const all = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tmp, true); return all.length ? all.get(0) : null; };
+      const tabLabel = firstIn(call(first, "get_gameObject"));
+      const label = firstIn(button);
       if (!isNull(tabLabel) && !isNull(label)) {
         call(label, "set_font", call(tabLabel, "get_font"));
         call(label, "set_color", call(tabLabel, "get_color"));
-        const auto = Boolean(call(tabLabel, "get_enableAutoSizing"));
-        call(label, "set_enableAutoSizing", auto);
-        if (auto) { call(label, "set_fontSizeMin", call(tabLabel, "get_fontSizeMin")); call(label, "set_fontSizeMax", call(tabLabel, "get_fontSizeMax")); }
-        call(label, "set_fontSize", call(tabLabel, "get_fontSize"));
+        // Auto-sizing setters may be stripped as well: copy what exists.
+        const copy = name => { const get = tabLabel.tryMethod("get_" + name, 0), set = label.tryMethod("set_" + name, 1); if (get && set) set.invoke(get.invoke()); };
+        for (const name of ["enableAutoSizing", "fontSizeMin", "fontSizeMax", "fontSize"]) copy(name);
       }
       step = "size";
       const bounds = call(lastNode, "get_rect");
@@ -3291,7 +3293,7 @@ function uiComponent(go, type) {
       for (const name of ["anchorMin", "anchorMax", "pivot"]) call(node, "set_" + name, call(lastNode, "get_" + name));
       call(node, "set_sizeDelta", call(lastNode, "get_sizeDelta"));
       call(layout, "set_preferredWidth", width); call(layout, "set_preferredHeight", height);
-      const flow = row.method("GetComponent").overload("System.Type").invoke(ucls("UnityEngine.UI.HorizontalLayoutGroup").type.object);
+      const flow = uiComponent(call(row, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup");
       if (!isNull(flow)) {
         call(layout, "set_ignoreLayout", false);
         log(`settings button: third tab in the row layout (${Math.round(width)}x${Math.round(height)})`);

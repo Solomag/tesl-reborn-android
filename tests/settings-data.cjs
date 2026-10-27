@@ -46,14 +46,16 @@ function tabFixture(flow){
  const tabArt={class:{type:{name:'UnityEngine.UI.Image'}}},tabLabel={},row={pos:{x:0,y:-40}};
  const audio={go:{},node:{pos:{x:-150,y:0}}},prefs={go:{},node:{pos:{x:150,y:0}}};
  const ourImage={},ourLabel={},ourNode={},layout={},writes=[];
- const button={method:()=>({overload:()=>({invoke:()=>ourLabel})})};
+ const button={method:n=>({overload:(...t)=>({invoke:()=>{assert.equal(n,'GetComponentsInChildren','GetComponentInChildren(Type) is stripped on the phone');return {length:1,get:()=>ourLabel};}})})};
  const toggles={length:2,get:i=>i?prefs:audio};
  const tabSelf={field:n=>({value:n==='_tabNavigation'?{field:()=>({value:toggles})}:null})};
- audio.go.method=()=>({overload:()=>({invoke:()=>tabLabel})});
- row.method=()=>({overload:()=>({invoke:()=>flow?{}:null})});
+ audio.go.method=n=>({overload:()=>({invoke:()=>{assert.equal(n,'GetComponentsInChildren');return {length:1,get:()=>tabLabel};}})});
  ourNode.method=()=>({overload:()=>({invoke:(parent,keep)=>writes.push(['SetParent',parent,keep])})});
  const prev=c.call,prevComponent=c.uiComponent,prevVec=c.vec2;
- c.uiComponent=(o,type)=>type==='UnityEngine.UI.Image'?ourImage:null;c.vec2=(x,y)=>({x,y});
+ c.uiComponent=(o,type)=>type==='UnityEngine.UI.Image'?ourImage:type==='UnityEngine.UI.HorizontalLayoutGroup'&&o===row?(flow?{}:null):null;c.vec2=(x,y)=>({x,y});
+ const tabValues={enableAutoSizing:true,fontSizeMin:18,fontSizeMax:36,fontSize:36};
+ tabLabel.tryMethod=n=>{const k=n.slice(4);return n.startsWith('get_')&&k in tabValues?{invoke:()=>tabValues[k]}:null;};
+ ourLabel.tryMethod=n=>n.startsWith('set_')?{invoke:v=>writes.push([ourLabel,n,v])}:null;
  c.call=(o,n,...a)=>{
   for(const t of [audio,prefs]){if(o===t&&n==='get_gameObject')return t.go;if(o===t.go&&n==='get_transform')return t.node;if(o===t.node&&n==='get_anchoredPosition')return v(t.node.pos.x,t.node.pos.y);}
   if(o===prefs.node&&n==='get_parent')return row;if(o===audio&&n==='get_targetGraphic')return tabArt;
@@ -61,6 +63,7 @@ function tabFixture(flow){
   if(o===tabLabel)return n==='get_font'?'game-font':n==='get_enableAutoSizing'?true:n==='get_fontSizeMin'?18:n==='get_fontSizeMax'?36:n==='get_fontSize'?36:'gold';
   if(o===prefs.node&&n==='get_rect')return {field:f=>({value:f==='m_Width'?280:64})};
   if(o===prefs.node&&n.startsWith('get_'))return n;
+  if(o===row&&n==='get_gameObject')return row;
   if(o===row&&n==='get_anchoredPosition')return v(row.pos.x,row.pos.y);
   if(o===row&&n==='set_anchoredPosition'){row.pos=a[0];return;}
   if(o===button&&n==='get_transform')return ourNode;
