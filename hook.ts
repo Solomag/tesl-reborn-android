@@ -4685,11 +4685,14 @@ const chatWindows = new Map();
     // Unity's own null check: a destroyed object compares equal to null
     // without throwing, so nothing is called on it.
     const alive = value => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
-    // The highest live root Canvas that renders ScreenSpaceOverlay.
+    // The live root Canvas that covers the screen: ScreenSpaceOverlay (0) or
+    // ScreenSpaceCamera (1), overlay first, then the highest sorting. The
+    // game's whole UI is one camera-space root, CanvasRoot:1/1 (report 26);
+    // WorldSpace (2) is not the screen and never hosts the notice.
     function overlayHost() {
       const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
         .invoke(ucls("UnityEngine.Canvas").type.object);
-      let host = null, order = -Infinity;
+      let host = null, rank = -Infinity;
       const seen = [];
       for (let i = 0; i < values.length; i++) {
         const candidate = values.get(i);
@@ -4698,14 +4701,15 @@ const chatWindows = new Map();
         if (!call(go, "get_activeInHierarchy")) continue;
         const mode = enumVal(call(candidate, "get_renderMode")), sorting = Number(call(candidate, "get_sortingOrder"));
         seen.push(`${String(call(go, "get_name")?.content || "?")}:${mode}/${sorting}`);
-        if (mode !== 0) continue;
-        if (sorting >= order) { host = candidate; order = sorting; }
+        if (mode !== 0 && mode !== 1) continue;
+        const score = (mode === 0 ? 1e6 : 0) + sorting;
+        if (score >= rank) { host = candidate; rank = score; }
       }
       // Without a host, name the live root canvases and their render modes
       // (0 overlay, 1 camera, 2 world), at most every 30 s.
       if (!host && Date.now() >= hostReportAt) {
         hostReportAt = Date.now() + 30000;
-        log(`update notice: no overlay Canvas to host it; live roots ${seen.slice(0, 12).join(", ") || "none"}`);
+        log(`update notice: no screen Canvas to host it; live roots ${seen.slice(0, 12).join(", ") || "none"}`);
       }
       return host;
     }

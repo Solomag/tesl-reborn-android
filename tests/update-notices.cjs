@@ -183,7 +183,7 @@ assert.equal(notices(),before,'no GameObject is built without a host');
 const looked=finds;strippedBanner.tick();clock+=1000;strippedBanner.tick();
 assert.equal(finds,looked,'the host is not searched on every tick');
 assert(!logs.some(m=>/^update notice: TypeError/.test(m)),'a tick without a host ends quietly instead of failing on a null Canvas (report 25)');
-assert(logs.some(m=>m.startsWith('update notice: no overlay Canvas to host it; live roots')),'the missing host is reported with the live roots');
+assert(logs.some(m=>m.startsWith('update notice: no screen Canvas to host it; live roots')),'the missing host is reported with the live roots');
 // A live overlay root Canvas appears: our object is nested under it and
 // sorts above it; game UI is not moved, and no DontDestroyOnLoad on a child.
 const host=object('GameOverlayCanvas');
@@ -215,3 +215,27 @@ hosts=[host,second];clock+=3000;strippedBanner.tick();
 assert(calls.some(([v,m,p])=>m==='SetParent'&&p===second),'rebuilt under the next live overlay Canvas');
 r.call=call;canvasStripped=false;hosts=[];
 console.log('PASS: with set_renderMode stripped the banner nests under a game overlay Canvas, waits for one, and follows scene changes');
+
+// Report 26: the game's only root is CanvasRoot in ScreenSpaceCamera (mode 1).
+// It hosts the notice; a WorldSpace root (2) never does, whatever its order.
+{
+ canvasStripped=true;
+ const camera=object('CanvasRoot'),world=object('WorldRoot');
+ const modes=new Map([[camera,1],[world,2]]),orders=new Map([[camera,1],[world,50]]);
+ const call=r.call;
+ r.call=(value,method,...args)=>{
+  if(modes.has(value)&&method==='get_isRootCanvas')return true;
+  if(modes.has(value)&&method==='get_renderMode')return modes.get(value);
+  if(orders.has(value)&&method==='get_sortingOrder')return orders.get(value);
+  if(method==='get_rootCanvas')return camera;
+  if(method==='get_name')return {content:value.name};
+  return call(value,method,...args);
+ };
+ hosts=[world,camera];clock+=60000;
+ const cameraBanner=r.createUpdateBanner();cameraBanner.show('applied',80);cameraBanner.tick();
+ assert(calls.some(([v,m,p])=>m==='SetParent'&&p===camera),'the camera-space CanvasRoot hosts the notice');
+ assert(!calls.some(([v,m,p])=>m==='SetParent'&&p===world),'a WorldSpace root never hosts it');
+ assert(logs.some(m=>m==='update notice: nested under CanvasRoot (order 1)'));
+ r.call=call;canvasStripped=false;hosts=[];
+ console.log('PASS: the camera-space CanvasRoot hosts the notice, a world-space root never does');
+}

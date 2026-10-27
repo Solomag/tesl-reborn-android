@@ -68,3 +68,13 @@ and set_renderMode is stripped`. Новый корневой `Canvas` в это�
 заканчивается сразу; если хоста нет, раз в 30 с пишется
 `update notice: no overlay Canvas to host it; live roots <имя>:<режим>/<порядок>, …`
 (режим 0 — overlay, 1 — камера, 2 — мир).
+
+## Ревизия 81: CanvasRoot рисуется через камеру
+
+Отчёт 26: `no overlay Canvas to host it; live roots CanvasRoot:1/1`. Весь
+интерфейс игры — один корневой `CanvasRoot` в режиме ScreenSpaceCamera (1),
+а ревизии 79–80 искали только ScreenSpaceOverlay (0). В ревизии 81
+(`android-81-notice-in-camera-canvas`) хостом может быть экранный `Canvas`
+любого из двух режимов (overlay предпочтительнее, затем порядок сортировки);
+WorldSpace (2) не используется. Вложенный `Canvas` с `overrideSorting` внутри
+`CanvasRoot` — тот же приём, что уже работает для кнопки друзей.

@@ -8907,7 +8907,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
     function overlayHost() {
       const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
-      let host = null, order = -Infinity;
+      let host = null, rank = -Infinity;
       const seen = [];
       for (let i = 0; i < values.length; i++) {
         const candidate = values.get(i);
@@ -8916,15 +8916,16 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
         if (!call(go, "get_activeInHierarchy")) continue;
         const mode = enumVal(call(candidate, "get_renderMode")), sorting = Number(call(candidate, "get_sortingOrder"));
         seen.push(`${String(call(go, "get_name")?.content || "?")}:${mode}/${sorting}`);
-        if (mode !== 0) continue;
-        if (sorting >= order) {
+        if (mode !== 0 && mode !== 1) continue;
+        const score = (mode === 0 ? 1e6 : 0) + sorting;
+        if (score >= rank) {
           host = candidate;
-          order = sorting;
+          rank = score;
         }
       }
       if (!host && Date.now() >= hostReportAt) {
         hostReportAt = Date.now() + 3e4;
-        log(`update notice: no overlay Canvas to host it; live roots ${seen.slice(0, 12).join(", ") || "none"}`);
+        log(`update notice: no screen Canvas to host it; live roots ${seen.slice(0, 12).join(", ") || "none"}`);
       }
       return host;
     }
