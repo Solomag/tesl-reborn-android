@@ -85,7 +85,7 @@ def main():
     )
     # Also inventory the pinned signer in each distribution.
     lock = vendor / "download-lock.json"
-    pins = json.loads(lock.read_text()) if lock.exists() else {}
+    pins = json.loads(lock.read_text(encoding='utf-8')) if lock.exists() else {}
     signer = vendor / "uber-apk-signer.jar"
     digest = download(
         "https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar",

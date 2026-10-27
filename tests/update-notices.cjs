@@ -137,30 +137,32 @@ scheduled[0].fn();assert.equal(transport.length,1);
 assert.equal(transport[0].auth,false);assert.equal(transport[0].update,true);
 console.log('PASS: API 1 update notices, verified-only completion, once-only activation, offline silence, font retry, noninteractive scene-persistent UI and automatic expiry');
 
-// Replay the missing managed Canvas setter found in the phone report.
-const nativeCalls=[];r.Memory={allocUtf8String:s=>s};r.Il2Cpp.module={getExportByName:()=> 'resolver'};
-r.NativeFunction=function(address,ret,args){if(address==='resolver')return name=>({name,isNull:()=>false});return (...values)=>nativeCalls.push({name:address.name,values});};
+// Replay the missing managed Canvas setter found in the phone report. The
+// native icall fallback was removed as unsafe, so a stripped managed binding
+// must disable the banner instead of reaching into native code.
+assert(!/il2cpp_resolve_icall/.test(noticeSource),'the unsafe native Canvas icall fallback must stay removed');
 const stripped={handle:'canvas-object',tryMethod:()=>null};
-r.noticeCanvasProperty(stripped,'set_renderMode',0);r.noticeCanvasProperty(stripped,'set_sortingOrder',32760);r.noticeCanvasProperty(stripped,'set_scaleFactor',1.5);
-assert.deepEqual(nativeCalls.map(x=>x.name),['UnityEngine.Canvas::set_renderMode','UnityEngine.Canvas::set_sortingOrder','UnityEngine.Canvas::set_scaleFactor']);
-assert.deepEqual(nativeCalls[0].values,['canvas-object',0]);
-r.Memory={allocUtf8String:s=>s};
+assert.throws(()=>r.noticeCanvasProperty(stripped,'set_renderMode',0),error=>error.noticeCanvasUnavailable===true);
+assert.throws(()=>r.noticeCanvasProperty(stripped,'set_sortingOrder',32760),error=>error.noticeCanvasUnavailable===true);
+assert.throws(()=>r.noticeCanvasProperty(stripped,'set_scaleFactor',1.5),error=>error.noticeCanvasUnavailable===true);
 
-// Both stripped managed metadata and missing icalls must remain usable by
-// parenting only our object under an existing Canvas, without cloning game UI.
-const oldUcls=r.ucls,gameCanvas=object('ExistingGameCanvas');
-r.ucls=name=>name==='UnityEngine.Resources'?{method:()=>({overload:()=>({invoke:()=>({length:1,get:()=>gameCanvas})})})}:oldUcls(name);
-r.noticeCanvasProperty=()=>{throw Error('native binding stripped');};
-const callStart=calls.length,fallback=r.createUpdateBanner();fallback.show('applied',41);fallback.tick();
-assert(calls.slice(callStart).some(([o,m,parent])=>o.name==='RebornUpdateNotice'&&m==='SetParent'&&parent===gameCanvas));
-assert(!calls.slice(callStart).some(([o,m])=>o===gameCanvas&&['Destroy','SetParent','DontDestroyOnLoad'].includes(m)));
-assert(!calls.slice(callStart).some(([o,m])=>m==='DontDestroyOnLoad'),'scene-owned fallback must not detach a game hierarchy');
-assert(calls.slice(callStart).some(([o,m,text])=>m==='set_text'&&String(text).includes('APK 38 · patch 37')));
+// With no usable Canvas the banner switches off for good: it never clones,
+// moves or detaches game UI, and it does not retry on later ticks.
+const oldUiAdd=r.uiAdd;
+r.uiAdd=(go,type)=>type==='UnityEngine.Canvas'?stripped:oldUiAdd(go,type);
+const callStart=calls.length,strippedBanner=r.createUpdateBanner();
+strippedBanner.show('applied',41);strippedBanner.tick();
+const afterFailure=calls.length;
+assert(afterFailure>callStart,'the first attempt still creates its own GameObject');
+assert(!calls.slice(callStart).some(([o,m])=>m==='SetParent'||m==='DontDestroyOnLoad'),'a stripped Canvas must not adopt or detach a game hierarchy');
+strippedBanner.show('downloading',42);strippedBanner.tick();
+assert.equal(calls.length,afterFailure,'a disabled banner stops building and retrying entirely');
+r.uiAdd=oldUiAdd;
 
 assert(r.isLoadingVersionScreen('Loading',[]));assert(r.isLoadingVersionScreen('', ['LoadingScreen(Clone)']));
 assert(!r.isLoadingVersionScreen('MainMenu',[]));assert(!r.isLoadingVersionScreen('Battle',[]));
 assert(!r.isLoadingVersionScreen('Login',[]));
-r.loadingVersionState=()=>({visible:false,scene:'Battle'});fallback.tick();
+r.loadingVersionState=()=>({visible:false,scene:'Battle'});banner.tick();
 assert.equal(objects.filter(o=>o.name==='PortVersion').at(-1).active,false,'version must not remain visible in combat');
 
 const versionPlacements=placements.filter(p=>p[0].name==='PortVersion');

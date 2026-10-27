@@ -58,7 +58,7 @@ playing still requires the Reborn server. Auto-login works once a
 
 ## Build chain
 
-Every command below runs from the `` directory, in order.
+Every command below runs from the repository root, in order.
 
 ### 1. Compile the hook
 
@@ -76,7 +76,7 @@ npm test
 python3 build_apk.py base.apk tesl-reborn-patched.apk
 ```
 `build_apk.py` needs `base.apk`, `gadget.so`, `patched_classes.dex` and
-`uber-apk-signer.jar` in ``. `patched_classes.dex` is a prebuilt
+`uber-apk-signer.jar` in the repository root. `patched_classes.dex` is a prebuilt
 artefact in the repo (originally `bitter.jnibridge.JNIBridge$a` patched to
 avoid the Android 16 default-method dispatch crash; see the Source files note).
 
@@ -165,8 +165,8 @@ adb push ./creds/tesl-login.json \\
   `bitter.jnibridge.JNIBridge$a` patch. `build_apk.py` rebuilds
   `patched_classes.dex` automatically on each build (via baksmali + smali):
   extract `classes.dex` from `base.apk`, replace the `JNIBridge$a` class with
-  the committed smali and reassemble smoke-the JNI bridge into
-  Android 14's default-method handling.
+  the committed smali and reassemble it, which avoids the Android
+  default-method dispatch crash.
 
 Selected maintenance fixes in this branch adapt work from Frederlk's
 [PR #1](https://github.com/ssorgatem/tesl-reborn-android/pull/1): authentication

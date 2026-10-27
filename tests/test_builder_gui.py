@@ -109,8 +109,8 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(popup.exists)
 
     def test_all_visible_literal_notes_have_every_locale(self):
-        texts = json.loads(Path(gui.__file__).with_name('ui-text.json').read_text())
-        tree = ast.parse(Path(gui.__file__).read_text())
+        texts = json.loads(Path(gui.__file__).with_name('ui-text.json').read_text(encoding='utf-8'))
+        tree = ast.parse(Path(gui.__file__).read_text(encoding='utf-8'))
         for node in ast.walk(tree):
             if isinstance(node, ast.keyword) and node.arg == 'text' and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                 self.assertIn(node.value.value, texts)

@@ -36,9 +36,6 @@ log
 log_1
 log_unity
 .DS_Store
-files_backup
-files_on_device
-obb_contents
 tesl-hook*.json
 node_modules/
 resources/

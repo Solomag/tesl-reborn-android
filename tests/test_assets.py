@@ -59,7 +59,7 @@ class AssetsTest(unittest.TestCase):
                         it_it=5, pl_pl=6, pt_br=7, ru_ru=8, tr_tr=9)
         self.assertEqual(inspector.LANGUAGES, expected)
         source = Path(__file__).resolve().parents[1] / 'restore_cache.py'
-        tree = ast.parse(source.read_text())
+        tree = ast.parse(source.read_text(encoding='utf-8'))
         mapping = next(ast.literal_eval(node.value) for node in tree.body
                        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'LANGUAGES' for t in node.targets))
         self.assertEqual(mapping, expected)
