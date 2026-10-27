@@ -123,7 +123,12 @@ public final class LaunchActivity extends Activity {
     });
   }
 
-  /** The game is running: only the manifest is read; staging waits for a restart the player chose. */
+  /**
+   * The game is running: only the manifest is read while Unity is alive. A
+   * newer revision restarts the game with it at once - matches live on the
+   * server and the restarted game rejoins one in progress (api/match/rejoin),
+   * and the restart takes seconds, so there is nothing to ask.
+   */
   private void offerRestart(File root, JSONObject setup) {
     screen("Checking Reborn update…");
     button("Back to the game",()->startGame("running"));
@@ -139,20 +144,14 @@ public final class LaunchActivity extends Activity {
         if(launched)return;
         if(!found.newer()){startGame("running-"+found.status);return;}
         handler.removeCallbacksAndMessages(null);
-        screen("");
-        // Matches live on the server: the restarted game rejoins one in
-        // progress (api/match/rejoin at startup), so nothing is lost.
-        progress.setText(String.format(tr("Reborn update %d is available. Restart the game to apply it."),
-          found.manifest.optLong("revision")));
-        button("Restart now",()->restart(root,setup));
-        button("Back to the game",()->startGame("running-declined"));
+        restart(root,setup,String.format(tr("Updating Reborn to %d…"),found.manifest.optLong("revision")));
       });
     });
   }
 
-  private void restart(File root, JSONObject setup) {
-    screen("Restarting the game…");
-    // The first check's deadline has run while the player decided.
+  private void restart(File root, JSONObject setup, String message) {
+    screen(message);
+    // The download gets a fresh deadline of its own.
     cancel=new PrelaunchUpdater.Cancellation();
     handler.postDelayed(()->startGame("timeout"),20000);
     worker.execute(()->{
