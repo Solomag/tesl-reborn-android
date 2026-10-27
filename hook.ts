@@ -4679,8 +4679,27 @@ const chatWindows = new Map();
 
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
-    let disabled = false, canvasScale = 1;
+    let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0;
     let message = null, shownAt = 0, lastError = "";
+    const unityObject = ucls("UnityEngine.Object");
+    // Unity's own null check: a destroyed object compares equal to null
+    // without throwing, so nothing is called on it.
+    const alive = value => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
+    // The highest live root Canvas that renders ScreenSpaceOverlay.
+    function overlayHost() {
+      const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
+        .invoke(ucls("UnityEngine.Canvas").type.object);
+      let host = null, order = -Infinity;
+      for (let i = 0; i < values.length; i++) {
+        const candidate = values.get(i);
+        if (!alive(candidate) || !call(candidate, "get_isRootCanvas")) continue;
+        if (!call(call(candidate, "get_gameObject"), "get_activeInHierarchy")) continue;
+        if (enumVal(call(candidate, "get_renderMode")) !== 0) continue;
+        const sorting = Number(call(candidate, "get_sortingOrder"));
+        if (sorting >= order) { host = candidate; order = sorting; }
+      }
+      return host;
+    }
     let reportedCaption = "",badgeBackground=null,gradientTexture=null,gradientSprite=null;
     function discard() {
       if (root) {
@@ -4694,8 +4713,22 @@ const chatWindows = new Map();
     function ensure() {
       if (disabled) return;
       if (root) {
-        try { call(root.target, "get_activeSelf"); return; }
-        catch (_) { discard(); }
+        // A banner nested in a game Canvas goes away with that Canvas's scene.
+        if (alive(root.target)) return;
+        discard();
+      }
+      // This player strips Canvas.set_renderMode, and a new root Canvas does
+      // not render as an overlay (report 24); since OTA 69 that hid the
+      // version badge and the update banner. Our own object then goes under
+      // the game's overlay Canvas as a nested Canvas sorted above it - the
+      // mechanism that raises the friends button. Game UI is never moved.
+      // Without a host yet (early startup), look again in 2 s, building nothing.
+      nested = !ucls("UnityEngine.Canvas").tryMethod("set_renderMode", 1);
+      let host = null;
+      if (nested) {
+        if (Date.now() < hostRetryAt) return;
+        host = overlayHost();
+        if (!host) { hostRetryAt = Date.now() + 2000; return; }
       }
       // The first frame may precede the game's fonts. Keep the message queued
       // and retry later instead of delaying authentication or failing startup.
@@ -4704,15 +4737,19 @@ const chatWindows = new Map();
       root = go.ref(false);
       try {
         canvas = uiAdd(go, "UnityEngine.Canvas");
-        // This player strips Canvas.set_renderMode but keeps the getter, and a
-        // new Canvas already renders ScreenSpaceOverlay (0). Since OTA 69 the
-        // missing setter disabled the version badge and the update banner.
-        if (canvas.tryMethod("set_renderMode", 1)) noticeCanvasProperty(canvas, "set_renderMode", 0);
-        else if (enumVal(noticeCanvasProperty(canvas, "get_renderMode")) !== 0)
-          throw Object.assign(new Error("Notice Canvas is not ScreenSpaceOverlay and set_renderMode is stripped"), { noticeCanvasUnavailable: true });
-        noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
-        noticeCanvasProperty(canvas, "set_scaleFactor", 1);
-        canvasScale = 1;
+        if (!nested) {
+          noticeCanvasProperty(canvas, "set_renderMode", 0); // Unity ScreenSpaceOverlay.
+          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+          noticeCanvasProperty(canvas, "set_scaleFactor", 1);
+          canvasScale = 1;
+        } else {
+          call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(host, "get_transform"), false);
+          uiStretch(uiRect(go));
+          noticeCanvasProperty(canvas, "set_overrideSorting", true);
+          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+          canvasScale = Number(call(host, "get_scaleFactor")) || 1;
+          log(`update notice: nested under ${String(call(call(host, "get_gameObject"), "get_name")?.content || "?")} (order ${Number(call(host, "get_sortingOrder"))})`);
+        }
         // No CanvasScaler or CanvasGroup: both may lose unused setters in this
         // mobile player. Every graphic is non-raycastable and has no handlers.
         panel = uiNew("Banner", call(go, "get_transform"));
@@ -4743,7 +4780,8 @@ const chatWindows = new Map();
         try{call(badgeText,badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"set_richText":"set_supportRichText",true);}catch(_){}
         call(badgeText,"set_alignment",uiEnum(badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"TMPro.TextAlignmentOptions":"UnityEngine.TextAnchor",badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"Center":"MiddleCenter"));
         call(badgeText, "set_color", rgba(1, 1, 1, 1));
-        ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
+        // DontDestroyOnLoad only applies to root objects.
+        if (!nested) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
         call(panel, "SetActive", false);
         // No GraphicRaycaster, event handlers or buttons: all taps pass through.
       } catch (error) {
@@ -4766,8 +4804,11 @@ const chatWindows = new Map();
         try {
           ensure();
           const screen = chatScreen();
-          const scale = Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
-          if (Math.abs(scale - canvasScale) >= 0.01) {
+          // A nested Canvas takes the host's scale; only a root one sets it.
+          const scale = nested ? Math.max(0.1, Number(call(call(canvas, "get_rootCanvas"), "get_scaleFactor")) || canvasScale)
+            : Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
+          if (nested) canvasScale = scale;
+          else if (Math.abs(scale - canvasScale) >= 0.01) {
             noticeCanvasProperty(canvas, "set_scaleFactor", scale);
             canvasScale = scale;
           }

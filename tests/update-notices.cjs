@@ -69,7 +69,7 @@ assert(context.updateNoticeText('restart',36,'unknown').startsWith('Reborn'));
 
 // Replay the actual renderer with strict fake managed objects. Startup fonts
 // may be unavailable, scenes may change and the latest result must win.
-let clock=1000, fontReady=false, screen={width:3120,height:1440};
+let clock=1000, fontReady=false, screen={width:3120,height:1440}, canvasStripped=false, hosts=[], finds=0;
 const objects=[],calls=[],placements=[],logs=[];
 function object(name) {
  const value={name,active:true,dead:false,class:{type:{name:"UnityEngine.UI.Text"}}};
@@ -81,7 +81,16 @@ function object(name) {
 }
 const r={Date:class extends Date {static now(){return clock;}},PLUGIN_VERSION:'1.3.1-beta',
  globalThis:null,persistentPath:()=>'/files',readTextFile:()=>'{"androidBuild":38}',writeTextFile:()=>true,
- ucls:name=>({name,type:{object:name},nested:n=>{assert.equal(name,'UnityEngine.UI.CanvasScaler');assert.equal(n,'ScaleMode');return {field:()=>({value:1})};},method:method=>({overload:()=>({invoke:value=>{calls.push([value,method]);if(method==='Destroy')value.dead=true;}})})}),
+ NULL:null,isNull:value=>value==null,
+ // op_Equality(obj, null) is Unity's destroyed-object check.
+ ucls:name=>({name,type:{object:name},
+  // canvasStripped replays the phone's player: no managed Canvas.set_renderMode.
+  tryMethod:method=>name==='UnityEngine.Canvas'&&method==='set_renderMode'&&canvasStripped?null:{},
+  nested:n=>{assert.equal(name,'UnityEngine.UI.CanvasScaler');assert.equal(n,'ScaleMode');return {field:()=>({value:1})};},
+  method:method=>({invoke:value=>method==='op_Equality'?Boolean(value.dead):undefined,overload:()=>({invoke:value=>{
+   calls.push([value,method]);if(method==='Destroy')value.dead=true;
+   if(method==='FindObjectsOfTypeAll'){finds++;return {length:hosts.length,get:i=>hosts[i]};}
+  }})})}),
  newWith:(type,name)=>object(name),Il2Cpp:{string:value=>value,array:()=>[],corlib:{class:()=>({})}},
  uiAdd:(go,type)=>{assert(!/GraphicRaycaster|Button|EventTrigger/.test(type));return object(type);},
  uiEnum:(type,field)=>field,enumBox:(_,v)=>v,enumVal:v=>v,vec2:(x,y)=>({x,y}),rgba:(...values)=>values,
@@ -146,18 +155,6 @@ assert.throws(()=>r.noticeCanvasProperty(stripped,'set_renderMode',0),error=>err
 assert.throws(()=>r.noticeCanvasProperty(stripped,'set_sortingOrder',32760),error=>error.noticeCanvasUnavailable===true);
 assert.throws(()=>r.noticeCanvasProperty(stripped,'set_scaleFactor',1.5),error=>error.noticeCanvasUnavailable===true);
 
-// With no usable Canvas the banner switches off for good: it never clones,
-// moves or detaches game UI, and it does not retry on later ticks.
-const oldUiAdd=r.uiAdd;
-r.uiAdd=(go,type)=>type==='UnityEngine.Canvas'?stripped:oldUiAdd(go,type);
-const callStart=calls.length,strippedBanner=r.createUpdateBanner();
-strippedBanner.show('applied',41);strippedBanner.tick();
-const afterFailure=calls.length;
-assert(afterFailure>callStart,'the first attempt still creates its own GameObject');
-assert(!calls.slice(callStart).some(([o,m])=>m==='SetParent'||m==='DontDestroyOnLoad'),'a stripped Canvas must not adopt or detach a game hierarchy');
-strippedBanner.show('downloading',42);strippedBanner.tick();
-assert.equal(calls.length,afterFailure,'a disabled banner stops building and retrying entirely');
-r.uiAdd=oldUiAdd;
 
 
 assert(r.isLoadingVersionScreen('Loading',[]));assert(r.isLoadingVersionScreen('', ['LoadingScreen(Clone)']));
@@ -175,20 +172,44 @@ assert(!r.startupVersionVisible('Battle',false));
 
 assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('Reborn 1.3.1-beta\n')&&String(v).includes('Android')),'original Reborn version and Android version have separate lines');
 
-// The phone's player (report 23): set_renderMode is stripped, the getter and
-// the other setters remain, and a new Canvas is already ScreenSpaceOverlay.
-// The banner and the version badge must be built, not disabled.
-const overlayOnly=(mode)=>(go,type)=>{if(type!=='UnityEngine.Canvas')return oldUiAdd(go,type);
-  const canvas=object(type),setter=canvas.tryMethod;
-  canvas.tryMethod=name=>name==='set_renderMode'?null:name==='get_renderMode'?{invoke:()=>mode}:setter(name);
-  return canvas;};
-r.uiAdd=overlayOnly(0);
-const overlayBanner=r.createUpdateBanner();overlayBanner.show('applied',41);overlayBanner.tick();
-assert(objects.some(o=>o.name==='RebornUpdateNotice'&&!o.dead),'a default overlay Canvas builds the banner without set_renderMode');
-assert(objects.some(o=>o.name==='PortVersion'&&!o.dead),'the version badge is built too');
-r.uiAdd=overlayOnly(1);
-const notices=objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).length;
-const cameraBanner=r.createUpdateBanner();cameraBanner.show('applied',41);cameraBanner.tick();
-assert.equal(objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).length,notices,'a non-overlay Canvas without the setter still disables the banner');
-r.uiAdd=oldUiAdd;
-console.log('PASS: a stripped set_renderMode no longer disables the banner when the Canvas is already ScreenSpaceOverlay');
+// The phone's player (report 24): set_renderMode is stripped and a new root
+// Canvas is not an overlay. Without a game overlay Canvas to host it, nothing
+// is built, and the host is looked for again only after 2 s.
+canvasStripped=true;
+const notices=()=>objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).length;
+const before=notices(),strippedBanner=r.createUpdateBanner();
+strippedBanner.show('applied',41);strippedBanner.tick();
+assert.equal(notices(),before,'no GameObject is built without a host');
+const looked=finds;strippedBanner.tick();clock+=1000;strippedBanner.tick();
+assert.equal(finds,looked,'the host is not searched on every tick');
+// A live overlay root Canvas appears: our object is nested under it and
+// sorts above it; game UI is not moved, and no DontDestroyOnLoad on a child.
+const host=object('GameOverlayCanvas');
+host.isRoot=true;host.renderMode=0;host.sortingOrder=5;host.scaleFactor=1.5;
+const call=r.call;
+r.call=(value,method,...args)=>{
+ if(value===host&&method==='get_isRootCanvas')return host.isRoot;
+ if(value===host&&method==='get_renderMode')return host.renderMode;
+ if(value===host&&method==='get_scaleFactor')return host.scaleFactor;
+ if(method==='get_rootCanvas')return host;
+ return call(value,method,...args);
+};
+hosts=[host];clock+=1500;fontReady=true;strippedBanner.tick();
+const nestedRoot=objects.find(o=>o.name==='RebornUpdateNotice'&&!o.dead&&calls.some(([v,m,p])=>v===o&&m==='SetParent'&&p===host));
+assert(nestedRoot,'our object is parented under the game overlay Canvas');
+assert(calls.some(([o,m,v])=>m==='set_overrideSorting'&&v===true),'the nested Canvas overrides the sorting');
+assert(calls.some(([o,m,v])=>m==='set_sortingOrder'&&v===32760));
+assert(!calls.some(([o,m])=>o===nestedRoot&&m==='DontDestroyOnLoad'),'DontDestroyOnLoad only applies to root objects');
+assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('patch 37')),'the version badge is drawn');
+// The host's scene ends: the destroyed banner is rebuilt under the next host.
+host.dead=true;nestedRoot.dead=true;const second=object('NextOverlayCanvas');Object.assign(second,{isRoot:true,renderMode:0,sortingOrder:1});
+r.call=(value,method,...args)=>{
+ if(value===second&&method==='get_isRootCanvas')return true;
+ if(value===second&&method==='get_renderMode')return 0;
+ if(method==='get_rootCanvas')return second;
+ return call(value,method,...args);
+};
+hosts=[host,second];clock+=3000;strippedBanner.tick();
+assert(calls.some(([v,m,p])=>m==='SetParent'&&p===second),'rebuilt under the next live overlay Canvas');
+r.call=call;canvasStripped=false;hosts=[];
+console.log('PASS: with set_renderMode stripped the banner nests under a game overlay Canvas, waits for one, and follows scene changes');

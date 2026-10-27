@@ -8901,8 +8901,26 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
   }
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
-    let disabled = false, canvasScale = 1;
+    let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0;
     let message = null, shownAt = 0, lastError = "";
+    const unityObject = ucls("UnityEngine.Object");
+    const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
+    function overlayHost() {
+      const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+      let host = null, order = -Infinity;
+      for (let i = 0; i < values.length; i++) {
+        const candidate = values.get(i);
+        if (!alive(candidate) || !call(candidate, "get_isRootCanvas")) continue;
+        if (!call(call(candidate, "get_gameObject"), "get_activeInHierarchy")) continue;
+        if (enumVal(call(candidate, "get_renderMode")) !== 0) continue;
+        const sorting = Number(call(candidate, "get_sortingOrder"));
+        if (sorting >= order) {
+          host = candidate;
+          order = sorting;
+        }
+      }
+      return host;
+    }
     let reportedCaption = "", badgeBackground = null, gradientTexture = null, gradientSprite = null;
     function discard() {
       if (root) {
@@ -8922,11 +8940,17 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
     function ensure() {
       if (disabled) return;
       if (root) {
-        try {
-          call(root.target, "get_activeSelf");
+        if (alive(root.target)) return;
+        discard();
+      }
+      nested2 = !ucls("UnityEngine.Canvas").tryMethod("set_renderMode", 1);
+      let host = null;
+      if (nested2) {
+        if (Date.now() < hostRetryAt) return;
+        host = overlayHost();
+        if (!host) {
+          hostRetryAt = Date.now() + 2e3;
           return;
-        } catch (_) {
-          discard();
         }
       }
       const go = newWith(
@@ -8937,12 +8961,19 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
       root = go.ref(false);
       try {
         canvas = uiAdd(go, "UnityEngine.Canvas");
-        if (canvas.tryMethod("set_renderMode", 1)) noticeCanvasProperty(canvas, "set_renderMode", 0);
-        else if (enumVal(noticeCanvasProperty(canvas, "get_renderMode")) !== 0)
-          throw Object.assign(new Error("Notice Canvas is not ScreenSpaceOverlay and set_renderMode is stripped"), { noticeCanvasUnavailable: true });
-        noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
-        noticeCanvasProperty(canvas, "set_scaleFactor", 1);
-        canvasScale = 1;
+        if (!nested2) {
+          noticeCanvasProperty(canvas, "set_renderMode", 0);
+          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+          noticeCanvasProperty(canvas, "set_scaleFactor", 1);
+          canvasScale = 1;
+        } else {
+          call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(host, "get_transform"), false);
+          uiStretch(uiRect(go));
+          noticeCanvasProperty(canvas, "set_overrideSorting", true);
+          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+          canvasScale = Number(call(host, "get_scaleFactor")) || 1;
+          log(`update notice: nested under ${String(call(call(host, "get_gameObject"), "get_name")?.content || "?")} (order ${Number(call(host, "get_sortingOrder"))})`);
+        }
         panel = uiNew("Banner", call(go, "get_transform"));
         const background = uiAdd(panel, "UnityEngine.UI.Image");
         call(background, "set_color", rgba(0.09, 0.11, 0.14, 0.95));
@@ -8977,7 +9008,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
         }
         call(badgeText, "set_alignment", uiEnum(badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "TMPro.TextAlignmentOptions" : "UnityEngine.TextAnchor", badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "Center" : "MiddleCenter"));
         call(badgeText, "set_color", rgba(1, 1, 1, 1));
-        ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
+        if (!nested2) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
         call(panel, "SetActive", false);
       } catch (error) {
         if (error?.noticeCanvasUnavailable) disabled = true;
@@ -9003,8 +9034,9 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
         try {
           ensure();
           const screen = chatScreen();
-          const scale = Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
-          if (Math.abs(scale - canvasScale) >= 0.01) {
+          const scale = nested2 ? Math.max(0.1, Number(call(call(canvas, "get_rootCanvas"), "get_scaleFactor")) || canvasScale) : Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
+          if (nested2) canvasScale = scale;
+          else if (Math.abs(scale - canvasScale) >= 0.01) {
             noticeCanvasProperty(canvas, "set_scaleFactor", scale);
             canvasScale = scale;
           }
