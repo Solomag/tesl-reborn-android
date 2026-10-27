@@ -229,11 +229,17 @@ console.log('PASS: with set_renderMode stripped the banner nests under a game ov
   if(orders.has(value)&&method==='get_sortingOrder')return orders.get(value);
   if(method==='get_rootCanvas')return camera;
   if(method==='get_name')return {content:value.name};
+  if(value===camera&&method==='get_layer')return 5;
   return call(value,method,...args);
  };
  hosts=[world,camera];clock+=60000;
  const cameraBanner=r.createUpdateBanner();cameraBanner.show('applied',80);cameraBanner.tick();
  assert(calls.some(([v,m,p])=>m==='SetParent'&&p===camera),'the camera-space CanvasRoot hosts the notice');
+ // Report 28: the camera only draws its UI layer; the notice takes the host's layer before any child is made.
+ const hosted=objects.filter(o=>o.name==='RebornUpdateNotice'&&!o.dead).at(-1);
+ const layerAt=calls.findIndex(([v,m,l])=>v===hosted&&m==='set_layer'&&l===5);
+ assert(layerAt>=0,'the notice root is moved to the host layer');
+ assert(layerAt<calls.findIndex(([v,m])=>v===hosted&&m==='SetParent'),'before it is parented, so children made by uiNew copy it');
  assert(!calls.some(([v,m,p])=>m==='SetParent'&&p===world),'a WorldSpace root never hosts it');
  assert(logs.some(m=>m.startsWith('update notice: nested under CanvasRoot (order 1); live roots')));
  r.call=call;canvasStripped=false;hosts=[];

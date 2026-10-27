@@ -4769,6 +4769,11 @@ const chatWindows = new Map();
           noticeCanvasProperty(canvas, "set_scaleFactor", 1);
           canvasScale = 1;
         } else {
+          // A camera-space host is only drawn for the layers its camera
+          // culls in (UI); a new GameObject sits on layer 0 and every child
+          // made by uiNew copies its parent's layer. Report 28: shown under
+          // CanvasRoot for 20 s, never drawn. Take the host's layer first.
+          call(go, "set_layer", Number(call(call(host, "get_gameObject"), "get_layer")));
           call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(host, "get_transform"), false);
           uiStretch(uiRect(go));
           noticeCanvasProperty(canvas, "set_overrideSorting", true);

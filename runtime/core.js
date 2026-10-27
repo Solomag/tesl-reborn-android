@@ -8987,6 +8987,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
           noticeCanvasProperty(canvas, "set_scaleFactor", 1);
           canvasScale = 1;
         } else {
+          call(go, "set_layer", Number(call(call(host, "get_gameObject"), "get_layer")));
           call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(host, "get_transform"), false);
           uiStretch(uiRect(go));
           noticeCanvasProperty(canvas, "set_overrideSorting", true);
