@@ -79,7 +79,7 @@ jobs:
       - name: Publish Builder for self-update
         # Only the main repository's channels: builder-stable from main,
         # builder-test from the test branch (tools/publish_builder.py).
-        if: github.repository == 'ssorgatem/tesl-reborn-android' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
+        if: github.repository == 'ssorgatem/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tools/publish_builder.py
@@ -135,7 +135,7 @@ jobs:
       - name: Publish Builder for self-update
         # Only the main repository's channels: builder-stable from main,
         # builder-test from the test branch (tools/publish_builder.py).
-        if: github.repository == 'ssorgatem/tesl-reborn-android' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
+        if: github.repository == 'ssorgatem/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tools/publish_builder.py
