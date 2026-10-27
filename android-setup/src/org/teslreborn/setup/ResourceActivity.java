@@ -492,27 +492,7 @@ public class ResourceActivity extends Activity {
   }
 
   private void stopGameProcess() throws Exception {
-    ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
-    java.util.List<ActivityManager.RunningAppProcessInfo> processes =
-        manager.getRunningAppProcesses();
-    java.util.List<Integer> stopped = new ArrayList<>();
-    if (processes != null)
-      for (ActivityManager.RunningAppProcessInfo process : processes)
-        if (getPackageName().equals(process.processName)
-            && process.uid == android.os.Process.myUid()
-            && process.pid != android.os.Process.myPid()) {
-          stopped.add(process.pid);
-          android.os.Process.killProcess(process.pid);
-        }
-    int[] pids = new int[stopped.size()];
-    for (int i = 0; i < pids.length; i++) pids[i] = stopped.get(i);
-    RestartWaiter.await(pids, 5000, pid -> {
-      try { android.system.Os.kill(pid, 0); return true; }
-      catch (android.system.ErrnoException e) {
-        if (e.errno == android.system.OsConstants.ESRCH) return false;
-        throw e;
-      }
-    }, Thread::sleep, android.os.SystemClock::elapsedRealtime);
+    GameProcess.stop(this);
   }
 
   private String tr(String value) {

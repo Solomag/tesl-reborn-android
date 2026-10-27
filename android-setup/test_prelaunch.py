@@ -46,6 +46,13 @@ public class PrelaunchTest {
   File old=dir(root,"old");if(!PrelaunchUpdater.check(old,config(),meta(49),transport(meta(48),code),new PrelaunchUpdater.Cancellation(),s->{}).equals("up-to-date")||state(old).exists())throw new AssertionError("Downgrade accepted");
   File rejected=dir(root,"rejected");PackInstaller.writeJson(state(rejected),new JSONObject().put("schema",1).put("rejected",new JSONArray().put(meta(51).getString("sha256"))));
   if(!PrelaunchUpdater.check(rejected,config(),meta(49),transport(manifest(),code),new PrelaunchUpdater.Cancellation(),s->{}).equals("rejected"))throw new AssertionError("Rejected core retried");
+  // A running game: the launcher only reads the manifest and offers a restart.
+  File running=dir(root,"running");
+  PrelaunchUpdater.Offer offer=PrelaunchUpdater.offer(running,config(),meta(49),(u,l,c)->{if(!u.endsWith("manifest.json"))throw new AssertionError("Offer downloaded the core");return manifest().toString().getBytes("UTF-8");},new PrelaunchUpdater.Cancellation());
+  if(!offer.newer()||offer.manifest.getInt("revision")!=51||state(running).exists())throw new AssertionError("Offer must report a newer core without writing state");
+  if(PrelaunchUpdater.offer(success,config(),meta(49),transport(manifest(),code),new PrelaunchUpdater.Cancellation()).newer())throw new AssertionError("Offer ignored the staged core");
+  if(!PrelaunchUpdater.offer(rejected,config(),meta(49),transport(manifest(),code),new PrelaunchUpdater.Cancellation()).status.equals("rejected"))throw new AssertionError("Offer proposed a rejected core");
+  if(!PrelaunchUpdater.offer(recovery,config(),meta(49),(u,l,c)->{throw new AssertionError("Recovery fetched update");},new PrelaunchUpdater.Cancellation()).status.equals("recovery-first"))throw new AssertionError("Offer during recovery");
   PackInstaller.writeJson(new File(root,"embedded.json"),meta(49));
   try(FileOutputStream out=new FileOutputStream(new File(root,"embedded.js"))){out.write(code);}
   System.out.println("PASS JVM prelaunch: staging, hashes, HTTPS/origin, schema, cancellation, disabled/safe mode, live-process guard, rollback and revision floors");

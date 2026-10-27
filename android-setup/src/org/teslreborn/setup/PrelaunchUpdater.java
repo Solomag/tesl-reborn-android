@@ -102,23 +102,40 @@ public final class PrelaunchUpdater {
       Transport transport, Cancellation cancel, Progress progress) throws Exception {
     return check(privateFiles,config,embedded,transport,cancel,progress,()->true);
   }
-  public static String check(File privateFiles, JSONObject config, JSONObject embedded,
-      Transport transport, Cancellation cancel, Progress progress, java.util.function.BooleanSupplier mayStage) throws Exception {
-    if (!config.optBoolean("enabled",true) || config.optBoolean("safeMode",false)) return "disabled";
-    String feed=config.optString("feedUrl",""); if(feed.isEmpty())return "no-feed";
+  /** What the feed offers against the saved state; nothing is downloaded or written. */
+  public static final class Offer {
+    public final String status; public final JSONObject manifest; final String url;
+    Offer(String status, JSONObject manifest, String url) {this.status=status;this.manifest=manifest;this.url=url;}
+    /** True when a newer core can be staged once Unity is not running. */
+    public boolean newer() {return "newer".equals(status);}
+  }
+  /** Reads only the manifest: used while the game runs, where staging is not allowed. */
+  public static Offer offer(File privateFiles, JSONObject config, JSONObject embedded,
+      Transport transport, Cancellation cancel) throws Exception {
+    if (!config.optBoolean("enabled",true) || config.optBoolean("safeMode",false)) return new Offer("disabled",null,null);
+    String feed=config.optString("feedUrl",""); if(feed.isEmpty())return new Offer("no-feed",null,null);
     String host=origin(feed);
     JSONObject base=validate(embedded);
-    File root=new File(privateFiles,"tesl-reborn-updater"); PackInstaller.mkdir(root);
-    JSONObject state=state(root);
-    if(!state.isNull("booting"))return "recovery-first"; // Let API 1 reject the previous failed trial first.
-    progress.show("Checking Reborn update…");
+    JSONObject state=state(new File(privateFiles,"tesl-reborn-updater"));
+    if(!state.isNull("booting"))return new Offer("recovery-first",null,null); // Let API 1 reject the previous failed trial first.
     JSONObject remote=readManifest(transport.get(feed,32768,cancel));
     JSONObject clean=validate(remote);
     long floor=Math.max(integer(base,"revision"),Math.max(revision(state.optJSONObject("active")),revision(state.optJSONObject("pending"))));
-    if(integer(clean,"revision")<=floor)return "up-to-date";
+    if(integer(clean,"revision")<=floor)return new Offer("up-to-date",clean,null);
     JSONArray rejected=state.getJSONArray("rejected");String hash=clean.getString("sha256");
-    for(int i=0;i<rejected.length();i++)if(hash.equals(rejected.optString(i)))return "rejected";
+    for(int i=0;i<rejected.length();i++)if(hash.equals(rejected.optString(i)))return new Offer("rejected",clean,null);
     String url=remote.getString("url");if(!host.equals(origin(url)))throw new IOException("Update payload origin differs");
+    return new Offer("newer",clean,url);
+  }
+  public static String check(File privateFiles, JSONObject config, JSONObject embedded,
+      Transport transport, Cancellation cancel, Progress progress, java.util.function.BooleanSupplier mayStage) throws Exception {
+    if (!config.optBoolean("enabled",true) || config.optBoolean("safeMode",false)) return "disabled";
+    if (config.optString("feedUrl","").isEmpty()) return "no-feed";
+    File root=new File(privateFiles,"tesl-reborn-updater"); PackInstaller.mkdir(root);
+    progress.show("Checking Reborn update…");
+    Offer offer=offer(privateFiles,config,embedded,transport,cancel);
+    if(!offer.newer())return offer.status;
+    JSONObject clean=offer.manifest,state=state(root);String hash=clean.getString("sha256"),url=offer.url;
     progress.show("Downloading Reborn update…");
     byte[] code=transport.get(url,LIMIT,cancel);cancel.check();
     progress.show("Verifying Reborn update…");
