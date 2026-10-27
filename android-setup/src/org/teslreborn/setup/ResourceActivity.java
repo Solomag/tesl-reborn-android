@@ -348,6 +348,47 @@ public class ResourceActivity extends Activity {
         });
   }
 
+  /**
+   * Stable (main of the main repository) or Test (its test branch). The phone
+   * keeps the feed it was first given, so this is the only way to move it.
+   * The feed of the old Solomag fork counts as Test (the OTA migrates it).
+   */
+  private void addChannelChoice(LinearLayout box, JSONObject config) {
+    JSONObject channels = setup.optJSONObject("hookChannels");
+    if (channels == null || !channels.has("stable") || !channels.has("test")) return;
+    String stable = channels.optString("stable"), test = channels.optString("test");
+    String current = config.optString("feedUrl", "");
+    UiStyle.label(this, box, tr("Update channel"));
+    RadioGroup group = new RadioGroup(this);
+    group.setOrientation(LinearLayout.HORIZONTAL);
+    RadioButton stableChoice = new RadioButton(this), testChoice = new RadioButton(this);
+    stableChoice.setText(tr("Stable"));
+    testChoice.setText(tr("Test"));
+    for (RadioButton choice : new RadioButton[] {stableChoice, testChoice}) {
+      choice.setId(View.generateViewId());
+      choice.setTextColor(UiStyle.TEXT);
+      choice.setButtonTintList(android.content.res.ColorStateList.valueOf(UiStyle.GOLD));
+      choice.setPadding(0, 0, UiStyle.dp(this, 24), 0);
+      group.addView(choice);
+    }
+    if (current.equals(stable)) stableChoice.setChecked(true);
+    else if (current.equals(test) || current.contains("/Solomag/tesl-reborn-android/")) testChoice.setChecked(true);
+    group.setOnCheckedChangeListener(
+        (g, id) -> {
+          try {
+            config.put("feedUrl", id == stableChoice.getId() ? stable : test);
+            PackInstaller.writeJson(new File(root, "tesl-reborn-updater.json"), config);
+          } catch (Exception error) {
+            message(error.toString());
+          }
+        });
+    box.addView(group);
+    UiStyle.body(
+        this,
+        box,
+        tr("The channel applies on the next game start. Test gets new patches first and may be less stable."));
+  }
+
   private void addDiagnosticsAndUpdates(LinearLayout box) {
     try {
       JSONObject config = UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
@@ -364,6 +405,7 @@ public class ResourceActivity extends Activity {
             }
           });
       box.addView(updates);
+      addChannelChoice(box, config);
       TextView updateInfo = new TextView(this);
       String info = tr("Updates apply on the next game start.");
       try {

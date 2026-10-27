@@ -5155,7 +5155,32 @@ const chatWindows = new Map();
   });
   // END android-ui: unity-error-log
 
+  // BEGIN android-ui: channel-migration
+  // The test channel moved from the Solomag fork to a branch of the main
+  // repository. Phones keep the feed the launcher wrote on first start
+  // (UpdateConfig only fills an empty one), so a new APK cannot move them;
+  // this OTA, still published to the fork, rewrites the old fork feed once.
+  // Applies from the next start; the current session finishes on the old one.
+  const LEGACY_TEST_FEED = "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+  const MAIN_TEST_FEED = "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+  function migrateUpdateChannel(io) {
+    let config;
+    try { config = JSON.parse(io.read() || "null"); } catch (_) { return "unreadable"; }
+    if (!config || typeof config !== "object" || config.feedUrl !== LEGACY_TEST_FEED) return "unchanged";
+    config.feedUrl = MAIN_TEST_FEED;
+    return io.write(JSON.stringify(config)) ? "migrated" : "write-failed";
+  }
+  // END android-ui: channel-migration
+
   section("Reborn Android updater and diagnostics", () => {
+    try {
+      const path = `${persistentPath()}/tesl-reborn-updater.json`;
+      const result = migrateUpdateChannel({
+        read: () => readTextFile(path),
+        write: text => writeTextFile(path + ".part", text) && atomicRename(path + ".part", path)
+      });
+      if (result !== "unchanged") log(`updater: channel migration ${result}${result === "migrated" ? " to the main repository test branch" : ""}`);
+    } catch (error) { log(`updater: channel migration failed: ${error}`); }
     const uriClass = ucls("System.Uri");
     log(`HTTP URI assembly: ${uriClass.image.name}`);
     log("Android feature hooks are active; server data and UI results are checked separately");

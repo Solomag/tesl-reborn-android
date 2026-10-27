@@ -115,6 +115,45 @@ final class UiStrings {
           "Otomatik yama güncellemeleri"
         });
     TEXT.put(
+        "Update channel",
+        new String[] {
+          "Update channel",
+          "Update-Kanal",
+          "Canal de actualizaciones",
+          "Canal de actualizaciones",
+          "Canal de mises à jour",
+          "Canale di aggiornamento",
+          "Kanał aktualizacji",
+          "Canal de atualizações",
+          "Канал обновлений",
+          "Güncelleme kanalı"
+        });
+    TEXT.put(
+        "Stable",
+        new String[] {
+          "Stable", "Stabil", "Estable", "Estable", "Stable", "Stabile", "Stabilny", "Estável",
+          "Стабильный", "Kararlı"
+        });
+    TEXT.put(
+        "Test",
+        new String[] {
+          "Test", "Test", "Pruebas", "Pruebas", "Test", "Test", "Testowy", "Teste", "Тестовый", "Test"
+        });
+    TEXT.put(
+        "The channel applies on the next game start. Test gets new patches first and may be less stable.",
+        new String[] {
+          "The channel applies on the next game start. Test gets new patches first and may be less stable.",
+          "Der Kanal gilt ab dem nächsten Spielstart. Test erhält neue Patches zuerst und kann weniger stabil sein.",
+          "El canal se aplica en el próximo inicio del juego. Pruebas recibe antes los parches y puede ser menos estable.",
+          "El canal se aplica en el próximo inicio del juego. Pruebas recibe antes los parches y puede ser menos estable.",
+          "Le canal s’applique au prochain lancement. Test reçoit les patchs en premier et peut être moins stable.",
+          "Il canale si applica al prossimo avvio. Test riceve prima le patch e può essere meno stabile.",
+          "Kanał zadziała przy następnym uruchomieniu gry. Testowy dostaje łatki wcześniej i może być mniej stabilny.",
+          "O canal vale a partir da próxima abertura do jogo. Teste recebe os patches antes e pode ser menos estável.",
+          "Канал применится при следующем запуске игры. Тестовый получает патчи раньше и может быть менее стабильным.",
+          "Kanal bir sonraki oyun açılışında uygulanır. Test yamaları önce alır ve daha az kararlı olabilir."
+        });
+    TEXT.put(
         "Show Ctrl+D test area",
         new String[] {
           "Show Ctrl+D test area",

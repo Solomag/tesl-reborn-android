@@ -1,3 +1,7 @@
 {
-  "feedUrl": "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json"
+  "feedUrl": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json",
+  "channels": {
+    "stable": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/main/updates/stable/manifest.json",
+    "test": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json"
+  }
 }

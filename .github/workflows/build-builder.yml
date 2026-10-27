@@ -2,8 +2,9 @@ name: Build Desktop Builders
 on:
   workflow_dispatch:
   push:
-    branches: [android-ui-and-update-loader, portable-builder-and-resources, "sync-upstream-*"]
-    paths: ['builder/**', 'android-setup/**', '.github/workflows/build-builder.yml', 'hook.ts', 'runtime/**']
+    # main of the main repository builds the stable channel (tools/select_channel.py).
+    branches: [main, android-ui-and-update-loader, portable-builder-and-resources, "sync-upstream-*"]
+    paths: ['builder/**', 'android-setup/**', '.github/workflows/build-builder.yml', 'hook.ts', 'runtime/**', 'tools/select_channel.py']
 permissions:
   contents: read
 env:
@@ -29,6 +30,8 @@ jobs:
           python -m pip install -r builder/requirements.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm ci
+      - name: Select update channel
+        run: python tools/select_channel.py
       - name: Prepare tools and emoji resources
         run: |
           python -m builder.bootstrap_tools
@@ -93,6 +96,8 @@ jobs:
           sudo apt-get install -y python3-tk tk8.6 xvfb xauth libgl1
           python -m pip install -r builder/requirements.txt
           npm ci
+      - name: Select update channel
+        run: python tools/select_channel.py
       - name: Prepare and validate Linux tools
         run: |
           python -m builder.bootstrap_tools

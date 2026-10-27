@@ -70,12 +70,9 @@ def data_root():
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
 
-def hook_feed():
+def _valid_feed(feed):
     from urllib.parse import urlsplit
 
-    feed = json.loads(
-        (data_root() / "runtime/channel.json").read_text(encoding="utf-8")
-    )["feedUrl"]
     if feed:
         uri = urlsplit(feed)
         if (
@@ -88,6 +85,26 @@ def hook_feed():
         ):
             raise ValueError("Hook channel must be a public HTTPS manifest URL")
     return feed
+
+
+def _channel_file():
+    return json.loads((data_root() / "runtime/channel.json").read_text(encoding="utf-8"))
+
+
+def hook_feed():
+    """The default channel baked into this build: stable from the main
+    repository's CI, test otherwise (tools/select_channel.py)."""
+    return _valid_feed(_channel_file()["feedUrl"])
+
+
+def hook_channels():
+    """Stable and test feeds the Game Data screen lets the player switch to."""
+    channels = _channel_file().get("channels") or {}
+    return {
+        name: _valid_feed(url)
+        for name, url in channels.items()
+        if name in ("stable", "test") and url
+    }
 
 
 def application_directory():
@@ -700,6 +717,7 @@ def build(
             obb=obb_meta,
             defaultLanguage=default_language,
             hookFeed=hook_feed(),
+            hookChannels=hook_channels(),
             hookRelease=json.loads((data_root() / "runtime/manifest.json").read_text(encoding="utf-8")),
             embeddedPacks=public["packs"] if embedded else [],
         )
