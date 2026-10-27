@@ -588,6 +588,30 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
     return files[0]
 
 
+def builder_channel():
+    from .selfupdate import current
+
+    return current(data_root())["channel"]
+
+
+def hook_revision():
+    try:
+        return int(json.loads((data_root() / "runtime/manifest.json").read_text(encoding="utf-8"))["revision"])
+    except (OSError, ValueError, KeyError):
+        return 0
+
+
+def build_folder_name(channel, revision, format, languages, now):
+    """What a build is, readable in the output folder:
+    test_patch91_apk+data_en_us+ru_ru_2026-10-28_1015. The files inside keep fixed
+    names; transfers and the phone rely on them."""
+    kind = {"manual": "apk+data", "xapk": "xapk", "apk": "apk-only"}.get(format, format)
+    # Full codes: es_es and es_mx are both "es".
+    codes = "all-languages" if set(languages) >= set(LANGUAGES) else "+".join(sorted(set(languages)))
+    parts = [channel, f"patch{revision}", kind] + ([codes] if codes and format != "apk" else [])
+    return "_".join(parts + [now.strftime("%Y-%m-%d_%H%M")])
+
+
 def build(
     game,
     xapk,
@@ -637,10 +661,18 @@ def build(
         # New builds never overwrite a previous successful output or active server catalog.
         import datetime
 
-        result = output / (
-            "build-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        name = build_folder_name(
+            builder_channel(), hook_revision(), format, languages, datetime.datetime.now()
         )
-        result.mkdir()
+        result = output / name
+        for attempt in range(2, 100):
+            try:
+                result.mkdir()
+                break
+            except FileExistsError:
+                result = output / f"{name}-{attempt}"
+        else:
+            raise ValueError("Too many builds with the same name in the output folder")
         resources = result / "resources"
         emit = log
 

@@ -441,3 +441,18 @@ class BuilderResourcesTest(unittest.TestCase):
                                 PACKAGE,
                             )
             self.assertEqual(source.read_bytes(), original)
+
+
+class BuildFolderNameTest(unittest.TestCase):
+    def test_names_say_channel_patch_format_and_languages(self):
+        import datetime
+        from builder.build import build_folder_name
+        from builder.resources import LANGUAGES
+        now = datetime.datetime(2026, 10, 28, 10, 15, 42)
+        self.assertEqual(build_folder_name("test", 91, "manual", ["ru_ru", "en_us"], now),
+                         "test_patch91_apk+data_en_us+ru_ru_2026-10-28_1015")
+        self.assertEqual(build_folder_name("stable", 90, "xapk", ["es_es", "es_mx"], now),
+                         "stable_patch90_xapk_es_es+es_mx_2026-10-28_1015", "regional codes stay apart")
+        self.assertEqual(build_folder_name("test", 91, "apk", [], now), "test_patch91_apk-only_2026-10-28_1015")
+        self.assertEqual(build_folder_name("stable", 90, "manual", list(LANGUAGES), now),
+                         "stable_patch90_apk+data_all-languages_2026-10-28_1015")
