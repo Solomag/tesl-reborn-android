@@ -242,6 +242,13 @@ public class ResourceActivity extends Activity {
     system.setOnClickListener(v -> language.setSelection(0));
     UiStyle.button(this, system, false);
     box.addView(system);
+    // On the main page, not under Advanced: the player looks for it here
+    // (report 30), and it is the only way to move a phone between channels.
+    try {
+      addChannelChoice(box, UpdateConfig.ensure(root, setup.optString("hookFeed", "")));
+    } catch (Exception error) {
+      message(error.toString());
+    }
     actions.add(system);
     LinearLayout advanced = new LinearLayout(this);
     advanced.setOrientation(1);
@@ -353,10 +360,16 @@ public class ResourceActivity extends Activity {
    * keeps the feed it was first given, so this is the only way to move it.
    * The feed of the old Solomag fork counts as Test (the OTA migrates it).
    */
+  static final String STABLE_FEED =
+      "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/main/updates/stable/manifest.json";
+  static final String TEST_FEED =
+      "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+
   private void addChannelChoice(LinearLayout box, JSONObject config) {
+    // A setup from a Builder without hookChannels still offers both channels.
     JSONObject channels = setup.optJSONObject("hookChannels");
-    if (channels == null || !channels.has("stable") || !channels.has("test")) return;
-    String stable = channels.optString("stable"), test = channels.optString("test");
+    String stable = channels != null && channels.has("stable") ? channels.optString("stable") : STABLE_FEED;
+    String test = channels != null && channels.has("test") ? channels.optString("test") : TEST_FEED;
     String current = config.optString("feedUrl", "");
     UiStyle.label(this, box, tr("Update channel"));
     RadioGroup group = new RadioGroup(this);
@@ -405,7 +418,6 @@ public class ResourceActivity extends Activity {
             }
           });
       box.addView(updates);
-      addChannelChoice(box, config);
       TextView updateInfo = new TextView(this);
       String info = tr("Updates apply on the next game start.");
       try {

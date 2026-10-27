@@ -22,6 +22,10 @@ class SelectChannelTest(unittest.TestCase):
         self.assertEqual(channels["feedUrl"], channels["channels"]["test"], "builds outside CI default to test")
         for url in channels["channels"].values():
             self.assertTrue(url.startswith("https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/"))
+        # The Game Data fallback for setups without hookChannels must not drift.
+        java = (ROOT / "android-setup/src/org/teslreborn/setup/ResourceActivity.java").read_text(encoding="utf-8")
+        self.assertIn('"' + channels["channels"]["stable"] + '"', java)
+        self.assertIn('"' + channels["channels"]["test"] + '"', java)
 
 
 if __name__ == "__main__":
