@@ -272,3 +272,27 @@ class BuilderServerTest(unittest.TestCase):
         self.server.active = 0
         self.server.finished_at = None
         self.assertTrue(self.server.should_stop(self.server.last_activity + 101))
+
+    def test_verified_apk_report_shortens_the_idle_stop(self):
+        # A browser cannot see the installation, and an APK-only update never
+        # reaches step 2, so /complete never comes. The page reports the
+        # verified APK; the transfer then ends after a shorter idle period.
+        self.server.stop()
+        apk = self.root / "small.apk"
+        apk.write_bytes(b"apk" * 1000)
+        self.server = ResourceServer(self.root, host="127.0.0.1", apk=apk, idle_seconds=900,
+                                     apk_idle_seconds=300, log=self.logs.append).start()
+        path = self.server.connect_path + "/apk-verified"
+        host = f"127.0.0.1:{self.server.port}"
+        good = json.dumps({"sha256": hashlib.sha256(b"apk" * 1000).hexdigest()})
+        self.assertIn("apk-verified", self.request(self.server.connect_path)[2].decode())
+        self.assertEqual(self.request(path, {"Origin": "http://evil.example", "Host": host}, "POST", good)[0], 403)
+        self.assertEqual(self.request(path, {"Origin": "http://" + host, "Host": host}, "POST", json.dumps({"sha256": "0" * 64}))[0], 400)
+        self.assertEqual(self.request("/connect/wrong/apk-verified", {}, "POST", good)[0], 401)
+        self.assertIsNone(self.server.apk_verified_at)
+        self.assertFalse(self.server.should_stop(self.server.last_activity + 301))
+        self.assertEqual(self.request(path, {"Origin": "http://" + host, "Host": host}, "POST", good)[0], 204)
+        self.assertTrue(any("verified its SHA-256" in line for line in self.logs), self.logs)
+        self.assertFalse(self.server.should_stop(self.server.last_activity + 299))
+        self.assertTrue(self.server.should_stop(self.server.last_activity + 301))
+        self.assertNotIn(self.server.token, "\n".join(self.logs))

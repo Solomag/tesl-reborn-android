@@ -28,6 +28,7 @@ class ResourceServer:
         cert=None,
         key=None,
         apk=None,
+        apk_idle_seconds=300,
     ):
         self.root = Path(root).resolve()
         if (self.root / "catalog.json").stat().st_size > 256 * 1024:
@@ -115,6 +116,12 @@ class ResourceServer:
         self.active = 0
         self.transfer_id = 0
         self.finished_at = None
+        # Set when the download page reports a verified APK. A browser cannot
+        # see the installation; the app confirms only after downloading game
+        # data (step 2). An APK-only update has no confirmation at all, so
+        # after a verified APK the transfer ends after a shorter idle period.
+        self.apk_verified_at = None
+        self.apk_idle_seconds = apk_idle_seconds
         self.stopped = threading.Event()
         self.lock = threading.Lock()
         owner = self
@@ -296,12 +303,48 @@ class ResourceServer:
                 finally:
                     if transfer_id is not None:
                         outcome = "interrupted (" + failure + ")" if failure else "range sent" if partial else "file sent"
-                        owner.log(f"APK #{transfer_id}: {outcome}, {sent}/{end-start+1} bytes in {time.monotonic()-started:.1f}s; phone installation not confirmed")
+                        owner.log(f"APK #{transfer_id}: {outcome}, {sent}/{end-start+1} bytes in {time.monotonic()-started:.1f}s")
                     with owner.lock:
                         owner.active -= 1
                         owner.last_activity = time.monotonic()
 
+            def apk_verified(self):
+                # Same-origin POST from the download page: the capability token
+                # is in the path, and a browser sends its own Origin, which
+                # must name this server.
+                origin = self.headers.get("Origin")
+                if origin is not None and origin not in (
+                    "http://" + self.headers.get("Host", ""),
+                    "https://" + self.headers.get("Host", ""),
+                ):
+                    self.error(403)
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 1 <= size <= 1024:
+                        raise ValueError("Invalid report")
+                    if json.loads(self.rfile.read(size)).get("sha256") != owner.apk_hash:
+                        raise ValueError("Wrong APK")
+                except (ValueError, AttributeError):
+                    self.error(400)
+                    return
+                with owner.lock:
+                    owner.apk_verified_at = owner.last_activity = time.monotonic()
+                owner.log(
+                    "Phone downloaded the APK and verified its SHA-256. Install it on the phone."
+                    f" For game data, tap step 2 on the phone; otherwise the transfer stops after"
+                    f" {owner.apk_idle_seconds // 60} minutes without requests."
+                )
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+
             def do_POST(self):
+                if owner.apk and self.path == owner.connect_path + "/apk-verified":
+                    self.apk_verified()
+                    return
                 if not self.authenticated():
                     return
                 if self.path != "/complete":
@@ -374,7 +417,8 @@ class ResourceServer:
                '<a class="button" id="apk-save" hidden>Save verified APK</a>') if self.apk else "<p>This transfer has no APK.</p>"
         downloader = Path(__file__).with_name("apk-download.js").read_text(encoding="utf-8")
         config = json.dumps(dict(bytes=self.apk_size, sha256=self.apk_hash,
-                                 url=self.token + "/tesl-reborn.apk"))
+                                 url=self.token + "/tesl-reborn.apk",
+                                 verifiedUrl=self.token + "/apk-verified"))
         return (
             """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Install TESL Reborn</title>
@@ -384,7 +428,7 @@ class ResourceServer:
             + '''<p>Install the downloaded APK. Android may ask you to allow installations from your browser. Then return to this page.</p>
 <a class="button" id="open">2. Open TESL Reborn to download game data</a>
 <p>Already installed? Use step 2. In the app, choose your game language and tap <b>Download missing game data</b>.</p>
-<p>The transfer stops automatically after the app confirms installation, or after 15 minutes of inactivity. Downloading the APK alone does not stop it.</p>
+<p>The app confirms to the PC only after step 2 downloads game data. If you only updated the APK, nothing else is needed: the transfer stops by itself a few minutes after the verified APK.</p>
 <script nonce="'''
             + self.token
             + """">const marker=location.pathname.lastIndexOf('/connect/');
@@ -414,10 +458,15 @@ document.getElementById('open').href='teslreborn://resources?url='+encodeURIComp
         with self.lock:
             if self.active:
                 return False
+            idle = (
+                self.apk_idle_seconds
+                if self.apk_verified_at is not None
+                else self.idle_seconds
+            )
             return (
                 self.finished_at is not None
                 and now - self.finished_at >= self.grace_seconds
-            ) or now - self.last_activity >= self.idle_seconds
+            ) or now - self.last_activity >= idle
 
     def stop(self):
         if self.stopped.is_set():

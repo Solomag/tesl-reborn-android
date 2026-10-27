@@ -22,12 +22,21 @@ function installApkDownload(meta) {
  async function database(){if(db)return db;if(!globalThis.indexedDB)return null;try{db=await new Promise((resolve,reject)=>{const r=indexedDB.open('tesl-apk-chunks',1);r.onupgradeneeded=()=>r.result.createObjectStore('chunks');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});return db;}catch(_){return null;}}
  async function stored(offset,bytes){const d=await database(),key=meta.sha256+':'+offset;if(!d){if(bytes)memory.set(key,bytes);return memory.get(key);}return new Promise((resolve,reject)=>{const tx=d.transaction('chunks',bytes?'readwrite':'readonly'),s=tx.objectStore('chunks');let result;const r=bytes?s.put(bytes,key):s.get(key);r.onsuccess=()=>result=r.result;tx.oncomplete=()=>resolve(bytes||result);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});}
  async function clear(){const d=await database();memory.clear();if(d)await new Promise((resolve,reject)=>{const tx=d.transaction('chunks','readwrite'),store=tx.objectStore('chunks'),r=store.openCursor();r.onsuccess=()=>{const c=r.result;if(c){if(String(c.key).startsWith(meta.sha256+':'))c.delete();c.continue();}};tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}
- cancel.onclick=()=>{active=false;request?.abort();status.textContent='Paused. Download / resume continues from verified chunks.';};
+ // Progress survives a pause: the hash state, the verified parts and the next
+ // offset stay here, so Download / resume continues where it stopped instead
+ // of replaying and rehashing every stored chunk from 0%, which on a phone
+ // looked and took as long as a restart.
+ let sha=apkSha256(),parts=[],next=0,verified=false;
+ const percent=bytes=>Math.floor(bytes*100/meta.bytes);
+ const paused=()=>{status.textContent=`Paused at ${percent(next)}%. Download / resume continues from here.`;};
+ cancel.onclick=()=>{active=false;request?.abort();paused();};
  start.onclick=async()=>{
-  if(active)return;active=true;start.disabled=true;cancel.hidden=false;save.hidden=true;
+  if(active)return;
+  if(verified){save.hidden=false;status.textContent='APK already verified. Tap Save verified APK.';return;}
+  active=true;start.disabled=true;cancel.hidden=false;save.hidden=true;
   try {
-   const sha=apkSha256(),parts=[];
-   for(let offset=0;offset<meta.bytes;offset+=step){
+   if(next>0)status.textContent=`Resuming from ${percent(next)}%…`;
+   for(let offset=next;offset<meta.bytes;offset+=step){
     if(!active)throw Error('Paused');
     const end=Math.min(offset+step,meta.bytes)-1;let bytes=await stored(offset);
     if(bytes && bytes.length!==end-offset+1)bytes=null;
@@ -37,15 +46,22 @@ function installApkDownload(meta) {
      catch(error){if(!active||attempt>=7)throw error;status.textContent='Connection interrupted. Retrying chunk…';await new Promise(r=>setTimeout(r,Math.min(5000,500*(attempt+1))));}
      finally{clearTimeout(timer);}
     }await stored(offset,bytes);}
-    sha.update(bytes);parts.push(bytes);status.textContent=`APK: ${Math.floor((end+1)*100/meta.bytes)}% — ${end+1} / ${meta.bytes} bytes`;
+    sha.update(bytes);parts.push(bytes);next=end+1;status.textContent=`APK: ${percent(next)}% — ${next} / ${meta.bytes} bytes`;
    }
    status.textContent='Checking full APK SHA-256…';
-   if(sha.hex()!==meta.sha256){await clear();throw Error('APK checksum mismatch. Nothing saved. Please retry.');}
+   // hex() finalizes the hash: a mismatch starts over from a fresh state.
+   if(sha.hex()!==meta.sha256){await clear();sha=apkSha256();parts=[];next=0;throw Error('APK checksum mismatch. Nothing saved. Please retry.');}
+   verified=true;
    if(blobUrl)URL.revokeObjectURL(blobUrl);
    blobUrl=URL.createObjectURL(new Blob(parts,{type:'application/vnd.android.package-archive'}));
    save.href=blobUrl;save.download='tesl-reborn.apk';save.hidden=false;
    status.textContent='APK verified. Tap Save verified APK, then open it from Downloads.';
-  }catch(error){if(active)status.textContent=String(error.message||error)+' — tap Download / resume to continue.';}
+   // Tell the PC: a browser cannot see the installation, but it can say the
+   // verified APK reached the phone. Best effort; the page works without it.
+   try{await fetch(meta.verifiedUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sha256:meta.sha256}),cache:'no-store'});}catch(_){}
+  // A chunk that finished after Pause still counts; the last word is the
+  // offset the next Download / resume starts from.
+  }catch(error){if(active)status.textContent=String(error.message||error)+' — tap Download / resume to continue.';else paused();}
   finally{active=false;start.disabled=false;cancel.hidden=true;}
  };
 }
