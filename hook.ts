@@ -902,6 +902,28 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     Interceptor.attach(update.virtualAddress, { onEnter() { runPending(); } });
   });
 
+  // A gap between two service updates means the main thread was busy or
+  // blocked: every hook writes timestamped messages to the port log, so the
+  // last message before a reported stall names the code that ran right before
+  // it. The probe only observes; long gaps after the app was backgrounded are
+  // ignored, and it reports at most once per second.
+  // BEGIN android-ui: stall-probe
+  section("main loop stall probe", () => {
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    let last = Date.now(), quietUntil = 0;
+    Interceptor.attach(update.virtualAddress, {
+      onEnter() {
+        const now = Date.now(), gap = now - last;
+        last = now;
+        if (gap >= 400 && gap < 60000 && now >= quietUntil) {
+          quietUntil = now + 1000;
+          log(`main loop stalled ${gap}ms`);
+        }
+      },
+    });
+  });
+  // END android-ui: stall-probe
+
   // The inventory refreshes on its own, so the statistics are not pulled
   // more often than necessary.
   let lastDeckStatsFetch = 0;
@@ -1758,7 +1780,10 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           const code = String(call(manager, "get_CurrentLanguageCode")?.content ?? "en");
           let data = manager.field<Il2Cpp.Object>("_localizedData").value;
           let entries = countOf(data);
-          const selection = resourceLanguage() || code;
+          // UpdateObjects arrives with every text refresh of the UI; the saved
+          // preference is read once here instead of on each of these lines.
+          const saved = resourceLanguage();
+          const selection = saved || code;
           if (entries === 0 || lastLanguage !== code || lastRestored !== selection || lastRestoredDictionary !== String(data?.handle)) {
             // The game's own text bundle could not be loaded (it is a
             // downloadable bundle and the CDN is gone), so the strings that
@@ -1774,14 +1799,14 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
             lastRestoredDictionary = String(data?.handle);
           }
           loaded = entries > 0;
-          const fixes = TRANSLATIONS[resourceLanguage()] || TRANSLATIONS[shortLanguage(resourceLanguage() || code)] || TRANSLATIONS[code];
+          const fixes = TRANSLATIONS[saved] || TRANSLATIONS[shortLanguage(selection)] || TRANSLATIONS[code];
           if (lastLanguage !== code) {
             lastLanguage = code;
             log(`localization: language ${code}, ${entries} strings${fixes ? "" : ", no fixes for it"}`);
           }
           if (!fixes) return;
           if (isNull(data)) return;
-          const fingerprint = `${resourceLanguage() || code}:${data.handle}`;
+          const fingerprint = `${selection}:${data.handle}`;
           if (lastFixed === fingerprint) return;
           lastFixed = fingerprint;
           let changed = 0;
@@ -2481,7 +2506,11 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       Interceptor.attach(m.virtualAddress, {
         onEnter(args) {
           this.path = rawStr(args[1]);
-          const selected = resourceLanguage(), next = localizedAssetPath(this.path, selected);
+          // Only the localization assets depend on the selected language, and
+          // this hook runs for every asset load: reading the preference file
+          // for the rest of them is pure disk traffic on the loading path.
+          const selected = /\/Localization\/(?:Text|Audio)\//i.test(this.path) ? resourceLanguage() : "";
+          const next = localizedAssetPath(this.path, selected);
           if (next !== this.path) {
             this.replacement = Il2Cpp.string(next).object.ref(false);
             args[1] = this.replacement.target.handle; this.path = next;
@@ -2504,12 +2533,22 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // that hash, so a mismatch means the bundle is downloaded again (and the CDN
   // is gone). Write the manifest's hashes to a file so the cache folders can
   // be renamed to match.
+  // BEGIN android-ui: bundle-hashes
   section("bundle hash report", () => {
     const mgr = cls(img, "AssetBundles.AssetBundleManager");
     const catalog = cls(img, "AssetCatalog");
     const target = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/tesl-bundle-hashes.txt";
+    // SetCacheExpiration is reachable from the normal asset path, and hashing
+    // every entry of the manifest costs one round of managed calls per bundle
+    // (seconds of main thread time). The report is a one-off diagnostic: it is
+    // written once, and only retried while the manifest is still missing.
+    let written = false, attempts = 0, last = 0;
     Interceptor.attach(catalog.method("SetCacheExpiration").virtualAddress, {
       onEnter() {
+        const now = Date.now();
+        if (written || attempts >= 3 || (attempts > 0 && now - last < 60000)) return;
+        last = now; attempts++;
+        const started = now;
         try {
           const manifest = mgr.field<Il2Cpp.Object>("m_AssetBundleManifest").value;
           if (isNull(manifest)) { log("bundle hashes: the manifest is not loaded yet"); return; }
@@ -2523,11 +2562,13 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           }
           (Il2Cpp.corlib.class("System.IO.File").method("WriteAllText") as any)
             .invoke(Il2Cpp.string(target), Il2Cpp.string(lines.join("\n")));
-          log(`bundle hashes: wrote ${lines.length} entries to ${target}`);
+          written = true;
+          log(`bundle hashes: wrote ${lines.length} entries to ${target} in ${Date.now() - started}ms`);
         } catch (e) { log(`bundle hash report failed: ${e}`); }
       },
     });
   });
+  // END android-ui: bundle-hashes
 
   // The original port fetched matchEntryData without ever displaying it.
   // Gather actual mobile class/layout metadata before writing a history UI
@@ -2911,14 +2952,31 @@ function uiComponent(go, type) {
         if(item.pose)for(const name of Object.keys(item.pose))call(node,"set_"+name,vec2(item.pose[name].x,item.pose[name].y));
         call(item.ref.target,"SetActive",item.active);
         if(item.button) {
-          // Matchmaking can disable _friendsBtn. Don't carry that transient
-          // queue state back into the active main menu after search ends.
-          let interactable=item.interactable;
-          if(returningToMenu && item.active)try {
-            const parentGo=call(item.parent.target,"get_gameObject");
-            if(call(parentGo,"get_activeInHierarchy"))interactable=true;
-          }catch(_){}
-          call(item.button.target,"set_interactable",interactable);
+          // Matchmaking disables _friendsBtn, and the search window usually
+          // closes while the menu is still inactive, so the state that was
+          // sampled at move() time is stale by the time it goes back. The
+          // remembered value is written immediately (it is correct as soon as
+          // the menu is interactive) and then re-asserted: the button has to be
+          // active and clickable again in the main menu, whatever the queue
+          // state was when the search ended.
+          call(item.button.target,"set_interactable",item.interactable);
+          if(returningToMenu && item.active) {
+            const button=item.button.target.ref(false),parent=item.parent.target.ref(false),self=item.ref.target.ref(false);
+            let waits=0,applies=0;
+            const settle=()=>{
+              let again=false;
+              try{
+                if(call(call(parent.target,"get_gameObject"),"get_activeInHierarchy")){
+                  call(self.target,"SetActive",true);
+                  call(button.target,"set_interactable",true);
+                  again=++applies<4;
+                }else again=++waits<60;
+              }catch(_){again=false;}
+              if(again)schedule(500,settle);
+              else{button.free();parent.free();self.free();}
+            };
+            settle();
+          }
         }
       }catch(_){}finally{
         if(item.slot){try{ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(item.slot.target);}catch(_){}item.slot.free();}

@@ -34,6 +34,9 @@ const c={section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='MatchSeekingWin'?{met
 vm.createContext(c);vm.runInContext(transformSync(require('./source.cjs')('matching-friends'),{loader:'ts'}).code,c);
 const invocation={};hooks.Show.onEnter.call(invocation,[ptr]);hooks.Show.onLeave.call(invocation);for(const task of queue.splice(0))task();
 assert.equal(positionWrites.length,1);assert.deepEqual(positionWrites[0],{x:10,y:20,z:0});assert.equal(button.interactable,true);assert.equal(buttonNode.parent,root);assert.equal(friendNode.parent,modalParent);assert.equal(button.nativeClick,'original-handler');
-hooks.OnDisable.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(buttonNode.parent,buttonParent);assert.equal(friendNode.parent,original);assert.equal(button.interactable,false);assert.equal(buttonNode.sibling,2);assert.equal(friendNode.sibling,3);assert.equal(frees,7);
-hooks.HandleOnCancelSearch.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(frees,7);
-console.log('PASS: original friends button is moved/enabled without replacing handlers, original panel/order/interactivity are restored exactly once');
+hooks.OnDisable.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(buttonNode.parent,buttonParent);assert.equal(friendNode.parent,original);assert.equal(button.interactable,false,'the menu is not interactive yet, so the stale value goes back first');assert.equal(buttonNode.sibling,2);assert.equal(friendNode.sibling,3);assert.equal(frees,7,'the re-assert roots are still held');
+buttonParent.active=true;for(const task of queue.splice(0))task();
+assert.equal(buttonGo.active,true,'the button is visible again once the menu is active');assert.equal(button.interactable,true,'the button is clickable again once the menu is active');assert.equal(frees,7);
+for(let round=0;round<3;round++)for(const task of queue.splice(0))task();assert.equal(frees,10,'the re-asserts stop and release their roots');
+hooks.HandleOnCancelSearch.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(frees,10);
+console.log('PASS: original friends button is moved/enabled without replacing handlers, original panel/order are restored and the button is re-enabled when the menu comes back');

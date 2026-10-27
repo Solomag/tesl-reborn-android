@@ -4439,6 +4439,20 @@ Il2Cpp.perform(() => {
       runPending();
     } });
   });
+  section("main loop stall probe", () => {
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    let last = Date.now(), quietUntil = 0;
+    Interceptor.attach(update.virtualAddress, {
+      onEnter() {
+        const now = Date.now(), gap = now - last;
+        last = now;
+        if (gap >= 400 && gap < 6e4 && now >= quietUntil) {
+          quietUntil = now + 1e3;
+          log(`main loop stalled ${gap}ms`);
+        }
+      }
+    });
+  });
   let lastDeckStatsFetch = 0;
   function winRate(wins, losses) {
     const total = wins + losses;
@@ -5342,7 +5356,8 @@ Il2Cpp.perform(() => {
           const code = String(call(manager, "get_CurrentLanguageCode")?.content ?? "en");
           let data = manager.field("_localizedData").value;
           let entries = countOf(data);
-          const selection = resourceLanguage() || code;
+          const saved = resourceLanguage();
+          const selection = saved || code;
           if (entries === 0 || lastLanguage !== code || lastRestored !== selection || lastRestoredDictionary !== String(data?.handle)) {
             const restored = restoreLocalization(manager, code);
             if (restored > 0) {
@@ -5354,14 +5369,14 @@ Il2Cpp.perform(() => {
             lastRestoredDictionary = String(data?.handle);
           }
           loaded = entries > 0;
-          const fixes = TRANSLATIONS[resourceLanguage()] || TRANSLATIONS[shortLanguage(resourceLanguage() || code)] || TRANSLATIONS[code];
+          const fixes = TRANSLATIONS[saved] || TRANSLATIONS[shortLanguage(selection)] || TRANSLATIONS[code];
           if (lastLanguage !== code) {
             lastLanguage = code;
             log(`localization: language ${code}, ${entries} strings${fixes ? "" : ", no fixes for it"}`);
           }
           if (!fixes) return;
           if (isNull(data)) return;
-          const fingerprint = `${resourceLanguage() || code}:${data.handle}`;
+          const fingerprint = `${selection}:${data.handle}`;
           if (lastFixed === fingerprint) return;
           lastFixed = fingerprint;
           let changed = 0;
@@ -6119,7 +6134,8 @@ Il2Cpp.perform(() => {
       Interceptor.attach(m.virtualAddress, {
         onEnter(args) {
           this.path = rawStr(args[1]);
-          const selected = resourceLanguage(), next = localizedAssetPath(this.path, selected);
+          const selected = /\/Localization\/(?:Text|Audio)\//i.test(this.path) ? resourceLanguage() : "";
+          const next = localizedAssetPath(this.path, selected);
           if (next !== this.path) {
             this.replacement = Il2Cpp.string(next).object.ref(false);
             args[1] = this.replacement.target.handle;
@@ -6141,8 +6157,14 @@ Il2Cpp.perform(() => {
     const mgr = cls(img, "AssetBundles.AssetBundleManager");
     const catalog = cls(img, "AssetCatalog");
     const target = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/tesl-bundle-hashes.txt";
+    let written = false, attempts = 0, last = 0;
     Interceptor.attach(catalog.method("SetCacheExpiration").virtualAddress, {
       onEnter() {
+        const now = Date.now();
+        if (written || attempts >= 3 || attempts > 0 && now - last < 6e4) return;
+        last = now;
+        attempts++;
+        const started = now;
         try {
           const manifest = mgr.field("m_AssetBundleManifest").value;
           if (isNull(manifest)) {
@@ -6158,7 +6180,8 @@ Il2Cpp.perform(() => {
             lines.push(`${name} ${hex}`);
           }
           Il2Cpp.corlib.class("System.IO.File").method("WriteAllText").invoke(Il2Cpp.string(target), Il2Cpp.string(lines.join("\n")));
-          log(`bundle hashes: wrote ${lines.length} entries to ${target}`);
+          written = true;
+          log(`bundle hashes: wrote ${lines.length} entries to ${target} in ${Date.now() - started}ms`);
         } catch (e) {
           log(`bundle hash report failed: ${e}`);
         }
@@ -6745,13 +6768,30 @@ Il2Cpp.perform(() => {
           if (item.pose) for (const name of Object.keys(item.pose)) call(node, "set_" + name, vec2(item.pose[name].x, item.pose[name].y));
           call(item.ref.target, "SetActive", item.active);
           if (item.button) {
-            let interactable = item.interactable;
-            if (returningToMenu && item.active) try {
-              const parentGo = call(item.parent.target, "get_gameObject");
-              if (call(parentGo, "get_activeInHierarchy")) interactable = true;
-            } catch (_) {
+            call(item.button.target, "set_interactable", item.interactable);
+            if (returningToMenu && item.active) {
+              const button = item.button.target.ref(false), parent = item.parent.target.ref(false), self = item.ref.target.ref(false);
+              let waits = 0, applies = 0;
+              const settle = () => {
+                let again = false;
+                try {
+                  if (call(call(parent.target, "get_gameObject"), "get_activeInHierarchy")) {
+                    call(self.target, "SetActive", true);
+                    call(button.target, "set_interactable", true);
+                    again = ++applies < 4;
+                  } else again = ++waits < 60;
+                } catch (_) {
+                  again = false;
+                }
+                if (again) schedule(500, settle);
+                else {
+                  button.free();
+                  parent.free();
+                  self.free();
+                }
+              };
+              settle();
             }
-            call(item.button.target, "set_interactable", interactable);
           }
         } catch (_) {
         } finally {
