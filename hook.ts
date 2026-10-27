@@ -2824,11 +2824,13 @@ function uiComponent(go, type) {
   // Loaded sprites are kept: the next window that asks for the same path gets
   // it in the same frame instead of popping in after an asset load.
   const nativeUiSprites=new Map();
+  // image may be null: the sprite is then only loaded into the cache, so the
+  // first window that needs it does not wait for the asset (preloading).
   function loadNativeUiSprite(path,image,onLoaded=()=>{}) {
     const cached=nativeUiSprites.get(path);
-    if(cached)try{if(!isNull(cached.target)){call(image,"set_sprite",cached.target);call(image,"set_color",rgba(1,1,1,1));onLoaded();return;}}catch(_){}
-    const retained=image.ref(false),started=Date.now();let operation=null;
-    function release(){if(operation){operation.free();operation=null;}retained.free();}
+    if(cached)try{if(!isNull(cached.target)){if(image){call(image,"set_sprite",cached.target);call(image,"set_color",rgba(1,1,1,1));}onLoaded();return;}}catch(_){}
+    const retained=image?image.ref(false):null,started=Date.now();let operation=null;
+    function release(){if(operation){operation.free();operation=null;}if(retained)retained.free();}
     function poll(){try {
       if(!operation){const catalog=cls(img,"AssetCatalog").method("get_Instance",0).invoke();
         const value=catalog.method("LoadAssetFromPathAsync").overload("System.String","System.Type","System.String")
@@ -2838,7 +2840,7 @@ function uiComponent(go, type) {
       if(call(operation.target,"IsDone")){
         const sprite=operation.target.method("GetAsset",0).inflate(ucls("UnityEngine.Sprite")).invoke();
         if(!isNull(sprite)){if(!nativeUiSprites.has(path))nativeUiSprites.set(path,sprite.ref(false));
-          call(retained.target,"set_sprite",sprite);call(retained.target,"set_color",rgba(1,1,1,1));onLoaded();}
+          if(retained){call(retained.target,"set_sprite",sprite);call(retained.target,"set_color",rgba(1,1,1,1));}onLoaded();}
         release();return;
       }
       if(Date.now()-started>20000){release();return;}
@@ -2970,7 +2972,13 @@ function uiComponent(go, type) {
       schedule(0,()=>{try{const go=call(ref.target,"get_gameObject");if(call(go,"get_activeInHierarchy")){const record=records.get(ref.target.handle.toString());if(record)record.lastCount=-1;scanPicker(ref.target,go,true);}}
         catch(error){log(`deck search: ${error}`);}finally{ref.free();}},"deck search install");
     }});
+    // The first open of the deck list also waited for the frame and clear
+    // icon (report 30). Load them into the cache once the menu has settled.
+    const preloadAt=Date.now()+15000;let preloaded=false;
     Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
+      if(!preloaded&&Date.now()>=preloadAt){preloaded=true;
+        for(const path of ["AppBase/UI/Sprites/Core/UtilityAssets/input-frame","AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon"])
+          schedule(0,()=>loadNativeUiSprite(path,null),"deck search sprite preload");}
       if(Date.now()<next)return;next=Date.now()+250;
       schedule(0,()=>{
         const live=new Set();let scanned=false;
@@ -3200,7 +3208,7 @@ function uiComponent(go, type) {
     // Captured device prefabs: OptionsWinMobile is the gear shortcut menu;
     // SettingsWin_Mobile inside PopupWinTemplate is the actual settings dialog.
     if (typeName==="OptionsWin" || /^OptionsWin(?:Mobile)?$/i.test(compactName)) {
-      const old=call(root,"Find",Il2Cpp.string("RebornGameData"));
+      const old=findGameDataButton(root);
       if(!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old,"get_gameObject"));
       return;
     }
@@ -3211,7 +3219,7 @@ function uiComponent(go, type) {
         const previous = call(resourceSettingsWindow.target, "get_transform");
         if (Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")) && Boolean(call(previous, "IsChildOf", root))) return;
         if (Boolean(call(root, "IsChildOf", previous))) {
-          const old = call(previous, "Find", Il2Cpp.string("RebornGameData"));
+          const old = findGameDataButton(previous);
           if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
         }
       } catch (_) {}
@@ -3220,7 +3228,7 @@ function uiComponent(go, type) {
       if (resourceSettingsWindow) resourceSettingsWindow.free();
       resourceSettingsWindow = window.ref(false);
     }
-    const existing = call(root, "Find", Il2Cpp.string("RebornGameData"));
+    const existing = findGameDataButton(root);
     if (!isNull(existing)) { const go=call(existing,"get_gameObject"); if(!call(go,"get_activeSelf"))call(go,"SetActive",true); return; }
     const labels = {en_us:"Game data",de_de:"Spieldaten",es_es:"Datos del juego",es_mx:"Datos del juego",fr_fr:"Données du jeu",it_it:"Dati di gioco",pl_pl:"Dane gry",pt_br:"Dados do jogo",ru_ru:"Данные игры",tr_tr:"Oyun verileri"};
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
@@ -3228,7 +3236,58 @@ function uiComponent(go, type) {
     });
     // Fit in the free right margin beside the native tabs, not over Preferences.
     uiPlace(button,1,1,1,1,-18,-74,180,48);
-    call(uiAdd(button, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+    const layout = uiAdd(button, "UnityEngine.UI.LayoutElement");
+    call(layout, "set_ignoreLayout", true);
+    try { styleAsSettingsTab(self, button, layout); log("settings button: Game data styled as a settings tab"); }
+    catch (error) { log(`settings button: kept the plain Game data button: ${error}`); }
+  }
+  // The plain grey button looked foreign next to Audio and Preferences. It
+  // takes the first tab's frame sprite, font, size and colours and joins the
+  // tab row, laid out by the game. TabGroup keeps its tabs in _toggles, and
+  // this Button is not a Toggle, so tab switching is untouched.
+  function styleAsSettingsTab(self, button, layout) {
+    const group = self.field("_tabNavigation").value;
+    if (isNull(group)) throw Error("no _tabNavigation");
+    const toggles = group.field("_toggles").value;
+    if (isNull(toggles) || !toggles.length) throw Error("no settings tabs");
+    const tab = toggles.get(0), tabGo = call(tab, "get_gameObject"), tabNode = call(tabGo, "get_transform");
+    const row = call(tabNode, "get_parent");
+    if (isNull(row)) throw Error("settings tab has no row");
+    const art = call(tab, "get_targetGraphic"), image = uiComponent(button, "UnityEngine.UI.Image");
+    if (!isNull(art) && art.class.type.name === "UnityEngine.UI.Image" && !isNull(image)) {
+      call(image, "set_sprite", call(art, "get_sprite"));
+      call(image, "set_type", call(art, "get_type"));
+      call(image, "set_color", call(art, "get_color"));
+    }
+    const tmp = ucls("TMPro.TextMeshProUGUI").type.object;
+    const tabLabel = tabGo.method("GetComponentInChildren").overload("System.Type").invoke(tmp);
+    const label = call(button, "get_gameObject").method("GetComponentInChildren").overload("System.Type").invoke(tmp);
+    if (!isNull(tabLabel) && !isNull(label)) {
+      call(label, "set_font", call(tabLabel, "get_font"));
+      call(label, "set_fontSize", call(tabLabel, "get_fontSize"));
+      call(label, "set_color", call(tabLabel, "get_color"));
+    }
+    const bounds = call(tabNode, "get_rect");
+    const width = Number(bounds.field("m_Width").value), height = Number(bounds.field("m_Height").value);
+    const node = call(button, "get_transform");
+    node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(row, false);
+    call(node, "SetAsLastSibling");
+    call(node, "set_localScale", call(tabNode, "get_localScale"));
+    uiPlace(button, 0.5, 0.5, 0.5, 0.5, 0, 0, width, height);
+    call(layout, "set_ignoreLayout", false);
+    call(layout, "set_preferredWidth", width); call(layout, "set_preferredHeight", height);
+  }
+  // Direct child of the window, or inside the tab row once styled.
+  function findGameDataButton(root) {
+    const direct = call(root, "Find", Il2Cpp.string("RebornGameData"));
+    if (!isNull(direct)) return direct;
+    const buttons = call(root, "get_gameObject").method("GetComponentsInChildren").overload("System.Type", "System.Boolean")
+      .invoke(ucls("UnityEngine.UI.Button").type.object, true);
+    for (let i = 0; i < buttons.length; i++) {
+      const node = call(buttons.get(i), "get_transform");
+      if (String(call(node, "get_name")?.content || "") === "RebornGameData") return node;
+    }
+    return null;
   }
   section("settings game data", () => {
     const classes = img.classes.filter(c => /^(?:Game)?(?:Options|Settings)(?:Win|Window|Panel|Dialog)$/.test(c.name))
