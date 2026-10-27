@@ -202,6 +202,16 @@ def local_ips():
     ]
 
 
+def open_folder(folder):
+    """The platform file manager at this folder."""
+    import subprocess
+
+    if sys.platform == "win32":
+        os.startfile(str(folder))
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)])
+
+
 class BuilderWindow:
     def __init__(self, window):
         self.window = window
@@ -271,6 +281,9 @@ class BuilderWindow:
         self.path_row(root, "Original XAPK", self.xapk, False)
         self.destination = tk.StringVar(value=str(self.appdir / "output"))
         self.path_row(root, "Output folder", self.destination, True)
+        opener = ttk.Frame(root)
+        opener.pack(fill="x")
+        ttk.Button(opener, text="Open folder", command=self.open_output).pack(side="right")
         ttk.Label(
             root,
             text="Each build gets its own folder. Temporary files are removed automatically.",
@@ -492,6 +505,17 @@ class BuilderWindow:
                 variable.set(path)
 
         ttk.Button(row, text="Browse…", command=choose).pack(side="left")
+        return row
+
+    def open_output(self):
+        """Open the latest build, or the output folder, in the file manager:
+        to copy the APK and data to the phone directly."""
+        folder = self.result if self.result and Path(self.result).is_dir() else Path(self.destination.get())
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            open_folder(folder)
+        except Exception as error:
+            messagebox.showerror("Builder", "\n".join([self.tr("Could not open the folder."), str(folder), str(error)]))
 
     def choose_game(self):
         path = filedialog.askdirectory(

@@ -108,6 +108,21 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(form.connect_button.mapped)
         self.assertFalse(popup.exists)
 
+    def test_open_folder_shows_the_latest_build_or_the_output_folder(self):
+        import tempfile
+        opened = []
+        with tempfile.TemporaryDirectory() as tmp, patch.object(gui, 'open_folder', opened.append):
+            output = Path(tmp) / 'output'
+            self.form.destination.set(str(output))
+            self.form.open_output()
+            self.assertEqual(opened[-1], output, 'before any build: the output folder')
+            self.assertTrue(output.is_dir(), 'created when it does not exist yet')
+            build = output / 'build-1'
+            build.mkdir()
+            self.form.result = build
+            self.form.open_output()
+            self.assertEqual(opened[-1], build, 'after a build: that build, with the APK and data')
+
     def test_all_visible_literal_notes_have_every_locale(self):
         texts = json.loads(Path(gui.__file__).with_name('ui-text.json').read_text(encoding='utf-8'))
         tree = ast.parse(Path(gui.__file__).read_text(encoding='utf-8'))

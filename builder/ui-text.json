@@ -838,5 +838,29 @@
     "pt_br": "Há um novo Builder disponível. Atualizar e reiniciar agora?",
     "ru_ru": "Доступен новый Builder. Обновить и перезапустить сейчас?",
     "tr_tr": "Yeni bir Builder var. Şimdi güncellenip yeniden başlatılsın mı?"
+  },
+  "Open folder": {
+    "en_us": "Open folder",
+    "de_de": "Ordner öffnen",
+    "es_es": "Abrir carpeta",
+    "es_mx": "Abrir carpeta",
+    "fr_fr": "Ouvrir le dossier",
+    "it_it": "Apri cartella",
+    "pl_pl": "Otwórz folder",
+    "pt_br": "Abrir pasta",
+    "ru_ru": "Открыть папку",
+    "tr_tr": "Klasörü aç"
+  },
+  "Could not open the folder.": {
+    "en_us": "Could not open the folder.",
+    "de_de": "Der Ordner konnte nicht geöffnet werden.",
+    "es_es": "No se pudo abrir la carpeta.",
+    "es_mx": "No se pudo abrir la carpeta.",
+    "fr_fr": "Impossible d’ouvrir le dossier.",
+    "it_it": "Impossibile aprire la cartella.",
+    "pl_pl": "Nie udało się otworzyć folderu.",
+    "pt_br": "Não foi possível abrir a pasta.",
+    "ru_ru": "Не удалось открыть папку.",
+    "tr_tr": "Klasör açılamadı."
   }
 }
