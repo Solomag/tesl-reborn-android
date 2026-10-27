@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 79,
-  "version": "android-79-nested-notice-canvas",
-  "bytes": 396687,
-  "sha256": "f82aa2cf1e8df45cd50f055e5f4886dc30377d214cceb1356449f095d0fde607",
+  "revision": 80,
+  "version": "android-80-notice-waits-for-host",
+  "bytes": 397094,
+  "sha256": "7111648e781c74aa7a466f90aa7f5fe2da26f8dec5b876ffed3ee5797240fc69",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "781dbfbe5170c0720542563520b64627100216b600cda65e88975e62586d0137"
+  "sourceSha256": "499c429cbb3c6a3f8d0e10afdc144f680e96a577f3d36afe510db1dadf26d11e"
 }

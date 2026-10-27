@@ -182,6 +182,8 @@ strippedBanner.show('applied',41);strippedBanner.tick();
 assert.equal(notices(),before,'no GameObject is built without a host');
 const looked=finds;strippedBanner.tick();clock+=1000;strippedBanner.tick();
 assert.equal(finds,looked,'the host is not searched on every tick');
+assert(!logs.some(m=>/^update notice: TypeError/.test(m)),'a tick without a host ends quietly instead of failing on a null Canvas (report 25)');
+assert(logs.some(m=>m.startsWith('update notice: no overlay Canvas to host it; live roots')),'the missing host is reported with the live roots');
 // A live overlay root Canvas appears: our object is nested under it and
 // sorts above it; game UI is not moved, and no DontDestroyOnLoad on a child.
 const host=object('GameOverlayCanvas');

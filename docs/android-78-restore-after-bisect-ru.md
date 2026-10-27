@@ -58,3 +58,13 @@ and set_renderMode is stripped`. Новый корневой `Canvas` в это�
 `bnetSteamLogin` не ушёл), через минуту упал `HeapTaskDaemon` (SIGSEGV при
 обходе стека в ART). Случай единичный, с изменениями 78/79 не связан
 очевидно; если повторится — нужен отчёт.
+
+## Ревизия 80: тик без хоста
+
+Отчёт 25: `update notice: TypeError: cannot read property 'method' of null`. Пока
+игрового overlay-`Canvas` нет, ревизия 79 ничего не строила, но тик продолжал
+работать с пустым `Canvas` и падал раньше, чем доходил до повторного поиска.
+В ревизии 80 (`android-80-notice-waits-for-host`) тик без построенного баннера
+заканчивается сразу; если хоста нет, раз в 30 с пишется
+`update notice: no overlay Canvas to host it; live roots <имя>:<режим>/<порядок>, …`
+(режим 0 — overlay, 1 — камера, 2 — мир).

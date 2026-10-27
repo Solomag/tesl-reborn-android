@@ -8901,23 +8901,30 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
   }
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
-    let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0;
+    let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
     function overlayHost() {
       const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
       let host = null, order = -Infinity;
+      const seen = [];
       for (let i = 0; i < values.length; i++) {
         const candidate = values.get(i);
         if (!alive(candidate) || !call(candidate, "get_isRootCanvas")) continue;
-        if (!call(call(candidate, "get_gameObject"), "get_activeInHierarchy")) continue;
-        if (enumVal(call(candidate, "get_renderMode")) !== 0) continue;
-        const sorting = Number(call(candidate, "get_sortingOrder"));
+        const go = call(candidate, "get_gameObject");
+        if (!call(go, "get_activeInHierarchy")) continue;
+        const mode = enumVal(call(candidate, "get_renderMode")), sorting = Number(call(candidate, "get_sortingOrder"));
+        seen.push(`${String(call(go, "get_name")?.content || "?")}:${mode}/${sorting}`);
+        if (mode !== 0) continue;
         if (sorting >= order) {
           host = candidate;
           order = sorting;
         }
+      }
+      if (!host && Date.now() >= hostReportAt) {
+        hostReportAt = Date.now() + 3e4;
+        log(`update notice: no overlay Canvas to host it; live roots ${seen.slice(0, 12).join(", ") || "none"}`);
       }
       return host;
     }
@@ -9033,6 +9040,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
         }
         try {
           ensure();
+          if (!root) return;
           const screen = chatScreen();
           const scale = nested2 ? Math.max(0.1, Number(call(call(canvas, "get_rootCanvas"), "get_scaleFactor")) || canvasScale) : Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
           if (nested2) canvasScale = scale;

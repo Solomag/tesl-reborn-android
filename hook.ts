@@ -4679,7 +4679,7 @@ const chatWindows = new Map();
 
   function createUpdateBanner() {
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
-    let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0;
+    let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     // Unity's own null check: a destroyed object compares equal to null
@@ -4690,13 +4690,22 @@ const chatWindows = new Map();
       const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
         .invoke(ucls("UnityEngine.Canvas").type.object);
       let host = null, order = -Infinity;
+      const seen = [];
       for (let i = 0; i < values.length; i++) {
         const candidate = values.get(i);
         if (!alive(candidate) || !call(candidate, "get_isRootCanvas")) continue;
-        if (!call(call(candidate, "get_gameObject"), "get_activeInHierarchy")) continue;
-        if (enumVal(call(candidate, "get_renderMode")) !== 0) continue;
-        const sorting = Number(call(candidate, "get_sortingOrder"));
+        const go = call(candidate, "get_gameObject");
+        if (!call(go, "get_activeInHierarchy")) continue;
+        const mode = enumVal(call(candidate, "get_renderMode")), sorting = Number(call(candidate, "get_sortingOrder"));
+        seen.push(`${String(call(go, "get_name")?.content || "?")}:${mode}/${sorting}`);
+        if (mode !== 0) continue;
         if (sorting >= order) { host = candidate; order = sorting; }
+      }
+      // Without a host, name the live root canvases and their render modes
+      // (0 overlay, 1 camera, 2 world), at most every 30 s.
+      if (!host && Date.now() >= hostReportAt) {
+        hostReportAt = Date.now() + 30000;
+        log(`update notice: no overlay Canvas to host it; live roots ${seen.slice(0, 12).join(", ") || "none"}`);
       }
       return host;
     }
@@ -4803,6 +4812,9 @@ const chatWindows = new Map();
         }
         try {
           ensure();
+          // No host yet: nothing was built; the message stays queued (report 25:
+          // this tick went on with a null Canvas and never got past it).
+          if (!root) return;
           const screen = chatScreen();
           // A nested Canvas takes the host's scale; only a root one sets it.
           const scale = nested ? Math.max(0.1, Number(call(call(canvas, "get_rootCanvas"), "get_scaleFactor")) || canvasScale)
