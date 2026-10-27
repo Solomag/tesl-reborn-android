@@ -6766,140 +6766,73 @@ Il2Cpp.perform(() => {
       }, "deck search scan");
     } });
   });
-  function matchingFriendsPose(node) {
-    const result = {};
-    for (const name of ["anchorMin", "anchorMax", "pivot", "anchoredPosition", "sizeDelta"]) {
-      const value = call(node, "get_" + name);
-      result[name] = { x: Number(value.field("x").value), y: Number(value.field("y").value) };
-    }
-    return result;
-  }
   section("friends while matchmaking", () => {
-    const seeking = cls(img, "MatchSeekingWin"), friends = cls(img, "FriendsWin"), records = /* @__PURE__ */ new Map();
+    const seeking = cls(img, "MatchSeekingWin"), records = /* @__PURE__ */ new Map();
     const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-    function findFriendsButton() {
-      let button = null, score = -1;
-      for (const name of ["MainMenuOverlayView", "MainMenuWin", "OverlayMenu"]) try {
-        const values = find.invoke(cls(img, name).type.object);
-        for (let i = 0; i < values.length; i++) {
-          const value = values.get(i).field("_friendsBtn").value;
-          if (isNull(value)) continue;
-          const owner = call(value, "get_gameObject"), rank = call(owner, "get_activeInHierarchy") ? 2 : call(owner, "get_activeSelf") ? 1 : 0;
-          if (rank > score) {
-            button = value;
-            score = rank;
-          }
-        }
-      } catch (_) {
+    const unityObject = ucls("UnityEngine.Object");
+    const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
+    const firstLive = (type, pick) => {
+      const values = find.invoke(type);
+      for (let i = 0; i < values.length; i++) {
+        const value = pick(values.get(i));
+        if (alive(value) && call(call(value, "get_gameObject"), "get_activeInHierarchy")) return value;
       }
-      return button;
-    }
-    function friendsButtonBlockers(button) {
-      try {
-        const found = [];
-        if (!call(button, "get_enabled")) found.push("Button component disabled");
-        const group = ucls("UnityEngine.CanvasGroup").type.object;
-        let node = call(call(button, "get_gameObject"), "get_transform");
-        for (let depth = 0; depth < 12 && !isNull(node); depth++, node = call(node, "get_parent")) {
-          const go = call(node, "get_gameObject"), canvas = go.method("GetComponent").overload("System.Type").invoke(group);
-          if (isNull(canvas)) continue;
-          const name = String(call(go, "get_name")?.content || "?");
-          if (!call(canvas, "get_interactable")) found.push(`${name}: CanvasGroup not interactable`);
-          if (!call(canvas, "get_blocksRaycasts")) found.push(`${name}: CanvasGroup blocks no raycasts`);
-        }
-        return found.length ? `blockers: ${found.join(", ")}` : "no blockers found";
-      } catch (error) {
-        return `blocker check failed: ${error}`;
+      return null;
+    };
+    const gameFriendsButton = () => firstLive(cls(img, "MainMenuOverlayController").type.object, (c) => {
+      const view = call(c, "get__overlayView");
+      return alive(view) ? view.field("_friendsBtn").value : null;
+    });
+    const gameFriendsWindow = () => firstLive(cls(img, "SPTESL.MainMenu").type.object, (m) => m.field("_friendsWin").value);
+    const originals = /* @__PURE__ */ new Map();
+    const original = (component, read) => {
+      const key = component.handle.toString();
+      if (!originals.has(key)) originals.set(key, read());
+      return originals.get(key);
+    };
+    function raise(go, order, layer) {
+      const canvasType = ucls("UnityEngine.Canvas").type.object, rayType = ucls("UnityEngine.UI.GraphicRaycaster").type.object;
+      let canvas = go.method("GetComponent").overload("System.Type").invoke(canvasType), saved;
+      if (alive(canvas)) saved = original(canvas, () => ({ override: Boolean(call(canvas, "get_overrideSorting")), order: Number(call(canvas, "get_sortingOrder")), layer: Number(call(canvas, "get_sortingLayerID")) }));
+      else {
+        canvas = uiAdd(go, "UnityEngine.Canvas");
+        saved = original(canvas, () => ({ override: false, order: 0, layer: 0 }));
       }
-    }
-    function restore(record, returningToMenu = false, source = "close") {
-      log(`matching friends: restore (${source}${returningToMenu ? ", returning to menu" : ""}; ${record.items.length} item${record.items.length === 1 ? "" : "s"})`);
-      for (const item of record.items) {
-        try {
-          const node = call(item.ref.target, "get_transform");
-          node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(item.parent.target, true);
-          call(node, "SetSiblingIndex", item.sibling);
-          if (item.pose) for (const name of Object.keys(item.pose)) call(node, "set_" + name, vec2(item.pose[name].x, item.pose[name].y));
-          call(item.ref.target, "SetActive", item.active);
-          if (item.button) {
-            call(item.button.target, "set_interactable", item.interactable);
-            if (returningToMenu && item.active) {
-              const button = item.button.target.ref(false), parent = item.parent.target.ref(false), self = item.ref.target.ref(false);
-              let waits = 0, applies = 0;
-              const settle = () => {
-                let again = false, stopped = "";
-                try {
-                  if (call(call(parent.target, "get_gameObject"), "get_activeInHierarchy")) {
-                    call(self.target, "SetActive", true);
-                    call(button.target, "set_interactable", true);
-                    again = ++applies < 4;
-                  } else again = ++waits < 60;
-                } catch (error) {
-                  again = false;
-                  stopped = ` (${error})`;
-                }
-                if (again) schedule(500, settle, "matching friends settle");
-                else {
-                  if (stopped) log(`matching friends: re-assert stopped${stopped}`);
-                  else if (applies) log(`matching friends: re-assert applied ${applies}x; ${friendsButtonBlockers(button.target)}`);
-                  else log(`matching friends: re-assert gave up: the menu never became active`);
-                  button.free();
-                  parent.free();
-                  self.free();
-                }
-              };
-              settle();
-            } else if (returningToMenu) {
-              log(`matching friends: re-assert skipped: the button was ${item.active ? "hidden" : "inactive"} when it was moved`);
-            }
-          }
-        } catch (error) {
-          log(`matching friends: restore (${source}) failed: ${error}`);
-        } finally {
-          if (item.slot) {
-            try {
-              ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(item.slot.target);
-            } catch (_) {
-            }
-            item.slot.free();
-          }
-          if (item.button) item.button.free();
-          item.ref.free();
-          item.parent.free();
-        }
+      let ray = go.method("GetComponent").overload("System.Type").invoke(rayType), rayEnabled;
+      if (alive(ray)) rayEnabled = original(ray, () => Boolean(call(ray, "get_enabled")));
+      else {
+        ray = uiAdd(go, "UnityEngine.UI.GraphicRaycaster");
+        rayEnabled = original(ray, () => false);
       }
-      if (record.window) record.window.free();
-    }
-    function move(go, parent, button = null) {
-      const node = call(go, "get_transform"), original = call(node, "get_parent");
-      if (isNull(original)) throw Error("Friends UI has no parent");
-      const item = { ref: go.ref(false), parent: original.ref(false), sibling: Number(call(node, "GetSiblingIndex")), active: Boolean(call(go, "get_activeSelf")), pose: null, button: null, interactable: false, slot: null };
-      try {
-        item.pose = matchingFriendsPose(node);
-      } catch (_) {
-      }
-      try {
-        if (button) {
-          item.button = button.ref(false);
-          item.interactable = Boolean(call(button, "get_interactable"));
-          call(button, "set_interactable", true);
-          const slot = uiNew("RebornFriendsLayoutSlot", original);
-          item.slot = slot.ref(false);
-          const slotRect = call(slot, "get_transform");
-          call(slotRect, "SetSiblingIndex", item.sibling);
-          if (item.pose) for (const name of Object.keys(item.pose)) call(slotRect, "set_" + name, vec2(item.pose[name].x, item.pose[name].y));
-          const layout = uiAdd(slot, "UnityEngine.UI.LayoutElement"), bounds = call(node, "get_rect");
-          call(layout, "set_preferredWidth", Number(bounds.field("m_Width").value));
-          call(layout, "set_preferredHeight", Number(bounds.field("m_Height").value));
-        }
-        node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parent, true);
-        call(node, "SetAsLastSibling");
-        call(go, "SetActive", true);
-      } catch (error) {
-        restore({ items: [item] }, false, "move rollback");
-        throw error;
-      }
+      const item = { go: go.ref(false), canvas: canvas.ref(false), ray: ray.ref(false), ...saved, rayEnabled };
+      call(canvas, "set_overrideSorting", true);
+      call(canvas, "set_sortingLayerID", layer);
+      call(canvas, "set_sortingOrder", order);
+      call(ray, "set_enabled", true);
       return item;
+    }
+    function lower(item) {
+      try {
+        if (alive(item.canvas.target)) {
+          call(item.canvas.target, "set_sortingLayerID", item.layer);
+          call(item.canvas.target, "set_sortingOrder", item.order);
+          call(item.canvas.target, "set_overrideSorting", item.override);
+        }
+        if (alive(item.ray.target)) call(item.ray.target, "set_enabled", item.rayEnabled);
+      } finally {
+        item.go.free();
+        item.canvas.free();
+        item.ray.free();
+      }
+    }
+    function restore(record, source) {
+      log(`matching friends: lowered (${source}; ${record.items.length} item${record.items.length === 1 ? "" : "s"})`);
+      for (const item of record.items) try {
+        lower(item);
+      } catch (error) {
+        log(`matching friends: lower (${source}) failed: ${error}`);
+      }
+      record.window.free();
     }
     const show = seeking.method("Show");
     Interceptor.attach(show.virtualAddress, { onEnter(args) {
@@ -6909,48 +6842,31 @@ Il2Cpp.perform(() => {
       schedule(0, () => {
         let record = null, key = "";
         try {
-          const go = call(ref.target, "get_gameObject"), root = call(go, "get_transform");
+          const go = call(ref.target, "get_gameObject");
           key = go.handle.toString();
           if (!call(go, "get_activeInHierarchy")) return;
           if (records.has(key)) {
             const stale = records.get(key);
             records.delete(key);
-            restore(stale, false, "search reopened");
+            restore(stale, "search reopened");
           }
-          const old = call(root, "Find", Il2Cpp.string("RebornMatchingFriends"));
-          if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
-          const button = findFriendsButton();
-          if (!button) throw Error("Original _friendsBtn unavailable");
-          const windows = find.invoke(friends.type.object);
-          let friend = null;
-          for (let i = 0; i < windows.length; i++) {
-            const value = windows.get(i);
-            if (call(call(value, "get_gameObject"), "get_activeInHierarchy")) {
-              friend = value;
-              break;
-            }
-          }
-          if (!friend) throw Error("Active FriendsWin unavailable");
+          const window = ref.target.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+          if (!alive(window)) throw Error("search window has no Canvas");
+          const root = call(window, "get_rootCanvas");
+          const order = Math.max(Number(call(window, "get_sortingOrder")), alive(root) ? Number(call(root, "get_sortingOrder")) : 0) + 10, layer = Number(call(window, "get_sortingLayerID"));
+          const button = gameFriendsButton();
+          if (!button) throw Error("the menu's _friendsBtn is unavailable");
           record = { items: [], window: ref.target.ref(false) };
-          record.items.push(move(call(friend, "get_gameObject"), call(root, "get_parent")));
-          record.items.push(move(call(button, "get_gameObject"), root, button));
+          record.items.push(raise(call(button, "get_gameObject"), order, layer));
+          const friends = gameFriendsWindow();
+          if (friends) record.items.push(raise(call(friends, "get_gameObject"), order + 1, layer));
           records.set(key, record);
           armWatch();
-          const follow = () => {
-            if (records.get(key) !== record) return;
-            try {
-              const item = record.items.find((x) => x.slot);
-              if (item) call(call(item.ref.target, "get_transform"), "set_position", call(call(item.slot.target, "get_transform"), "get_position"));
-            } catch (_) {
-            }
-            schedule(16, follow, "matching friends follow");
-          };
-          follow();
-          log("matching friends: original button enabled; layout slot preserved");
+          log(`matching friends: raised above the search window (order ${order}${friends ? "" : ", no friends window"})`);
         } catch (error) {
           if (record) {
             records.delete(key);
-            restore(record, false, "show failure rollback");
+            restore(record, "show failure rollback");
           }
           log(`matching friends: ${error}`);
         } finally {
@@ -6971,8 +6887,8 @@ Il2Cpp.perform(() => {
           const key = call(new Il2Cpp.Object(args[0]), "get_gameObject").handle.toString(), record = records.get(key);
           if (record) {
             records.delete(key);
-            schedule(0, () => restore(record, name === "HandleOnCancelSearch", name), "matching friends restore");
-          } else log(`matching friends: ${name}: no moved record`);
+            schedule(0, () => restore(record, name), "matching friends restore");
+          }
         } catch (error) {
           log(`matching friends restore: ${error}`);
         }
@@ -6989,15 +6905,14 @@ Il2Cpp.perform(() => {
     const watch = () => {
       watching = false;
       for (const [key, record] of records) {
-        if (!record.window) continue;
-        let live = true;
+        let live = false;
         try {
-          live = call(call(record.window.target, "get_gameObject"), "get_activeInHierarchy");
+          live = alive(record.window.target) && call(call(record.window.target, "get_gameObject"), "get_activeInHierarchy");
         } catch (_) {
         }
         if (live) continue;
         records.delete(key);
-        restore(record, false, "watchdog");
+        restore(record, "watchdog");
       }
       armWatch();
     };

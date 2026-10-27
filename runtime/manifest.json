@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 75,
-  "version": "android-75-no-menu-touch-on-match-entry",
-  "bytes": 395088,
-  "sha256": "829688f2af2d5274cb67b159c7e3bc643e14d9768d38e7ca14de4e0470e82674",
+  "revision": 76,
+  "version": "android-76-raise-friends-without-moving",
+  "bytes": 390932,
+  "sha256": "38e3e0d1511ce7156dc7be91a6a9e4a059f56dd7052804bbfc7ba1caf28a8be9",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "2da69f34b91313ed1868dfd254d9fd007a0610c76982f72649365549e05b1e97"
+  "sourceSha256": "109fb37c2e174b5069f1e16771513f47136b54f610cd55a49ebf6f5af8c04d10"
 }

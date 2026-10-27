@@ -1,66 +1,92 @@
 const vm=require('vm'),assert=require('assert/strict'),{transformSync}=require('esbuild');
-const hooks={},queue=[],logs=[];let frees=0;const positionWrites=[];
-const ptr={toString:()=> 'ptr'},modalParent={id:'modal'},root={id:'seeking-root'},original={id:'original'},buttonParent={id:'buttons'};
-const friendGo={handle:{toString:()=> 'friend'},active:true},buttonGo={handle:{toString:()=> 'button'},active:true},go={handle:{toString:()=> 'go1'},active:true};
-const friend={go:friendGo},button={go:buttonGo,interactable:false,nativeClick:'original-handler'},seeker={go};
-const friendNode={parent:original,sibling:3},buttonNode={parent:buttonParent,sibling:2};
-const nodes=new Map([[friendGo,friendNode],[buttonGo,buttonNode],[go,root]]);
-for(const obj of [friendGo,buttonGo,original,buttonParent,button,seeker])obj.ref=()=>({target:obj,free:()=>frees++});
-for(const node of [friendNode,buttonNode])node.method=()=>({overload:()=>({invoke:(parent,keep)=>{assert.equal(keep,true);node.parent=parent;}})});
-const pose={field:key=>({value:key==='x'?1:2})};
-const c={section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='MatchSeekingWin'?{method:()=>({virtualAddress:'Show'}),tryMethod:name=>({virtualAddress:Object.assign({isNull:()=>false},{toString:()=>name})})}:{type:{object:name}},
- Interceptor:{attach:(addr,hook)=>hooks[String(addr)]=hook},Il2Cpp:{Object:function(){return seeker;},string:x=>x},isNull:x=>x==null,schedule:(_,fn)=>queue.push(fn),log:m=>logs.push(m),vec2:(x,y)=>({x,y}),
- uiNew:()=>{const slot={active:true,ref:()=>({target:slot,free:()=>frees++})};nodes.set(slot,{parent:buttonParent,sibling:2});return slot;},uiAdd:()=>({}),
- ucls:name=>({method:()=>({overload:()=>({invoke:type=>(name==='UnityEngine.Object'?undefined:{length:type==='FriendsWin'||type==='MainMenuOverlayView'?1:0,get:()=>type==='FriendsWin'?friend:{field:()=>({value:button})}})})})}),
+// Unity objects: a game object with components, and the components that
+// the friends section raises over the search window.
+const hooks={},queue=[],logs=[];let frees=0;
+const handle=id=>({toString:()=>id,isNull:()=>false});
+function gameObject(id,{canvas=null,ray=null}={}) {
+  const go={handle:handle(id),active:true,components:new Map(),destroyed:false};
+  if(canvas)go.components.set('UnityEngine.Canvas',canvas);
+  if(ray)go.components.set('UnityEngine.UI.GraphicRaycaster',ray);
+  go.method=name=>({overload:()=>({invoke:type=>{
+    if(name==='GetComponent')return go.components.get(type)||null;
+    if(name==='GetComponentInParent')return searchCanvas;
+    throw Error(name);
+  }})});
+  return go;
+}
+let ids=0;
+const canvasOf=(order=0,override=false)=>({handle:handle('canvas'+(ids++)),overrideSorting:override,sortingOrder:order,sortingLayerID:0});
+const searchCanvas=canvasOf(30),rootCanvas=canvasOf(5);
+const buttonGo=gameObject('button'),friendsGo=gameObject('friends',{canvas:canvasOf(2,false)});
+const button={handle:handle('btn'),go:buttonGo,interactable:true},friendsWin={handle:handle('fw'),go:friendsGo};
+const seekerGo=gameObject('seeker'),seeker={handle:handle('seek'),go:seekerGo,method:name=>seekerGo.method(name)};
+const view={handle:handle('view'),field:()=>({value:button})};
+const controller={handle:handle('ctl'),go:gameObject('ctl')},mainMenu={handle:handle('mm'),go:gameObject('mm'),field:()=>({value:friendsWin})};
+const withRef=obj=>{obj.ref=()=>({target:obj,free:()=>frees++});return obj;};
+for(const obj of [seeker,button,friendsWin,searchCanvas,friendsGo.components.get('UnityEngine.Canvas'),buttonGo,friendsGo])withRef(obj);
+const typeObject=name=>({type:{object:name}});
+const added=[];
+const c={section:(_,fn)=>fn(),img:{},NULL:null,isNull:x=>x==null,
+ cls:(_,name)=>name==='MatchSeekingWin'?{method:()=>({virtualAddress:'Show'}),tryMethod:n=>({virtualAddress:{isNull:()=>false,toString:()=>n}})}:typeObject(name),
+ Interceptor:{attach:(addr,hook)=>hooks[String(addr)]=hook},Il2Cpp:{Object:function(){return seeker;}},
+ schedule:(_,fn)=>queue.push(fn),log:m=>logs.push(m),
+ uiAdd:(go,type)=>{const value=withRef(type==='UnityEngine.Canvas'?canvasOf():{handle:handle('ray'+(ids++)),enabled:false});go.components.set(type,value);added.push(type);return value;},
+ ucls:name=>name==='UnityEngine.Resources'?{method:()=>({overload:()=>({invoke:type=>{
+    const list=type==='MainMenuOverlayController'?[controller]:type==='SPTESL.MainMenu'?[mainMenu]:[];return {length:list.length,get:i=>list[i]};}})})}
+  :name==='UnityEngine.Object'?{method:()=>({invoke:value=>Boolean(value.destroyed||value.go?.destroyed)})}:typeObject(name),
  call:(obj,name,...args)=>{
+  if(obj.destroyed)throw Error(`${name} called on a destroyed object`);
   if(name==='get_gameObject')return obj.go||obj;
-  if(name==='get_activeInHierarchy'||name==='get_activeSelf')return obj.active;
-  if(name==='SetActive'){obj.active=args[0];return;}
-  if(name==='get_transform')return nodes.get(obj);
-  if(name==='Find')return null;
-  if(name==='get_parent')return obj===root?modalParent:obj.parent;
-  if(name==='GetSiblingIndex')return obj.sibling;
-  if(name==='SetAsLastSibling'){obj.sibling=99;return;}
-  if(name==='SetSiblingIndex'){obj.sibling=args[0];return;}
-  if(name==='get_rect')return {field:()=>({value:48})};
-  if(name==='get_position')return {x:10,y:20,z:0};
-  if(name==='set_position'){positionWrites.push(args[0]);return;}
-  if(name==='get_interactable')return obj.interactable;
-  if(name==='set_interactable'){obj.interactable=args[0];return;}
-  if(name.startsWith('get_'))return pose;
-  if(name.startsWith('set_'))return;
+  if(name==='get_activeInHierarchy')return obj.active;
+  if(name==='get__overlayView')return view;
+  if(name==='get_rootCanvas')return rootCanvas;
+  const prop=name.slice(4);
+  if(name.startsWith('get_'))return obj[prop];
+  if(name.startsWith('set_')){obj[prop]=args[0];return;}
   throw Error(name);
  }};
 vm.createContext(c);vm.runInContext(transformSync(require('./source.cjs')('matching-friends'),{loader:'ts'}).code,c);
-assert.ok(logs.some(m=>/^matching friends: close hooks OnDisable, OnDestroy, HandleOnCancelSearch/.test(m)),'the installed close hooks are announced');
-const invocation={};hooks.Show.onEnter.call(invocation,[ptr]);hooks.Show.onLeave.call(invocation);for(const task of queue.splice(0))task();
-assert.equal(positionWrites.length,1);assert.deepEqual(positionWrites[0],{x:10,y:20,z:0});assert.equal(button.interactable,true);assert.equal(buttonNode.parent,root);assert.equal(friendNode.parent,modalParent);assert.equal(button.nativeClick,'original-handler');
-hooks.HandleOnCancelSearch.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(buttonNode.parent,buttonParent);assert.equal(friendNode.parent,original);assert.equal(button.interactable,false,'the menu is not interactive yet, so the stale value goes back first');assert.equal(buttonNode.sibling,2);assert.equal(friendNode.sibling,3);assert.equal(frees,8,'the re-assert roots and the window ref are still held');
-assert.ok(logs.some(m=>m==='matching friends: restore (HandleOnCancelSearch, returning to menu; 2 items)'),'the close hook names itself as the restore source');
-buttonParent.active=true;for(const task of queue.splice(0))task();
-assert.equal(buttonGo.active,true,'the button is visible again once the menu is active');assert.equal(button.interactable,true,'the button is clickable again once the menu is active');assert.equal(frees,8);
-for(let round=0;round<3;round++)for(const task of queue.splice(0))task();assert.equal(frees,11,'the re-asserts stop and release their roots');
-assert.ok(logs.some(m=>m.startsWith('matching friends: re-assert applied 4x; ')),'the completed re-assert is logged with the blocker check');
-hooks.OnDisable.onEnter([ptr]);for(const task of queue.splice(0))task();assert.equal(frees,11);
+const run=()=>{for(const task of queue.splice(0))task();};
+assert.ok(logs.includes('matching friends: close hooks OnDisable, OnDestroy, HandleOnCancelSearch'));
 
-// A match found also closes the search window (OnDisable), while the battle
-// scene tears the menu down: the button goes back as it was, and nothing is
-// scheduled that would touch menu objects afterwards.
-const matched={};hooks.Show.onEnter.call(matched,[ptr]);hooks.Show.onLeave.call(matched);for(const task of queue.splice(0))task();
-assert.equal(buttonNode.parent,root);
-hooks.OnDisable.onEnter([ptr]);for(const task of queue.splice(0))task();
-assert.equal(buttonNode.parent,buttonParent,'the button is put back when the match is found');
-assert.equal(queue.length,0,'no re-assert after a match is found');
-assert.ok(logs.some(m=>m==='matching friends: restore (OnDisable; 2 items)'),'the match-found restore does not claim a return to the menu');
+// Show: the button and the friends window sort above the search window and
+// receive taps; nothing is reparented and the button keeps its own state.
+const show=()=>{const self={};hooks.Show.onEnter.call(self,[{}]);hooks.Show.onLeave.call(self);run();};
+show();
+const buttonCanvas=buttonGo.components.get('UnityEngine.Canvas'),buttonRay=buttonGo.components.get('UnityEngine.UI.GraphicRaycaster');
+const friendsCanvas=friendsGo.components.get('UnityEngine.Canvas');
+assert.equal(buttonCanvas.overrideSorting,true);assert.equal(buttonCanvas.sortingOrder,40,'above the search window');
+assert.equal(buttonRay.enabled,true,'the raised button receives taps');
+assert.equal(friendsCanvas.sortingOrder,41,'the friends panel opens above the button');
+assert.equal(button.interactable,true,'the button state is left to the game');
+assert.ok(logs.includes('matching friends: raised above the search window (order 40)'));
+console.log('PASS: the friends button and window are raised over the search window without being moved');
 
-// A close path that fires none of the lifecycle hooks is caught by the
-// watchdog: a window that is no longer live ends the search for it.
-const seen=logs.length;
-const second={};hooks.Show.onEnter.call(second,[ptr]);hooks.Show.onLeave.call(second);for(const task of queue.splice(0))task();
-assert.equal(buttonNode.parent,root,'the button is moved for the second search');
-go.active=false;
-for(let round=0;round<3;round++)for(const task of queue.splice(0))task();
-assert.equal(buttonNode.parent,buttonParent,'the watchdog puts the button back when no close hook fires');
-assert.equal(button.interactable,true,'the watchdog restores the state the button had');
-assert.ok(logs.slice(seen).some(m=>m.startsWith('matching friends: restore (watchdog;')),'the watchdog restore is logged');
-console.log('PASS: original friends button is moved/enabled without replacing handlers, restores are logged with their source, and the watchdog covers a close path without hooks');
+// Cancel: everything goes back to the values it had. Our Canvas stays,
+// switched off; the friends window's own Canvas gets its original sorting.
+hooks.HandleOnCancelSearch.onEnter([{}]);run();
+assert.equal(buttonCanvas.overrideSorting,false);assert.equal(buttonCanvas.sortingOrder,0);assert.equal(buttonRay.enabled,false);
+assert.equal(friendsCanvas.overrideSorting,false);assert.equal(friendsCanvas.sortingOrder,2,'an existing Canvas gets its own sorting back');
+assert.ok(logs.includes('matching friends: lowered (HandleOnCancelSearch; 2 items)'));
+hooks.OnDisable.onEnter([{}]);run();
+assert.equal(logs.filter(m=>m.startsWith('matching friends: lowered')).length,1,'a second close hook does nothing');
+console.log('PASS: closing the search restores the original sorting and raycasting');
+
+// A second search reuses the components instead of adding more of them.
+const before=added.length;show();assert.equal(added.length,before,'no duplicate components');
+// Match found while the battle scene destroys the menu: destroyed objects
+// are skipped by Unity's null check, never called.
+buttonCanvas.destroyed=true;buttonRay.destroyed=true;
+hooks.OnDisable.onEnter([{}]);run();
+assert.equal(buttonCanvas.sortingOrder,40,'a destroyed canvas is not touched');
+assert.equal(friendsCanvas.sortingOrder,2);
+assert.ok(!logs.some(m=>m.includes('failed')),'no call on destroyed objects');
+console.log('PASS: a match found skips destroyed menu objects instead of calling them');
+
+// Watchdog: a search window that went inactive without a close hook.
+buttonCanvas.destroyed=false;buttonRay.destroyed=false;
+show();seekerGo.active=false;for(let i=0;i<3;i++)run();
+assert.equal(buttonCanvas.overrideSorting,false,'the watchdog lowers the button');
+assert.ok(logs.some(m=>m.startsWith('matching friends: lowered (watchdog;')));
+assert.ok(frees>0);
+console.log('PASS: the watchdog lowers the button when no close hook fires');

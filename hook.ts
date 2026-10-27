@@ -2965,137 +2965,82 @@ function uiComponent(go, type) {
   // END android-ui: deck-search
 
   // BEGIN android-ui: matching-friends
-  function matchingFriendsPose(node) {
-    const result={};
-    for(const name of ["anchorMin","anchorMax","pivot","anchoredPosition","sizeDelta"]){const value=call(node,"get_"+name);result[name]={x:Number(value.field("x").value),y:Number(value.field("y").value)};}
-    return result;
-  }
+  // The search window is a modal over the main menu, and the game leaves the
+  // friends button alone while matching (its click path never checks the
+  // queue). The button is only out of reach under the modal. Earlier versions
+  // moved the button and FriendsWin into the search window and back; the
+  // menu kept serving other objects, so the restored button no longer worked
+  // (report 22), and the restore reached menu objects the battle scene was
+  // destroying (reports 20, 21). Nothing is moved now: while the search is
+  // shown, the button and the friends window get a Canvas that sorts above
+  // the search window and a GraphicRaycaster, and when it ends both go back
+  // to the values they had. Hierarchy, layout and button state are untouched.
   section("friends while matchmaking",()=>{
-    const seeking=cls(img,"MatchSeekingWin"),friends=cls(img,"FriendsWin"),records=new Map();
+    const seeking=cls(img,"MatchSeekingWin"),records=new Map();
     const find=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-    // Whichever menu view exposes _friendsBtn and is the most live wins; the
-    // search window and the menu check both ask for it the same way.
-    function findFriendsButton() {
-      let button=null,score=-1;
-      for(const name of ["MainMenuOverlayView","MainMenuWin","OverlayMenu"])try{
-        const values=find.invoke(cls(img,name).type.object);
-        for(let i=0;i<values.length;i++){
-          const value=values.get(i).field("_friendsBtn").value;if(isNull(value))continue;
-          const owner=call(value,"get_gameObject"),rank=call(owner,"get_activeInHierarchy")?2:call(owner,"get_activeSelf")?1:0;
-          if(rank>score){button=value;score=rank;}
-        }
-      }catch(_){}
-      return button;
-    }
-    // Report 21: after a cancel the button was active and interactable by
-    // every check we made, yet the player could not press it. Name what else
-    // can swallow a tap: a disabled Button component or a CanvasGroup above it.
-    function friendsButtonBlockers(button) {
-      try{
-        const found=[];
-        if(!call(button,"get_enabled"))found.push("Button component disabled");
-        const group=ucls("UnityEngine.CanvasGroup").type.object;
-        let node=call(call(button,"get_gameObject"),"get_transform");
-        for(let depth=0;depth<12&&!isNull(node);depth++,node=call(node,"get_parent")){
-          const go=call(node,"get_gameObject"),canvas=go.method("GetComponent").overload("System.Type").invoke(group);
-          if(isNull(canvas))continue;
-          const name=String(call(go,"get_name")?.content||"?");
-          if(!call(canvas,"get_interactable"))found.push(`${name}: CanvasGroup not interactable`);
-          if(!call(canvas,"get_blocksRaycasts"))found.push(`${name}: CanvasGroup blocks no raycasts`);
-        }
-        return found.length?`blockers: ${found.join(", ")}`:"no blockers found";
-      }catch(error){return `blocker check failed: ${error}`;}
-    }
-    function restore(record, returningToMenu = false, source = "close") {
-      log(`matching friends: restore (${source}${returningToMenu ? ", returning to menu" : ""}; ${record.items.length} item${record.items.length === 1 ? "" : "s"})`);
-      for(const item of record.items){try{
-        const node=call(item.ref.target,"get_transform");node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(item.parent.target,true);
-        call(node,"SetSiblingIndex",item.sibling);
-        if(item.pose)for(const name of Object.keys(item.pose))call(node,"set_"+name,vec2(item.pose[name].x,item.pose[name].y));
-        call(item.ref.target,"SetActive",item.active);
-        if(item.button) {
-          // Matchmaking disables _friendsBtn, and the search window usually
-          // closes while the menu is still inactive, so the state that was
-          // sampled at move() time is stale by the time it goes back. The
-          // remembered value is written immediately (it is correct as soon as
-          // the menu is interactive) and then re-asserted: the button has to be
-          // active and clickable again in the main menu, whatever the queue
-          // state was when the search ended.
-          call(item.button.target,"set_interactable",item.interactable);
-          if(returningToMenu && item.active) {
-            const button=item.button.target.ref(false),parent=item.parent.target.ref(false),self=item.ref.target.ref(false);
-            let waits=0,applies=0;
-            const settle=()=>{
-              let again=false,stopped="";
-              try{
-                if(call(call(parent.target,"get_gameObject"),"get_activeInHierarchy")){
-                  call(self.target,"SetActive",true);
-                  call(button.target,"set_interactable",true);
-                  again=++applies<4;
-                }else again=++waits<60;
-              }catch(error){again=false;stopped=` (${error})`;}
-              if(again)schedule(500,settle,"matching friends settle");
-              else{
-                // This line is what the device log has to show: the button
-                // came back, the menu never became active, or the objects went
-                // away underneath the wait.
-                if(stopped)log(`matching friends: re-assert stopped${stopped}`);
-                else if(applies)log(`matching friends: re-assert applied ${applies}x; ${friendsButtonBlockers(button.target)}`);
-                else log(`matching friends: re-assert gave up: the menu never became active`);
-                button.free();parent.free();self.free();
-              }
-            };
-            settle();
-          } else if(returningToMenu) {
-            log(`matching friends: re-assert skipped: the button was ${item.active ? "hidden" : "inactive"} when it was moved`);
-          }
-        }
-      }catch(error){log(`matching friends: restore (${source}) failed: ${error}`);}finally{
-        if(item.slot){try{ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(item.slot.target);}catch(_){}item.slot.free();}
-        if(item.button)item.button.free();item.ref.free();item.parent.free();}}
-      if(record.window)record.window.free();
-    }
-    function move(go,parent,button=null) {
-      const node=call(go,"get_transform"),original=call(node,"get_parent");if(isNull(original))throw Error("Friends UI has no parent");
-      const item={ref:go.ref(false),parent:original.ref(false),sibling:Number(call(node,"GetSiblingIndex")),active:Boolean(call(go,"get_activeSelf")),pose:null,button:null,interactable:false,slot:null};
-      try {item.pose=matchingFriendsPose(node);}catch(_){}
-      try {if(button){item.button=button.ref(false);item.interactable=Boolean(call(button,"get_interactable"));call(button,"set_interactable",true);
-        const slot=uiNew("RebornFriendsLayoutSlot",original);item.slot=slot.ref(false);
-        const slotRect=call(slot,"get_transform");call(slotRect,"SetSiblingIndex",item.sibling);
-        if(item.pose)for(const name of Object.keys(item.pose))call(slotRect,"set_"+name,vec2(item.pose[name].x,item.pose[name].y));
-        const layout=uiAdd(slot,"UnityEngine.UI.LayoutElement"),bounds=call(node,"get_rect");
-        call(layout,"set_preferredWidth",Number(bounds.field("m_Width").value));call(layout,"set_preferredHeight",Number(bounds.field("m_Height").value));
-      }
-      node.method("SetParent").overload("UnityEngine.Transform","System.Boolean").invoke(parent,true);call(node,"SetAsLastSibling");call(go,"SetActive",true);}
-      catch(error){restore({items:[item]},false,"move rollback");throw error;}
+    const unityObject=ucls("UnityEngine.Object");
+    // Unity's own null check: a destroyed object compares equal to null
+    // without throwing, so nothing is called on it.
+    const alive=value=>!isNull(value)&&!unityObject.method("op_Equality").invoke(value,NULL);
+    const firstLive=(type,pick)=>{
+      const values=find.invoke(type);
+      for(let i=0;i<values.length;i++){const value=pick(values.get(i));if(alive(value)&&call(call(value,"get_gameObject"),"get_activeInHierarchy"))return value;}
+      return null;
+    };
+    // The objects the game itself uses: the controller's current overlay view
+    // (mobile or desktop) and MainMenu._friendsWin.
+    const gameFriendsButton=()=>firstLive(cls(img,"MainMenuOverlayController").type.object,c=>{const view=call(c,"get__overlayView");return alive(view)?view.field("_friendsBtn").value:null;});
+    const gameFriendsWindow=()=>firstLive(cls(img,"SPTESL.MainMenu").type.object,m=>m.field("_friendsWin").value);
+    // The values a component had before we first raised it. A lower that was
+    // skipped (the object was being destroyed) must not make our own sorting
+    // look like the original next time.
+    const originals=new Map();
+    const original=(component,read)=>{const key=component.handle.toString();if(!originals.has(key))originals.set(key,read());return originals.get(key);};
+    function raise(go,order,layer) {
+      const canvasType=ucls("UnityEngine.Canvas").type.object,rayType=ucls("UnityEngine.UI.GraphicRaycaster").type.object;
+      let canvas=go.method("GetComponent").overload("System.Type").invoke(canvasType),saved;
+      if(alive(canvas))saved=original(canvas,()=>({override:Boolean(call(canvas,"get_overrideSorting")),order:Number(call(canvas,"get_sortingOrder")),layer:Number(call(canvas,"get_sortingLayerID"))}));
+      else{canvas=uiAdd(go,"UnityEngine.Canvas");saved=original(canvas,()=>({override:false,order:0,layer:0}));}
+      let ray=go.method("GetComponent").overload("System.Type").invoke(rayType),rayEnabled;
+      if(alive(ray))rayEnabled=original(ray,()=>Boolean(call(ray,"get_enabled")));
+      else{ray=uiAdd(go,"UnityEngine.UI.GraphicRaycaster");rayEnabled=original(ray,()=>false);}
+      const item={go:go.ref(false),canvas:canvas.ref(false),ray:ray.ref(false),...saved,rayEnabled};
+      call(canvas,"set_overrideSorting",true);call(canvas,"set_sortingLayerID",layer);call(canvas,"set_sortingOrder",order);
+      call(ray,"set_enabled",true);
       return item;
+    }
+    function lower(item) {
+      // A Canvas or GraphicRaycaster we added stays, switched off: removing a
+      // Canvas its raycaster depends on is refused by Unity.
+      try{
+        if(alive(item.canvas.target)){call(item.canvas.target,"set_sortingLayerID",item.layer);call(item.canvas.target,"set_sortingOrder",item.order);call(item.canvas.target,"set_overrideSorting",item.override);}
+        if(alive(item.ray.target))call(item.ray.target,"set_enabled",item.rayEnabled);
+      }finally{item.go.free();item.canvas.free();item.ray.free();}
+    }
+    function restore(record,source) {
+      log(`matching friends: lowered (${source}; ${record.items.length} item${record.items.length===1?"":"s"})`);
+      for(const item of record.items)try{lower(item);}catch(error){log(`matching friends: lower (${source}) failed: ${error}`);}
+      record.window.free();
     }
     const show=seeking.method("Show");
     Interceptor.attach(show.virtualAddress,{onEnter(args){this.self=args[0];},onLeave(){
       const ref=new Il2Cpp.Object(this.self).ref(false);schedule(0,()=>{let record=null,key="";try{
-        const go=call(ref.target,"get_gameObject"),root=call(go,"get_transform");key=go.handle.toString();
+        const go=call(ref.target,"get_gameObject");key=go.handle.toString();
         if(!call(go,"get_activeInHierarchy"))return;
-        if(records.has(key)){const stale=records.get(key);records.delete(key);restore(stale,false,"search reopened");}
-        // Remove the obsolete custom button if a previous version left one.
-        const old=call(root,"Find",Il2Cpp.string("RebornMatchingFriends"));if(!isNull(old))ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old,"get_gameObject"));
-        const button=findFriendsButton();
-        if(!button)throw Error("Original _friendsBtn unavailable");
-        const windows=find.invoke(friends.type.object);let friend=null;
-        for(let i=0;i<windows.length;i++){const value=windows.get(i);if(call(call(value,"get_gameObject"),"get_activeInHierarchy")){friend=value;break;}}
-        if(!friend)throw Error("Active FriendsWin unavailable");
+        if(records.has(key)){const stale=records.get(key);records.delete(key);restore(stale,"search reopened");}
+        const window=ref.target.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+        if(!alive(window))throw Error("search window has no Canvas");
+        const root=call(window,"get_rootCanvas");
+        const order=Math.max(Number(call(window,"get_sortingOrder")),alive(root)?Number(call(root,"get_sortingOrder")):0)+10,layer=Number(call(window,"get_sortingLayerID"));
+        const button=gameFriendsButton();if(!button)throw Error("the menu's _friendsBtn is unavailable");
         record={items:[],window:ref.target.ref(false)};
-        record.items.push(move(call(friend,"get_gameObject"),call(root,"get_parent")));
-        record.items.push(move(call(button,"get_gameObject"),root,button));
-        records.set(key,record);
-        armWatch();
-        // LayoutGroup reflows when its button is removed. Keep a placeholder in
-        // that slot and align the raised button to the slot every frame.
-        const follow=()=>{if(records.get(key)!==record)return;
-          try{const item=record.items.find(x=>x.slot);if(item)call(call(item.ref.target,"get_transform"),"set_position",call(call(item.slot.target,"get_transform"),"get_position"));}catch(_){}
-          schedule(16,follow,"matching friends follow");
-        };follow();
-        log("matching friends: original button enabled; layout slot preserved");
-      }catch(error){if(record){records.delete(key);restore(record,false,"show failure rollback");}log(`matching friends: ${error}`);}finally{ref.free();}},"matching friends show");
+        record.items.push(raise(call(button,"get_gameObject"),order,layer));
+        // The friends panel opens above the button's own layer.
+        const friends=gameFriendsWindow();
+        if(friends)record.items.push(raise(call(friends,"get_gameObject"),order+1,layer));
+        records.set(key,record);armWatch();
+        log(`matching friends: raised above the search window (order ${order}${friends?"":", no friends window"})`);
+      }catch(error){if(record){records.delete(key);restore(record,"show failure rollback");}log(`matching friends: ${error}`);}finally{ref.free();}},"matching friends show");
     }});
     const closed=[],absent=[];
     for(const name of ["OnDisable","OnDestroy","HandleOnCancelSearch"]) {
@@ -3103,30 +3048,19 @@ function uiComponent(go, type) {
       closed.push(name);
       Interceptor.attach(method.virtualAddress,{onEnter(args){try{
         const key=call(new Il2Cpp.Object(args[0]),"get_gameObject").handle.toString(),record=records.get(key);
-        // Only an explicit cancel returns to the menu. OnDisable/OnDestroy also
-        // fire when a match is found, and the re-assert then touched menu
-        // objects the battle scene was destroying: a NullReferenceException
-        // ~1.6s after the restore, then the setjmp abort (reports 20, 21).
-        if(record){records.delete(key);schedule(0,()=>restore(record,name==="HandleOnCancelSearch",name),"matching friends restore");}
-        else log(`matching friends: ${name}: no moved record`);
+        if(record){records.delete(key);schedule(0,()=>restore(record,name),"matching friends restore");}
       }catch(error){log(`matching friends restore: ${error}`);}}});
     }
     log(`matching friends: close hooks ${closed.join(", ")}${absent.length?` (missing ${absent.join(", ")})`:""}`);
-    // The close hooks can miss a path (a stripped method, a window the game
-    // hides some other way): while a moved record exists, a window that is no
-    // longer live means the search ended somewhere we did not see. The
-    // watchdog restores it and says so, so a silent miss cannot leave the
-    // button behind in the matchmaking layout.
+    // A close path none of the hooks see still ends with an inactive window.
     let watching=false;
     const armWatch=()=>{if(records.size&&!watching){watching=true;schedule(1000,watch,"matching friends watchdog");}};
     const watch=()=>{
       watching=false;
       for(const [key,record] of records){
-        if(!record.window)continue;
-        let live=true;try{live=call(call(record.window.target,"get_gameObject"),"get_activeInHierarchy");}catch(_){}
+        let live=false;try{live=alive(record.window.target)&&call(call(record.window.target,"get_gameObject"),"get_activeInHierarchy");}catch(_){}
         if(live)continue;
-        records.delete(key);
-        restore(record,false,"watchdog");
+        records.delete(key);restore(record,"watchdog");
       }
       armWatch();
     };
