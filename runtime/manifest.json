@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 73,
-  "version": "android-73-friends-diagnostics-and-stall-attribution",
-  "bytes": 395730,
-  "sha256": "779c963767a018d5c6bcbc8575b7624d6a50c78ff8c313d0454aa7ad1214960f",
+  "revision": 74,
+  "version": "android-74-single-resource-snapshot-and-menu-friends-poll",
+  "bytes": 396005,
+  "sha256": "7e640da6a7ad8024e0b0793ea4286a4c3d7668f3ffa5085078f923bd33cc1d87",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "91f2e653b57f7b76c0d0f4dbff7f6059d4396b70d77abb717d17d7513d861087"
+  "sourceSha256": "af0adbc06dca74a69065b50ca129526a873d1b4d3fbe16c6dac0b31d6dc266a0"
 }

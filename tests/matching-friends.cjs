@@ -8,7 +8,8 @@ const nodes=new Map([[friendGo,friendNode],[buttonGo,buttonNode],[go,root]]);
 for(const obj of [friendGo,buttonGo,original,buttonParent,button,seeker])obj.ref=()=>({target:obj,free:()=>frees++});
 for(const node of [friendNode,buttonNode])node.method=()=>({overload:()=>({invoke:(parent,keep)=>{assert.equal(keep,true);node.parent=parent;}})});
 const pose={field:key=>({value:key==='x'?1:2})};
-const c={section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='MatchSeekingWin'?{method:()=>({virtualAddress:'Show'}),tryMethod:name=>({virtualAddress:Object.assign({isNull:()=>false},{toString:()=>name})})}:{type:{object:name}},
+let now=1000;
+const c={Date:class extends Date{static now(){return now;}},section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='SparkleServices.ServicesManager'?{method:()=>({virtualAddress:'Update'})}:name==='MatchSeekingWin'?{method:()=>({virtualAddress:'Show'}),tryMethod:name=>({virtualAddress:Object.assign({isNull:()=>false},{toString:()=>name})})}:{type:{object:name}},
  Interceptor:{attach:(addr,hook)=>hooks[String(addr)]=hook},Il2Cpp:{Object:function(){return seeker;},string:x=>x},isNull:x=>x==null,schedule:(_,fn)=>queue.push(fn),log:m=>logs.push(m),vec2:(x,y)=>({x,y}),
  uiNew:()=>{const slot={active:true,ref:()=>({target:slot,free:()=>frees++})};nodes.set(slot,{parent:buttonParent,sibling:2});return slot;},uiAdd:()=>({}),
  ucls:name=>({method:()=>({overload:()=>({invoke:type=>(name==='UnityEngine.Object'?undefined:{length:type==='FriendsWin'||type==='MainMenuOverlayView'?1:0,get:()=>type==='FriendsWin'?friend:{field:()=>({value:button})}})})})}),
@@ -54,3 +55,18 @@ assert.equal(buttonNode.parent,buttonParent,'the watchdog puts the button back w
 assert.equal(button.interactable,true,'the watchdog restores an interactive button');
 assert.ok(logs.slice(seen).some(m=>m.startsWith('matching friends: restore (watchdog, returning to menu')),'the watchdog restore is logged');
 console.log('PASS: original friends button is moved/enabled without replacing handlers, restores are logged with their source, and the watchdog covers a close path without hooks');
+
+// The menu views declare no OnEnable, so the menu is polled: a button the game
+// killed after our re-assert ended is repaired while the menu is on screen,
+// and left alone while its parent is not live (a battle, a loading screen).
+assert.ok(logs.some(m=>m==='matching friends: menu check every 1s'),'the menu poll is installed');
+while(queue.length)for(const task of queue.splice(0))task();
+const menuTick=()=>{now+=1001;hooks.Update.onLeave();for(const task of queue.splice(0))task();};
+buttonParent.active=false;button.interactable=false;menuTick();
+assert.equal(button.interactable,false,'no repair while the menu is not live');
+buttonParent.active=true;menuTick();
+assert.equal(button.interactable,true,'a dead button is repaired in the live menu');
+assert.ok(logs.some(m=>m.startsWith('matching friends: menu repaired a dead button (self=true interactable=false; 1 repair)')),'the repair is logged');
+const repaired=logs.length;menuTick();
+assert.equal(logs.length,repaired,'a healthy button is not touched or logged');
+console.log('PASS: the menu poll repairs a dead friends button only while the menu is live');

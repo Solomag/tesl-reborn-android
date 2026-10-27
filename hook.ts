@@ -3031,7 +3031,7 @@ function uiComponent(go, type) {
             log(`matching friends: re-assert skipped: the button was ${item.active ? "hidden" : "inactive"} when it was moved`);
           }
         }
-      }catch(_){}finally{
+      }catch(error){log(`matching friends: restore (${source}) failed: ${error}`);}finally{
         if(item.slot){try{ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(item.slot.target);}catch(_){}item.slot.free();}
         if(item.button)item.button.free();item.ref.free();item.parent.free();}}
       if(record.window)record.window.free();
@@ -3108,37 +3108,46 @@ function uiComponent(go, type) {
       armWatch();
     };
     // The button can be dead in the menu with no moved record at all (the
-    // matchmaking state machine disabling it across a restart, or a close path
-    // that never runs our hooks). Every menu activation announces the button
-    // state and repairs the two failures the player sees - hidden, or not
+    // matchmaking state machine disabling it after our re-assert ended, or a
+    // close path that never runs our hooks). The menu views declare no
+    // OnEnable of their own (report 20: "menu hooks 0/3"), so the menu is
+    // polled instead: once a second, against a cached button, and only while
+    // the button's own parent is live - the menu is on screen, not a battle.
+    // It repairs the two failures the player sees - hidden, or not
     // interactable - while no search of ours is holding the button.
-    const menuViews=["MainMenuOverlayView","MainMenuWin","OverlayMenu"];
-    let menuHooks=0;
-    const inspectMenu=(name,repair)=>{
-      try{
-        const button=findFriendsButton();
-        if(!button){log(`matching friends: menu ${name}: no _friendsBtn`);return;}
-        const go=call(button,"get_gameObject");
-        const live=Boolean(call(go,"get_activeInHierarchy")),self=Boolean(call(go,"get_activeSelf")),clickable=Boolean(call(button,"get_interactable"));
-        log(`matching friends: menu ${name}: button live=${live} self=${self} interactable=${clickable} moved records=${records.size}`);
-        if(!repair||records.size)return;
-        let touched=false;
-        if(!self){call(go,"SetActive",true);touched=true;}
-        if(!clickable){call(button,"set_interactable",true);touched=true;}
-        if(touched){
-          log(`matching friends: menu ${name}: repaired a dead button`);
-          schedule(1000,()=>inspectMenu(name,false),"matching friends menu recheck");
-        }
-      }catch(error){log(`matching friends: menu check failed: ${error}`);}
+    let cached=null,nextFind=0,nextCheck=0,checking=false,repairs=0;
+    const menuButton=()=>{
+      if(cached){try{call(cached.target,"get_gameObject");return cached.target;}catch(_){cached.free();cached=null;}}
+      // FindObjectsOfTypeAll is the expensive part: at most every 5s.
+      if(Date.now()<nextFind)return null;
+      nextFind=Date.now()+5000;
+      const button=findFriendsButton();
+      if(button)cached=button.ref(false);
+      return button;
     };
-    for(const name of menuViews)try{
-      const owner=img.tryClass(name);if(!owner)continue;
-      const enabled=owner.tryMethod("OnEnable",0);
-      if(!enabled||enabled.virtualAddress.isNull())continue;
-      menuHooks++;
-      Interceptor.attach(enabled.virtualAddress,{onLeave(){schedule(0,()=>inspectMenu(name,true),"matching friends menu check");}});
-    }catch(_){}
-    log(`matching friends: menu hooks ${menuHooks}/${menuViews.length}`);
+    const inspectMenu=()=>{
+      checking=false;
+      try{
+        if(records.size)return;
+        const button=menuButton();if(!button)return;
+        const go=call(button,"get_gameObject"),parent=call(call(go,"get_transform"),"get_parent");
+        if(isNull(parent)||!call(call(parent,"get_gameObject"),"get_activeInHierarchy"))return;
+        const self=Boolean(call(go,"get_activeSelf")),clickable=Boolean(call(button,"get_interactable"));
+        if(self&&clickable)return;
+        if(!self)call(go,"SetActive",true);
+        if(!clickable)call(button,"set_interactable",true);
+        repairs++;
+        if(repairs<=5||repairs%20===0)log(`matching friends: menu repaired a dead button (self=${self} interactable=${clickable}; ${repairs} repair${repairs===1?"":"s"})`);
+      }catch(error){log(`matching friends: menu check failed: ${error}`);if(cached){cached.free();cached=null;}}
+    };
+    try{
+      Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
+        if(checking||Date.now()<nextCheck)return;
+        nextCheck=Date.now()+1000;checking=true;
+        schedule(0,inspectMenu,"matching friends menu check");
+      }});
+      log("matching friends: menu check every 1s");
+    }catch(error){log(`matching friends: menu check unavailable: ${error}`);}
   });
   // END android-ui: matching-friends
 
@@ -4843,15 +4852,17 @@ const chatWindows = new Map();
     if(!(report.shopImages||[]).some(item=>!/MainMenuLandingWin|Left_Store_BTN/i.test(item.path)))return previous;
     return {at:report.at,images:report.shopImages,events:report.events.filter(item=>/shop|store|pack|bundle|image|texture|sprite/i.test(item.path))};
   }
+  // One snapshot per process, a minute after the hook starts (login and the
+  // main menu, before a match). A periodic snapshot walked every UI image in
+  // the scene on the main thread: 250-490ms every 5s, battles included
+  // (report 20), and the last line before a 'setjmp cookie mismatch' abort.
   section("bounded startup resource diagnostics", () => {
-    let next = 0, queued = false, lastShop=null;
+    let taken = false, lastShop=null;
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
-        const now = Date.now();
-        if (queued || now < next || now - resourceTraceStarted > 900000) return;
-        next = now + 5000; queued = true;
+        if (taken || Date.now() - resourceTraceStarted < 60000) return;
+        taken = true;
         schedule(0, () => {
-          queued = false;
           const report:any = {at:new Date().toISOString(),language:resourceLanguage(),
             patch:globalThis.TeslRebornUpdater?.current()?.revision,elapsedMs:Date.now()-resourceTraceStarted,
             events:resourceTrace.slice(),bundles:[]};
@@ -4927,7 +4938,7 @@ const chatWindows = new Map();
           lastShop=rememberShopSnapshot(lastShop,report);
           report.lastShop=lastShop;
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`,JSON.stringify(report));
-        });
+        }, "resource diagnostics snapshot");
       }
     });
   });

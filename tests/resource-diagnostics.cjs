@@ -17,15 +17,15 @@ const c={Date:class extends Date{static now(){return now;}},section:(_,fn)=>fn()
 c.globalThis=c;c.TeslRebornUpdater={current:()=>({revision:37})};
 vm.createContext(c);vm.runInContext(transformSync(source('resource-events')+source('resource-diagnostics'),{loader:'ts'}).code,c);
 for(let i=0;i<150;i++)c.recordResourceEvent('http-Finished','https://example.test/asset?token=do-not-copy',200);
-hook.onLeave();assert.equal(reports[0].events.length,128);assert.equal(reports[0].language,'pl_pl');
+hook.onLeave();assert.equal(reports.length,0,'no snapshot during the first minute');
+now+=60000;hook.onLeave();assert.equal(reports[0].events.length,128);assert.equal(reports[0].language,'pl_pl');
 assert.equal(reports[0].bundles.length,1);assert.equal(reports[0].bundles[0].count,20);
 assert.equal(reports[0].bundles[0].keys.length,12);
 assert(!JSON.stringify(reports).includes('do-not-copy'));
-hook.onLeave();assert.equal(reports.length,1,'snapshots are throttled');
-now+=5001;hook.onLeave();assert.equal(reports.length,2);
-now+=900001;c.recordResourceEvent('asset-request','too-late');hook.onLeave();
-assert.equal(reports.length,2,'startup diagnostics stop after three minutes');
-console.log('PASS: bounded startup trace and bundle keys, throttled snapshots, locale/patch identification and URL secret omission');
+hook.onLeave();assert.equal(reports.length,1,'one snapshot per process');
+now+=5001;hook.onLeave();now+=900001;hook.onLeave();
+assert.equal(reports.length,1,'no periodic snapshots: they stalled the main thread in battle');
+console.log('PASS: bounded startup trace and bundle keys, a single snapshot after a minute, locale/patch identification and URL secret omission');
 
 const shop={at:'shop-time',shopImages:[{path:'ShopWin/Product/Image/',sprite:null}],events:[{path:'Shop/image'},{path:'profile/fetch'}]};
 const saved=c.rememberShopSnapshot(null,shop);
