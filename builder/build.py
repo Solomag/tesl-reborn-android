@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -286,7 +287,35 @@ def patch_manifest(path):
     return original
 
 
+class BuildCancelled(RuntimeError):
+    """The player cancelled the build; its partial folder is removed."""
+
+
+# Cancelling a build: the running tool (Java, apktool, ...) is killed and the
+# build stops at its next log line, which every stage writes often.
+_cancel = threading.Event()
+_processes = set()
+_process_lock = threading.Lock()
+_current_result = None
+
+
+def cancel_build():
+    _cancel.set()
+    with _process_lock:
+        for process in list(_processes):
+            try:
+                process.kill()
+            except OSError:
+                pass
+
+
+def check_cancelled():
+    if _cancel.is_set():
+        raise BuildCancelled("Build cancelled")
+
+
 def invoke(command, log, cwd=None):
+    check_cancelled()
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     with subprocess.Popen(
         list(map(str, command)),
@@ -297,10 +326,22 @@ def invoke(command, log, cwd=None):
         creationflags=creationflags,
         cwd=cwd,
     ) as process:
-        for line in process.stdout:
-            log(line.rstrip())
-        if process.wait():
-            raise RuntimeError("Tool failed: " + Path(str(command[0])).name)
+        with _process_lock:
+            _processes.add(process)
+        try:
+            for line in process.stdout:
+                log(line.rstrip())
+            code = process.wait()
+        except BaseException:
+            # Leaving the with-block waits for the tool: stop it first.
+            process.kill()
+            raise
+        finally:
+            with _process_lock:
+                _processes.discard(process)
+    check_cancelled()
+    if code:
+        raise RuntimeError("Tool failed: " + Path(str(command[0])).name)
 
 
 def prepare_builder_emojis(work, game, assets, log):
@@ -605,14 +646,29 @@ def build_folder_name(channel, revision, format, languages, now):
     """What a build is, readable in the output folder:
     test_patch91_apk+data_en_us+ru_ru_2026-10-28_1015. The files inside keep fixed
     names; transfers and the phone rely on them."""
-    kind = {"manual": "apk+data", "xapk": "xapk", "apk": "apk-only"}.get(format, format)
+    kind = {"manual": "apk+data", "xapk": "xapk", "apk": "apk-only", "data": "data-only"}.get(format, format)
     # Full codes: es_es and es_mx are both "es".
     codes = "all-languages" if set(languages) >= set(LANGUAGES) else "+".join(sorted(set(languages)))
     parts = [channel, f"patch{revision}", kind] + ([codes] if codes and format != "apk" else [])
     return "_".join(parts + [now.strftime("%Y-%m-%d_%H%M")])
 
 
-def build(
+def build(*args, **kwargs):
+    """Build, or stop on cancel_build() and remove the partial build folder."""
+    global _current_result
+    _cancel.clear()
+    _current_result = None
+    try:
+        return _build(*args, **kwargs)
+    except BuildCancelled:
+        if _current_result is not None:
+            shutil.rmtree(_current_result, ignore_errors=True)
+        raise
+    finally:
+        _current_result = None
+
+
+def _build(
     game,
     xapk,
     languages,
@@ -640,7 +696,7 @@ def build(
         raise ValueError("Unknown default language")
     if default_language != "system" and default_language not in languages:
         raise ValueError("Include the default language in the languages to prepare")
-    if format not in ("xapk", "manual", "apk"):
+    if format not in ("xapk", "manual", "apk", "data"):
         raise ValueError("Unknown output format")
     vendor = data_root() / "vendor"
     for name in [
@@ -673,10 +729,13 @@ def build(
                 result = output / f"{name}-{attempt}"
         else:
             raise ValueError("Too many builds with the same name in the output folder")
+        global _current_result
+        _current_result = result
         resources = result / "resources"
         emit = log
 
         def log(text):
+            check_cancelled()
             with (result / "build.log").open("a", encoding="utf-8") as stream:
                 stream.write(str(text) + "\n")
             emit(text)
@@ -754,11 +813,18 @@ def build(
             embeddedPacks=public["packs"] if embedded else [],
         )
         try:
-            prepare_builder_emojis(work, game, assets, log)
-            apk = native_base(
-                work / "inputs/base.apk", work, vendor, setup, embedded, resources, log
-            )
-            if format in ("manual", "apk"):
+            # Data only: the language packs, OBB and data ZIP for a phone that
+            # already has this APK; the APK step (Java, signing) is skipped.
+            if format == "data":
+                log("Data only: no APK is built; use the APK already on the phone.")
+            else:
+                prepare_builder_emojis(work, game, assets, log)
+                apk = native_base(
+                    work / "inputs/base.apk", work, vendor, setup, embedded, resources, log
+                )
+            if format == "data":
+                pass
+            elif format in ("manual", "apk"):
                 shutil.copyfile(apk, result / "tesl-reborn.apk")
             else:
                 final = result / "tesl-reborn.xapk"
@@ -786,7 +852,7 @@ def build(
                     archive.write(work / "inputs" / OBB, obb_path)
                     archive.writestr("icon.png", icon)
                     archive.writestr("manifest.json", json.dumps(meta))
-            if format == "manual":
+            if format in ("manual", "data"):
                 from .archive import write_data_archive
 
                 write_data_archive(resources, result / "tesl-reborn-data.zip", log)

@@ -862,5 +862,77 @@
     "pt_br": "Não foi possível abrir a pasta.",
     "ru_ru": "Не удалось открыть папку.",
     "tr_tr": "Klasör açılamadı."
+  },
+  "Data ZIP only (keep installed APK)": {
+    "en_us": "Data ZIP only (keep installed APK)",
+    "de_de": "Nur Daten-ZIP (installierte APK behalten)",
+    "es_es": "Solo ZIP de datos (conservar el APK instalado)",
+    "es_mx": "Solo ZIP de datos (conservar el APK instalado)",
+    "fr_fr": "ZIP de données uniquement (garder l’APK installé)",
+    "it_it": "Solo ZIP dei dati (mantieni l’APK installato)",
+    "pl_pl": "Tylko ZIP z danymi (zachowaj zainstalowany APK)",
+    "pt_br": "Somente ZIP de dados (manter o APK instalado)",
+    "ru_ru": "Только ZIP с данными (APK уже установлен)",
+    "tr_tr": "Yalnızca veri ZIP’i (yüklü APK korunur)"
+  },
+  "Build data ZIP only": {
+    "en_us": "Build data ZIP only",
+    "de_de": "Nur Daten-ZIP erstellen",
+    "es_es": "Crear solo el ZIP de datos",
+    "es_mx": "Crear solo el ZIP de datos",
+    "fr_fr": "Créer uniquement le ZIP de données",
+    "it_it": "Crea solo lo ZIP dei dati",
+    "pl_pl": "Utwórz tylko ZIP z danymi",
+    "pt_br": "Criar somente o ZIP de dados",
+    "ru_ru": "Собрать только ZIP с данными",
+    "tr_tr": "Yalnızca veri ZIP’ini oluştur"
+  },
+  "Cancel build": {
+    "en_us": "Cancel build",
+    "de_de": "Build abbrechen",
+    "es_es": "Cancelar compilación",
+    "es_mx": "Cancelar compilación",
+    "fr_fr": "Annuler la compilation",
+    "it_it": "Annulla build",
+    "pl_pl": "Anuluj budowanie",
+    "pt_br": "Cancelar compilação",
+    "ru_ru": "Отменить сборку",
+    "tr_tr": "Derlemeyi iptal et"
+  },
+  "Cancelling…": {
+    "en_us": "Cancelling…",
+    "de_de": "Wird abgebrochen…",
+    "es_es": "Cancelando…",
+    "es_mx": "Cancelando…",
+    "fr_fr": "Annulation…",
+    "it_it": "Annullamento…",
+    "pl_pl": "Anulowanie…",
+    "pt_br": "Cancelando…",
+    "ru_ru": "Отмена…",
+    "tr_tr": "İptal ediliyor…"
+  },
+  "Cancel this build? Its partial output folder is removed.": {
+    "en_us": "Cancel this build? Its partial output folder is removed.",
+    "de_de": "Diesen Build abbrechen? Der unfertige Ausgabeordner wird gelöscht.",
+    "es_es": "¿Cancelar esta compilación? Se eliminará su carpeta de salida incompleta.",
+    "es_mx": "¿Cancelar esta compilación? Se eliminará su carpeta de salida incompleta.",
+    "fr_fr": "Annuler cette compilation ? Son dossier de sortie incomplet sera supprimé.",
+    "it_it": "Annullare questa build? La cartella di output incompleta verrà eliminata.",
+    "pl_pl": "Anulować to budowanie? Niepełny folder wyjściowy zostanie usunięty.",
+    "pt_br": "Cancelar esta compilação? A pasta de saída incompleta será removida.",
+    "ru_ru": "Отменить сборку? Недоделанная папка сборки будет удалена.",
+    "tr_tr": "Bu derleme iptal edilsin mi? Yarım kalan çıktı klasörü silinir."
+  },
+  "Build cancelled. The partial output folder was removed.": {
+    "en_us": "Build cancelled. The partial output folder was removed.",
+    "de_de": "Build abgebrochen. Der unfertige Ausgabeordner wurde gelöscht.",
+    "es_es": "Compilación cancelada. Se eliminó la carpeta de salida incompleta.",
+    "es_mx": "Compilación cancelada. Se eliminó la carpeta de salida incompleta.",
+    "fr_fr": "Compilation annulée. Le dossier de sortie incomplet a été supprimé.",
+    "it_it": "Build annullata. La cartella di output incompleta è stata eliminata.",
+    "pl_pl": "Budowanie anulowane. Niepełny folder wyjściowy został usunięty.",
+    "pt_br": "Compilação cancelada. A pasta de saída incompleta foi removida.",
+    "ru_ru": "Сборка отменена. Недоделанная папка удалена.",
+    "tr_tr": "Derleme iptal edildi. Yarım kalan çıktı klasörü silindi."
   }
 }

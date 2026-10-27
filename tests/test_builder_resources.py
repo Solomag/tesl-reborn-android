@@ -394,7 +394,10 @@ class BuilderResourcesTest(unittest.TestCase):
             channel.write_text('{"feedUrl":"https://example.com/manifest.json"}')
             (channel.parent / "manifest.json").write_text('{"revision":49}')
 
+            native_calls = []
+
             def fake_native(base, work, vendor, setup, embedded, catalog, log):
+                native_calls.append(1)
                 out = work / "test.apk"
                 with zipfile.ZipFile(out, "w") as z:
                     z.writestr("test", b"APK fixture")
@@ -403,7 +406,8 @@ class BuilderResourcesTest(unittest.TestCase):
             with patch("builder.build.data_root", return_value=root / "data"), patch(
                 "builder.build.native_base", side_effect=fake_native
             ), patch("builder.build.prepare_builder_emojis"):
-                for fmt in ("manual", "xapk", "apk"):
+                for fmt in ("manual", "xapk", "apk", "data"):
+                    before = len(native_calls)
                     result = build(
                         game,
                         source,
@@ -416,7 +420,15 @@ class BuilderResourcesTest(unittest.TestCase):
                         converter=convert,
                     )
                     self.assertTrue((result / "resources/catalog.json").exists())
-                    if fmt == "apk":
+                    if fmt == "data":
+                        # Data only: packs, OBB and data ZIP; no APK step at all.
+                        self.assertEqual(len(native_calls), before, "no APK is built")
+                        self.assertFalse((result / "tesl-reborn.apk").exists())
+                        self.assertFalse((result / "tesl-reborn.xapk").exists())
+                        with zipfile.ZipFile(result / "tesl-reborn-data.zip") as data:
+                            self.assertEqual(data.read("game.obb"), (result / "resources/game.obb").read_bytes())
+                        self.assertIn("_data-only_", result.name)
+                    elif fmt == "apk":
                         self.assertTrue((result / "tesl-reborn.apk").is_file())
                         self.assertFalse((result / "tesl-reborn-data.zip").exists())
                         self.assertFalse((result / "resources/game.obb").exists())
@@ -440,6 +452,24 @@ class BuilderResourcesTest(unittest.TestCase):
                                 json.loads(z.read("manifest.json"))["package_name"],
                                 PACKAGE,
                             )
+                # Cancel mid-build: the build stops at its next log line and
+                # its partial folder is removed.
+                from builder.build import BuildCancelled, cancel_build
+
+                existing = set((root / "builder/output").iterdir())
+
+                def cancelling(*args, **kwargs):
+                    cancel_build()
+                    return convert(*args, **kwargs)
+
+                with self.assertRaises(BuildCancelled):
+                    build(game, source, ["ru_ru"], default_language="ru_ru", format="manual",
+                          appdir=root / "builder", log=lambda _: None, converter=cancelling)
+                self.assertEqual(set((root / "builder/output").iterdir()), existing,
+                                 "the cancelled build leaves no folder behind")
+                result = build(game, source, ["ru_ru"], default_language="ru_ru", format="manual",
+                               appdir=root / "builder", log=lambda _: None, converter=convert)
+                self.assertTrue((result / "tesl-reborn-data.zip").is_file(), "the next build is not cancelled")
             self.assertEqual(source.read_bytes(), original)
 
 
@@ -456,3 +486,31 @@ class BuildFolderNameTest(unittest.TestCase):
         self.assertEqual(build_folder_name("test", 91, "apk", [], now), "test_patch91_apk-only_2026-10-28_1015")
         self.assertEqual(build_folder_name("stable", 90, "manual", list(LANGUAGES), now),
                          "stable_patch90_apk+data_all-languages_2026-10-28_1015")
+
+
+class CancelRunningToolTest(unittest.TestCase):
+    def test_cancel_kills_the_running_tool_instead_of_waiting(self):
+        import sys
+        import threading
+        import time
+        from builder import build as module
+
+        module._cancel.clear()
+        errors, started = [], time.monotonic()
+
+        def run():
+            try:
+                module.invoke([sys.executable, "-c", "import time; print('working', flush=True); time.sleep(60)"],
+                              lambda line: None)
+            except Exception as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        time.sleep(1.0)
+        module.cancel_build()
+        worker.join(15)
+        self.assertFalse(worker.is_alive(), "the tool was not stopped")
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertIsInstance(errors[0], module.BuildCancelled)
+        module._cancel.clear()

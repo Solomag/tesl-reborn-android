@@ -15,7 +15,7 @@ from tkinter import ttk, filedialog, messagebox
 from tkinter import font as tkfont
 from urllib.parse import urlsplit
 
-from .build import build, application_directory, data_root
+from .build import build, application_directory, data_root, cancel_build, BuildCancelled
 from . import selfupdate
 from .resources import LANGUAGES, NAMES, find_assets, ensure_outside, source_roots
 from .server import ResourceServer
@@ -291,6 +291,7 @@ class BuilderWindow:
         options = ttk.Frame(root)
         options.pack(fill="x", pady=6)
         self.apk_only = tk.BooleanVar(value=False)
+        self.data_only = tk.BooleanVar(value=False)
         self.format = tk.StringVar(value="manual")
         ttk.Radiobutton(
             options,
@@ -327,6 +328,8 @@ class BuilderWindow:
         self.expert_row = ttk.Frame(root)
         ttk.Checkbutton(self.expert_row, text="APK only (keep installed game data)",
                         variable=self.apk_only, command=self.apk_only_changed).pack(side="left")
+        ttk.Checkbutton(self.expert_row, text="Data ZIP only (keep installed APK)",
+                        variable=self.data_only, command=self.data_only_changed).pack(side="left", padx=12)
         ttk.Button(self.expert_row, text="Advanced connection…",
                    command=self.network_options).pack(side="right")
         self.expert_hint = ttk.Label(root, wraplength=790,
@@ -438,9 +441,7 @@ class BuilderWindow:
         self.default.configure(values=[self.tr("Phone system language"), *NAMES.values()])
         if index >= 0:
             self.default.current(index)
-        self.build_button.configure(
-            text=self.tr("Build APK only") if self.apk_only.get() else self.tr("Build")
-        )
+        self.build_button.configure(text=self.build_text())
         if self.server and not self.server.stopped.is_set():
             self.connection.set(self.connection_details())
         elif self.server_starting:
@@ -456,12 +457,33 @@ class BuilderWindow:
         )
         return translations.get(key, {}).get(list(NAMES)[self.ui_locale.current()], key)
 
+    def build_text(self):
+        if self.running:
+            return self.tr("Cancel build")
+        if self.apk_only.get():
+            return self.tr("Build APK only")
+        if self.data_only.get():
+            return self.tr("Build data ZIP only")
+        return self.tr("Build")
+
+    def data_only_changed(self):
+        """The language packs, OBB and data ZIP for a phone that already has
+        this APK: no APK is built, so the output format does not apply."""
+        if self.data_only.get() and self.apk_only.get():
+            self.apk_only.set(False)
+            self.apk_only_changed()
+        for widget in self.output_options.winfo_children():
+            widget.state(["disabled"] if self.data_only.get() else ["!disabled"])
+        self.build_button.configure(text=self.build_text())
+
     def expert_changed(self):
         if self.expert.get():
             self.expert_row.pack(fill="x", before=self.build_button)
         else:
             self.apk_only.set(False)
             self.apk_only_changed()
+            self.data_only.set(False)
+            self.data_only_changed()
             self.expert_row.pack_forget()
 
     def apk_only_changed(self):
@@ -481,7 +503,9 @@ class BuilderWindow:
         for widget in self.language_checks + list(self.output_options.winfo_children()):
             widget.state(["disabled"] if only else ["!disabled"])
         self.default.configure(state="disabled" if only else "readonly")
-        self.build_button.configure(text=self.tr("Build APK only") if only else self.tr("Build"))
+        if only and self.data_only.get():
+            self.data_only.set(False)
+        self.build_button.configure(text=self.build_text())
         if only:
             self.expert_hint.pack(anchor="w", before=self.build_button)
         else:
@@ -529,6 +553,11 @@ class BuilderWindow:
 
     def start_build(self):
         if self.running:
+            # The button reads "Cancel build" while a build runs.
+            if messagebox.askyesno("Build", self.tr("Cancel this build? Its partial output folder is removed.")):
+                self.build_button.state(["disabled"])
+                self.build_button.configure(text=self.tr("Cancelling…"))
+                cancel_build()
             return
         try:
             game = Path(self.game.get()).resolve()
@@ -565,8 +594,8 @@ class BuilderWindow:
                 xapk=source,
                 languages=selected,
                 default_language=default,
-                embedded=not self.apk_only.get() and self.format.get() == "xapk",
-                format="apk" if self.apk_only.get() else self.format.get(),
+                embedded=not self.apk_only.get() and not self.data_only.get() and self.format.get() == "xapk",
+                format="apk" if self.apk_only.get() else "data" if self.data_only.get() else self.format.get(),
                 appdir=self.appdir,
                 output_dir=destination,
                 log=self.log,
@@ -575,11 +604,13 @@ class BuilderWindow:
             messagebox.showerror("Input files", str(error))
             return
         self.running = True
-        self.build_button.state(["disabled"])
+        self.build_button.configure(text=self.build_text())
 
         def work():
             try:
                 self.events.put(("built", build(**args)))
+            except BuildCancelled:
+                self.events.put(("cancelled", None))
             except Exception as error:
                 self.events.put(("failed", str(error)))
 
@@ -786,9 +817,15 @@ class BuilderWindow:
                     self.text.insert("end", value + "\n")
                     self.text.see("end")
                     self.text.configure(state="disabled")
+                elif kind == "cancelled":
+                    self.running = False
+                    self.build_button.state(["!disabled"])
+                    self.build_button.configure(text=self.build_text())
+                    self.log(self.tr("Build cancelled. The partial output folder was removed."))
                 elif kind in ("built", "failed"):
                     self.running = False
                     self.build_button.state(["!disabled"])
+                    self.build_button.configure(text=self.build_text())
                     if kind == "built":
                         self.result = value
                         self.log("Output: " + str(value))
