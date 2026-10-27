@@ -62,10 +62,14 @@ Test на Stable телефон остаётся на своей ревизии,
 
 CI основного репозитория выкладывает Builder в постоянные релизы:
 `builder-test` (тестовая ветка, пред-релиз) и `builder-stable` (`main`). В
-релизе — `TESL-Reborn-Builder.exe` / `TESL-Reborn-Builder` и описание
-`builder-windows.json` / `builder-linux.json` (номер сборки = номер прогона CI,
-SHA-256, размер). Номер и канал вшиваются в Builder (`builder/version.json`,
-`tools/select_channel.py`); публикует `tools/publish_builder.py`.
+релизе — только `TESL-Reborn-Builder.exe` и `TESL-Reborn-Builder` (Linux).
+Номер сборки (= номер прогона CI) записан в подписи файла:
+«TESL-Reborn-Builder.exe · build 7». Builder читает релиз через API GitHub
+(`/releases/tags/builder-<канал>`): подпись даёт номер, поле `digest` — SHA-256
+файла, посчитанный самим GitHub. Отдельных файлов-описаний нет. Номер и канал
+вшиваются в Builder (`builder/version.json`, `tools/select_channel.py`);
+публикует `tools/publish_builder.py`. API без входа даёт 60 запросов в час с
+одного IP — проверке при запуске этого хватает.
 
 Builder проверяет свой канал при запуске и по кнопке «Проверить обновления»,
 спрашивает, скачивает новую сборку, сверяет SHA-256, переименовывает себя в
