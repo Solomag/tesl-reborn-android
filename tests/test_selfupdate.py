@@ -88,3 +88,14 @@ class SelfUpdateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RestartEnvironmentTest(unittest.TestCase):
+    def test_the_restarted_builder_is_a_fresh_instance(self):
+        old = r"C:\Users\x\AppData\Local\Temp\_MEI1234"
+        env = selfupdate.restart_environment(
+            {"PATH": r"C:\Windows", "TCL_LIBRARY": old + r"\_tcl_data", "_MEIPASS2": old, "HOME": r"C:\Users\x"}, old)
+        self.assertEqual(env["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+        self.assertNotIn("TCL_LIBRARY", env, "nothing may point into the old build's folder")
+        self.assertNotIn("_MEIPASS2", env)
+        self.assertEqual(env["PATH"], r"C:\Windows")

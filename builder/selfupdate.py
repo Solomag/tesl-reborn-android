@@ -116,5 +116,20 @@ def install(offer, executable=None, fetch=_get):
     return executable
 
 
+def restart_environment(environment=None, bundle=None):
+    """A one-file Builder passes its unpacked folder to child processes. The
+    restarted Builder then ran its new code on the old build's data (it still
+    said "build 7"), and that folder is deleted when the old process exits.
+    PyInstaller starts a fresh instance with PYINSTALLER_RESET_ENVIRONMENT, and
+    no variable may point into the old folder (TCL_LIBRARY and the like)."""
+    environment = dict(os.environ if environment is None else environment)
+    bundle = getattr(sys, "_MEIPASS", None) if bundle is None else bundle
+    if bundle:
+        environment = {k: v for k, v in environment.items() if str(bundle) not in v}
+    environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return environment
+
+
 def restart(executable):
-    subprocess.Popen([str(executable)], cwd=str(Path(executable).parent), close_fds=True)
+    subprocess.Popen([str(executable)], cwd=str(Path(executable).parent), close_fds=True,
+                     env=restart_environment())
