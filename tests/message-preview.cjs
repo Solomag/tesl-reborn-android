@@ -24,7 +24,7 @@ class Obj{
 const template=new Obj('LegacyPreview');template.widthValue=320;template.heightValue=80;
 Object.assign(template.p,{text:'<b>Solo</b> <color=#888888>20:12</color>\n:smile:',fontSize:18,supportRichText:true,color:{r:.86,g:.86,b:.86,a:1},alignment:3,horizontalOverflow:0,enabled:true});
 const row=new Obj('PreviewRow');row.fields._text=template;
-const c={Map,Set,Number,Math,String,Il2Cpp:{string:s=>s},isNull:x=>x==null,enumVal:x=>x,enumBox:(_,n)=>n,
+const c={Map,Set,Number,Math,String,Il2Cpp:{string:s=>s},isNull:x=>x==null,unityAlive:x=>x!=null&&!x.destroyed,enumVal:x=>x,enumBox:(_,n)=>n,
  vec2:v,uiPlain:s=>String(s).replace(/</g,'‹').replace(/>/g,'›'),initializeEmojis:()=>assetsReady,
  uiEnum:(_,name)=>name,section:()=>{},log:s=>logs.push(s),call:(o,n,...a)=>o.method(n).invoke(...a),
  uiNew:(name,parent)=>{const go=new Obj(name);go.parent=parent;created.push(go);return go;},uiRect:go=>go,

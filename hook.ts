@@ -722,6 +722,18 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   function isNull(o: any): boolean {
     return !o || !o.handle || o.handle.isNull();
   }
+  // A destroyed Unity object keeps a non-null handle, so isNull passes it,
+  // and calling into it can abort inside native code ("abort was called",
+  // then SIGABRT: report 32, match history). Unity's own null check compares
+  // it with null without calling into it.
+  let unityEquality = null;
+  function unityAlive(o: any): boolean {
+    if (isNull(o)) return false;
+    try {
+      if (!unityEquality) unityEquality = ucls("UnityEngine.Object").method("op_Equality");
+      return !unityEquality.invoke(o, NULL);
+    } catch (_) { return false; }
+  }
 
   // Unity's own classes live in other assemblies, so they need a lookup that
   // walks all the loaded images.
@@ -2344,7 +2356,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     for (const [key, record] of legendaryTitleRows) {
       try {
         const row = record.row.target, image = record.image.target;
-        if (isNull(row) || isNull(image)) {
+        if (!unityAlive(row) || !unityAlive(image)) {
           record.row.free(); record.image.free(); legendaryTitleRows.delete(key); continue;
         }
         const data = row.field("_titleData").value;
@@ -3529,7 +3541,7 @@ const historyRows = new Map(), historyTargets = new Map();
   }
   function historyHidePopup() {
     if (historyUsingNative) { try { call(historyNativeManager(), "HideTooltip"); } catch (_) {} }
-    if (historyPopup) call(historyPopup.go.target, "SetActive", false);
+    if (historyPopup && unityAlive(historyPopup.go.target)) call(historyPopup.go.target, "SetActive", false);
     historyActiveKey = null; historyUsingNative = false;
   }
   function historyDropTarget(key) {
@@ -3676,7 +3688,9 @@ const historyRows = new Map(), historyTargets = new Map();
     if (!historyActiveKey || (!historyUsingNative && !historyPopup)) return;
     try {
       const record = historyTargets.get(historyActiveKey);
-      if (!record || isNull(record.row.target) || !Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) {
+      // The list rebuilds its rows when match history reloads (report 32):
+      // every object below is checked before it is called.
+      if (!record || !unityAlive(record.row.target) || !Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) {
         historyHidePopup(); return;
       }
       const input = ucls("UnityEngine.Input"); let point, down;
@@ -3689,9 +3703,11 @@ const historyRows = new Map(), historyTargets = new Map();
         point = uiXY(input.method("get_mousePosition", 0).invoke());
       }
       if (!down) return;
+      if (!record.hits.length || !unityAlive(record.hits[0].rect.target)) { historyHidePopup(); return; }
       const canvas = historyCanvas(record.hits[0].rect.target), camera = call(canvas, "get_worldCamera");
-      if (!historyUsingNative && chatContains(historyPopup.rect.target, point, camera)) return;
+      if (!historyUsingNative && unityAlive(historyPopup.rect.target) && chatContains(historyPopup.rect.target, point, camera)) return;
       for (const target of historyTargets.values()) for (const hit of target.hits) {
+        if (!unityAlive(hit.go.target) || !unityAlive(hit.rect.target)) continue;
         if (Boolean(call(hit.go.target, "get_activeInHierarchy")) && chatContains(hit.rect.target, point, camera)) return;
       }
       historyHidePopup();
@@ -3958,7 +3974,7 @@ const emojiByName = new Map(), emojiByAscii = new Map();
   function chatRefreshMessageSizes() {
     for (const [key, record] of chatMessages) {
       try {
-        if (!isNull(record.row.target)) {
+        if (unityAlive(record.row.target)) {
           if (Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) chatResizeMessage(record);
           continue;
         }
@@ -4141,7 +4157,7 @@ const messagePreviews = new Map();
   function refreshMessagePreviews() {
     for (const [key, record] of messagePreviews) {
       try {
-        if (!isNull(record.row.target) && !isNull(record.template.target)) {
+        if (unityAlive(record.row.target) && unityAlive(record.template.target)) {
           if (Boolean(call(call(record.template.target, "get_gameObject"), "get_activeInHierarchy"))) refreshMessagePreview(record);
           continue;
         }

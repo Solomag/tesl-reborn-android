@@ -4269,6 +4269,16 @@ Il2Cpp.perform(() => {
   function isNull(o) {
     return !o || !o.handle || o.handle.isNull();
   }
+  let unityEquality = null;
+  function unityAlive(o) {
+    if (isNull(o)) return false;
+    try {
+      if (!unityEquality) unityEquality = ucls("UnityEngine.Object").method("op_Equality");
+      return !unityEquality.invoke(o, NULL);
+    } catch (_) {
+      return false;
+    }
+  }
   const classCache = {};
   let allImages = null;
   function ucls(name) {
@@ -5917,7 +5927,7 @@ Il2Cpp.perform(() => {
     for (const [key, record] of legendaryTitleRows) {
       try {
         const row = record.row.target, image = record.image.target;
-        if (isNull(row) || isNull(image)) {
+        if (!unityAlive(row) || !unityAlive(image)) {
           record.row.free();
           record.image.free();
           legendaryTitleRows.delete(key);
@@ -7457,7 +7467,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       } catch (_) {
       }
     }
-    if (historyPopup) call(historyPopup.go.target, "SetActive", false);
+    if (historyPopup && unityAlive(historyPopup.go.target)) call(historyPopup.go.target, "SetActive", false);
     historyActiveKey = null;
     historyUsingNative = false;
   }
@@ -7652,7 +7662,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     if (!historyActiveKey || !historyUsingNative && !historyPopup) return;
     try {
       const record = historyTargets.get(historyActiveKey);
-      if (!record || isNull(record.row.target) || !Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) {
+      if (!record || !unityAlive(record.row.target) || !Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) {
         historyHidePopup();
         return;
       }
@@ -7667,9 +7677,14 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         point = uiXY(input.method("get_mousePosition", 0).invoke());
       }
       if (!down) return;
+      if (!record.hits.length || !unityAlive(record.hits[0].rect.target)) {
+        historyHidePopup();
+        return;
+      }
       const canvas = historyCanvas(record.hits[0].rect.target), camera = call(canvas, "get_worldCamera");
-      if (!historyUsingNative && chatContains(historyPopup.rect.target, point, camera)) return;
+      if (!historyUsingNative && unityAlive(historyPopup.rect.target) && chatContains(historyPopup.rect.target, point, camera)) return;
       for (const target of historyTargets.values()) for (const hit of target.hits) {
+        if (!unityAlive(hit.go.target) || !unityAlive(hit.rect.target)) continue;
         if (Boolean(call(hit.go.target, "get_activeInHierarchy")) && chatContains(hit.rect.target, point, camera)) return;
       }
       historyHidePopup();
@@ -7968,7 +7983,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   function chatRefreshMessageSizes() {
     for (const [key, record] of chatMessages) {
       try {
-        if (!isNull(record.row.target)) {
+        if (unityAlive(record.row.target)) {
           if (Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) chatResizeMessage(record);
           continue;
         }
@@ -8222,7 +8237,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   function refreshMessagePreviews() {
     for (const [key, record] of messagePreviews) {
       try {
-        if (!isNull(record.row.target) && !isNull(record.template.target)) {
+        if (unityAlive(record.row.target) && unityAlive(record.template.target)) {
           if (Boolean(call(call(record.template.target, "get_gameObject"), "get_activeInHierarchy"))) refreshMessagePreview(record);
           continue;
         }

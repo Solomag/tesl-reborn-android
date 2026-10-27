@@ -7,6 +7,7 @@ class Obj {
  tryMethod(n){return n==='get_rootCanvas'?this.method(n):null;}
  method(n){return {invoke:(...a)=>this.invoke(n,a),overload:()=>({invoke:(...a)=>this.invoke(n,a)})};}
  invoke(n,a){
+  if(this.destroyed)throw Error('called a destroyed object: '+n);
   if(n==='get_transform'||n==='get_gameObject')return this;
   if(n==='get_parent')return this.parent||null;
   if(n==='GetComponent')return null; // Mobile prefab has no TooltipTrigger.
@@ -32,7 +33,7 @@ const makeRow=name=>{const row=new Obj(name);row.fields={};for(const f of ['_use
  const image=new Obj(f);image.parent=row;row.fields[f]=list([image]);}row.field=n=>({value:row.fields[n]});return row;};
 const data=[{deckId:1,deckName:'Deck A',deckStats:{wins:3,losses:1},opponentDeckName:'Opponent A',opponentDeckStats:{wins:1,losses:1}},
  {deckId:2,deckName:'Deck B',deckStats:{wins:4,losses:1},opponentDeckName:'Opponent B',opponentDeckStats:{wins:5,losses:0}}];
-const c={Map,Set,Number,Math,Date,isNull:x=>x==null,section:()=>{},log:s=>logs.push(s),img:{},matchEntryData:data,
+const c={Map,Set,Number,Math,Date,isNull:x=>x==null,unityAlive:x=>x!=null&&!x.destroyed,section:()=>{},log:s=>logs.push(s),img:{},matchEntryData:data,
  cls:(_,n)=>n==='SparkleServices.ServicesManager'?{method:()=>({invoke:()=>manager})}:{type:{object:'tooltip'}},
  call:(o,n,...a)=>o.method(n).invoke(...a),uiPlain:x=>x,winRate:(w,l)=>Math.round(100*w/(w+l)),
  Il2Cpp:{string:s=>s,corlib:{class:()=>({})}},vec2:v,rgba:(...a)=>a,enumVal:x=>x,uiXY:x=>({...x}),
@@ -89,4 +90,22 @@ console.log('PASS: native click targets without TooltipTrigger, object-identity 
  failShow=true;buttons[1].fn();assert(!nativeVisible,'partially shown native tooltip is hidden on failure');assert(fallback.props.active);
  assert.equal(vm.runInContext('historyUsingNative',c),false);assert.equal(objects.filter(x=>x.name==='RebornHistoryDeckPopup').length,1);
  console.log('PASS: one native tooltip with exact PC settings; outside close; shared hover-trigger suppression/restoration; one fallback after partial native failure');
+}
+
+// Report 32: match history reloads and rebuilds its rows while a popup is
+// open. Destroyed rows and hit targets are skipped, never called, and a
+// destroyed active row closes the popup.
+{
+ const under=(o,root)=>{for(let x=o;x;x=x.parent)if(x===root)return true;return false;};
+ input={down:false,point:{x:0,y:0}};
+ buttons[2].fn();assert(vm.runInContext('historyActiveKey',c),'popup open on row A');
+ for(const o of objects)if(under(o,rowB))o.destroyed=true;
+ const failures=()=>logs.filter(m=>m.includes('popup input failed')).length,seen=failures();
+ input={down:true,point:{x:10,y:10}};c.historyPoll();
+ assert.equal(failures(),seen,'destroyed rows of the old list are skipped, not called');
+ buttons[2].fn();for(const o of objects)if(under(o,rowA))o.destroyed=true;
+ input={down:false,point:{x:0,y:0}};c.historyPoll();
+ assert.equal(vm.runInContext('historyActiveKey',c),null,'a destroyed active row closes the popup');
+ assert.equal(failures(),seen,'without calling into it');
+ console.log('PASS: rows destroyed by a history reload are skipped and close the popup without native calls');
 }

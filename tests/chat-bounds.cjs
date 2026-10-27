@@ -27,7 +27,7 @@ function fixture(version,missingSetter=false){
  const group=new Obj('Group'),legacy=new Obj('Input'),template=new Obj('Text');legacy.p.textComponent=template;
  const row=new Obj('RowComponent');row.go=rowGO;row.fields._input=legacy;
  const c={Map,Number,Math,section:()=>{},schedule:()=>{},ucls:()=>({}),enumBox:(_,n)=>n,uiEnum:()=>257,
-  isNull:x=>x==null,log:s=>logs.push(s),initializeEmojis:()=>true,emojiAsset:{},uiPlain:s=>s,emojiFormat:s=>s,
+  isNull:x=>x==null,unityAlive:x=>x!=null&&!x.destroyed,log:s=>logs.push(s),initializeEmojis:()=>true,emojiAsset:{},uiPlain:s=>s,emojiFormat:s=>s,
   Il2Cpp:{string:s=>s},vec2:v,uiXY:a=>({x:a.x,y:a.y}),call:(o,n,...a)=>o.method(n).invoke(...a),
   uiNew:(name,parent)=>{const o=new Obj(name);o.parent=parent;return o;},uiRect:o=>o,
   uiStretch:o=>{o.p.anchorMin=v(0,0);o.p.anchorMax=v(1,1);o.p.sizeDelta=v(0,0);o.p.anchoredPosition=v(0,0);},
