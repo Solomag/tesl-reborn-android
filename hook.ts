@@ -475,6 +475,17 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // first 80 responses. Bodies and headers are deliberately omitted here.
     if (ordinaryBudget || status === 0 || status >= 400 || /\/api\/account\//.test(uri))
       log(`<- ${state} ${diagnosticUri(uri)} ${info}`);
+    // Report 50: login gave HTTP 500 after another account used the phone,
+    // and the status alone did not say why. For a failed account call keep
+    // what the server answered; log() masks secrets, names are masked here.
+    if (status >= 400 && /\/api\/account\//.test(uri)) {
+      try {
+        const text = String(call(response, "get_DataAsText")?.content ?? "")
+          .replace(/("(?:username|userName|email|accountName|displayName|name)"\s*:\s*")(?:[^"\\]|\\[\s\S])*"/gi, '$1[omitted]"')
+          .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]");
+        log(`account error body (${diagnosticUri(uri).split("/").pop()}): ${text ? text.slice(0, 600) : "(empty)"}`);
+      } catch (error) { log(`account error body unreadable: ${error}`); }
+    }
     if (typeof recordResourceEvent === "function") recordResourceEvent("http-" + state, diagnosticUri(uri), status);
     if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
       let body = ""; try { body = String(call(response, "get_DataAsText")?.content ?? ""); } catch (_) {}
