@@ -3649,12 +3649,57 @@ function loadOverrides() {
   }
   return o;
 }
+let currentSection = "startup";
+const hookCost = (() => {
+  const spent = /* @__PURE__ */ new Map();
+  const now = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("clock_gettime"), "int", ["int", "pointer"]);
+  const buffer = Memory.alloc(16);
+  const micros = () => {
+    now(1, buffer);
+    return buffer.readS64().toNumber() * 1e6 + buffer.add(8).readS64().toNumber() / 1e3;
+  };
+  let reportAt = Date.now() + 15e3, since = Date.now();
+  const record = (name, us) => {
+    const entry = spent.get(name) || { us: 0, calls: 0 };
+    entry.us += us;
+    entry.calls++;
+    spent.set(name, entry);
+    if (Date.now() < reportAt) return;
+    const seconds = (Date.now() - since) / 1e3;
+    const top = [...spent.entries()].sort((a, b) => b[1].us - a[1].us).slice(0, 8).map(([key, value]) => `${key} ${(value.us / seconds / 1e3).toFixed(1)} ms/s ${Math.round(value.calls / seconds)}/s`);
+    const total = [...spent.values()].reduce((sum, value) => sum + value.us, 0);
+    log(`hook cost: ${(total / seconds / 1e3).toFixed(1)} ms/s; ${top.join("; ")}`);
+    spent.clear();
+    since = Date.now();
+    reportAt = since + 15e3;
+  };
+  const timed = (name, fn) => function(...args) {
+    const start = micros();
+    try {
+      return fn.apply(this, args);
+    } finally {
+      record(name, micros() - start);
+    }
+  };
+  const attach = Interceptor.attach.bind(Interceptor);
+  Interceptor.attach = (target, callbacks, data) => {
+    if (typeof callbacks !== "object" || callbacks === null) return attach(target, callbacks, data);
+    const name = currentSection, wrapped = {};
+    if (callbacks.onEnter) wrapped.onEnter = timed(name, callbacks.onEnter);
+    if (callbacks.onLeave) wrapped.onLeave = timed(name, callbacks.onLeave);
+    return attach(target, wrapped, data);
+  };
+  return { timed };
+})();
 function section(name, fn) {
+  currentSection = name;
   try {
     fn();
     log(`OK   ${name}`);
   } catch (e) {
     log(`FAIL ${name}: ${e}`);
+  } finally {
+    currentSection = "later";
   }
 }
 function cls(img, full) {

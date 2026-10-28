@@ -136,9 +136,48 @@ function loadOverrides(): Record<string, string> {
   return o;
 }
 
+// Hook cost: a lower render resolution gave no more FPS (report 45), so the
+// limit is the main thread, and the hook's own per-frame callbacks run there.
+// Every Interceptor callback is timed under the section that attached it;
+// every 15 s the costliest are logged as "hook cost: ...".
+let currentSection = "startup";
+const hookCost = (() => {
+  const spent = new Map<string, { us: number; calls: number }>();
+  const now = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("clock_gettime"), "int", ["int", "pointer"]);
+  const buffer = Memory.alloc(16);
+  const micros = () => { now(1, buffer); return buffer.readS64().toNumber() * 1e6 + buffer.add(8).readS64().toNumber() / 1e3; };
+  let reportAt = Date.now() + 15000, since = Date.now();
+  const record = (name: string, us: number) => {
+    const entry = spent.get(name) || { us: 0, calls: 0 };
+    entry.us += us; entry.calls++; spent.set(name, entry);
+    if (Date.now() < reportAt) return;
+    const seconds = (Date.now() - since) / 1000;
+    const top = [...spent.entries()].sort((a, b) => b[1].us - a[1].us).slice(0, 8)
+      .map(([key, value]) => `${key} ${(value.us / seconds / 1000).toFixed(1)} ms/s ${Math.round(value.calls / seconds)}/s`);
+    const total = [...spent.values()].reduce((sum, value) => sum + value.us, 0);
+    log(`hook cost: ${(total / seconds / 1000).toFixed(1)} ms/s; ${top.join("; ")}`);
+    spent.clear(); since = Date.now(); reportAt = since + 15000;
+  };
+  const timed = (name: string, fn: Function) => function (this: any, ...args: any[]) {
+    const start = micros();
+    try { return fn.apply(this, args); } finally { record(name, micros() - start); }
+  };
+  const attach = Interceptor.attach.bind(Interceptor);
+  (Interceptor as any).attach = (target: NativePointerValue, callbacks: any, data?: NativePointerValue) => {
+    if (typeof callbacks !== "object" || callbacks === null) return attach(target, callbacks, data);
+    const name = currentSection, wrapped: any = {};
+    if (callbacks.onEnter) wrapped.onEnter = timed(name, callbacks.onEnter);
+    if (callbacks.onLeave) wrapped.onLeave = timed(name, callbacks.onLeave);
+    return attach(target, wrapped, data);
+  };
+  return { timed };
+})();
+
 function section(name: string, fn: () => void) {
+  currentSection = name;
   try { fn(); log(`OK   ${name}`); }
   catch (e) { log(`FAIL ${name}: ${e}`); }
+  finally { currentSection = "later"; }
 }
 function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
   const c = img.tryClass(full);

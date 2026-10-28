@@ -4,9 +4,9 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 103,
-  "version": "android-103-battle-tabs",
-  "bytes": 423763,
-  "sha256": "6d6d81ca5c3974f8004ae0a3da8bf1107db9d4f492abe6cc858d6d0bc37d4fe6",
-  "url": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/6d6d81ca5c3974f8004ae0a3da8bf1107db9d4f492abe6cc858d6d0bc37d4fe6.js"
+  "revision": 104,
+  "version": "android-104-hook-cost",
+  "bytes": 425654,
+  "sha256": "d5b77e517e35b72ac3a0a26c0923fee3ab4850a23d64d39ac2b57e660e533d99",
+  "url": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/d5b77e517e35b72ac3a0a26c0923fee3ab4850a23d64d39ac2b57e660e533d99.js"
 }
