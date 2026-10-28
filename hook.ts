@@ -3630,7 +3630,10 @@ function uiComponent(go, type) {
     const file = `${persistentPath()}/tesl-reborn-graphics.json`;
     const rate = graphicsFrameRate(readTextFile(file));
     globalThis.__teslTargetRate = rate || 60;
-    let chosenQuality = graphicsQuality(readTextFile(file));
+    // Without an expert choice: the highest quality, with MSAA off (below).
+    let chosenQuality = graphicsQuality(readTextFile(file)) ?? 3;
+    let allowMsaa = false;
+    try { allowMsaa = JSON.parse(readTextFile(file) || "{}")?.msaa === true; } catch (_) {}
     // Report 38: Unity ignores targetFrameRate while vSync is on, and every
     // quality level turns it on. The managed setter is stripped; the engine
     // function behind it is still there.
@@ -3708,7 +3711,36 @@ function uiComponent(go, type) {
       const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(boardType);
       return !isNull(found);
     }
+    // MSAA off unless chosen (tesl-reborn-graphics.json "msaa": true). The
+    // quality levels turn it on and CPH2723 has no antiAliasing setter at all
+    // (report 19); each camera's allowMSAA overrides the level. Cameras come
+    // and go with scenes, so this runs with every 15 s sample.
+    let msaaCameras = null, msaaReported = "";
+    function camerasWithoutMsaa() {
+      if (allowMsaa) return;
+      let state;
+      try {
+        const camera = ucls("UnityEngine.Camera");
+        if (msaaCameras === null) {
+          const get = camera.tryMethod("get_allowMSAA", 0), set = camera.tryMethod("set_allowMSAA", 1);
+          msaaCameras = get && set ? { get, set, all: camera.method("get_allCameras", 0) } : false;
+        }
+        if (!msaaCameras) state = "camera allowMSAA unavailable";
+        else {
+          const cameras = msaaCameras.all.invoke();
+          let changed = 0;
+          for (let i = 0; i < cameras.length; i++) {
+            const item = cameras.get(i);
+            if (Boolean(msaaCameras.get.bind(item).invoke())) { msaaCameras.set.bind(item).invoke(false); changed++; }
+          }
+          state = changed ? `MSAA off on ${changed} of ${cameras.length} cameras` : "";
+        }
+      } catch (error) { state = `camera MSAA failed: ${error}`; }
+      if (state && state !== msaaReported) { msaaReported = state; log(`graphics: ${state}`); }
+    }
+    schedule(3000, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
+      camerasWithoutMsaa();
       if (loading) return;
       let next = mode;
       try { next = inBattle() ? "battle" : "menu"; } catch (_) {}
