@@ -3646,14 +3646,16 @@ function uiComponent(go, type) {
     // engine function takes it as its first argument.
     const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
     const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
+    // The rate in force: the chosen one, or the heat cap while it lasts.
+    const currentRate = () => { const cap = globalThis.__teslRateCap; return cap ? Math.min(rate || 60, cap) : rate; };
     function applyRate(why) {
       // Without a chosen rate the game's own 60 is restored after a heat cap.
-      const cap = globalThis.__teslRateCap, effective = cap ? Math.min(rate || 60, cap) : rate || (why === "cap lifted" ? 60 : 0);
+      const effective = currentRate() || (why === "cap lifted" ? 60 : 0);
       if (!effective) return;
       try {
         if (setVSync) setVSync(0);
         if (engineSetRate) engineSetRate(effective); else setRate.invoke(effective);
-        log(`graphics: frame rate ${rate} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
+        log(`graphics: frame rate ${effective} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
       } catch (error) { log(`graphics: frame rate failed: ${error}`); }
     }
     globalThis.__teslApplyRate = applyRate;
@@ -3661,26 +3663,30 @@ function uiComponent(go, type) {
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
       const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
-      if (!engineAt.isNull()) hookAttach(engineAt, { onEnter(args) { args[0] = ptr(rate); } });
+      // Report 14: this used the chosen rate and so undid the heat cap.
+      if (!engineAt.isNull()) hookAttach(engineAt, { onEnter(args) { args[0] = ptr(currentRate()); } });
       schedule(0, () => applyRate("start"), "graphics frame rate");
       log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
       // Report 41: with the target at 30 and vSync off the game still went
       // back to 55-58 FPS within half a minute. Below the display rate the
       // hook now paces frames itself: the main thread waits out the rest of
       // each frame before the game's update runs.
-      if (rate < 60) {
-        const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
-        const frame = 1000 / rate;
-        let next = 0;
-        hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-          onEnter() {
-            const now = Date.now();
-            if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1000));
-            next = Math.max(next + frame, Date.now());
-          }
-        });
-        log(`graphics: frame limiter at ${rate} FPS`);
-      }
+    }
+    // The limiter is always installed: the heat cap (report 14) needs it as
+    // well, and Unity alone does not hold a rate below the display's.
+    {
+      const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
+      let next = 0;
+      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+        onEnter() {
+          const limit = currentRate();
+          if (!limit || limit >= 60) { next = 0; return; }
+          const frame = 1000 / limit, now = Date.now();
+          if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1000));
+          next = Math.max(next + frame, Date.now());
+        }
+      });
+      if (rate && rate < 60) log(`graphics: frame limiter at ${rate} FPS`);
     }
     // Quality: SettingsWin.UpdateUi hides resolution and windowed mode on
     // mobile but only fills the quality dropdown. Show it if the mobile

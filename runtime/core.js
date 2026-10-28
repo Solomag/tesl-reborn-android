@@ -7536,14 +7536,18 @@ Il2Cpp.perform(() => {
     const getVSync = icall(["UnityEngine.QualitySettings::get_vSyncCount()", "UnityEngine.QualitySettings::get_vSyncCount"], "int", []);
     const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
     const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
+    const currentRate = () => {
+      const cap = globalThis.__teslRateCap;
+      return cap ? Math.min(rate || 60, cap) : rate;
+    };
     function applyRate(why) {
-      const cap = globalThis.__teslRateCap, effective = cap ? Math.min(rate || 60, cap) : rate || (why === "cap lifted" ? 60 : 0);
+      const effective = currentRate() || (why === "cap lifted" ? 60 : 0);
       if (!effective) return;
       try {
         if (setVSync) setVSync(0);
         if (engineSetRate) engineSetRate(effective);
         else setRate.invoke(effective);
-        log(`graphics: frame rate ${rate} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
+        log(`graphics: frame rate ${effective} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
       } catch (error) {
         log(`graphics: frame rate failed: ${error}`);
       }
@@ -7554,23 +7558,27 @@ Il2Cpp.perform(() => {
     if (rate) {
       const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
       if (!engineAt.isNull()) hookAttach(engineAt, { onEnter(args) {
-        args[0] = ptr(rate);
+        args[0] = ptr(currentRate());
       } });
       schedule(0, () => applyRate("start"), "graphics frame rate");
       log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
-      if (rate < 60) {
-        const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
-        const frame = 1e3 / rate;
-        let next = 0;
-        hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-          onEnter() {
-            const now = Date.now();
-            if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1e3));
-            next = Math.max(next + frame, Date.now());
+    }
+    {
+      const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
+      let next = 0;
+      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+        onEnter() {
+          const limit = currentRate();
+          if (!limit || limit >= 60) {
+            next = 0;
+            return;
           }
-        });
-        log(`graphics: frame limiter at ${rate} FPS`);
-      }
+          const frame = 1e3 / limit, now = Date.now();
+          if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1e3));
+          next = Math.max(next + frame, Date.now());
+        }
+      });
+      if (rate && rate < 60) log(`graphics: frame limiter at ${rate} FPS`);
     }
     const manager = cls(img, "SettingsManager");
     const recommended = cls(img, "ScalabilityUtils").tryMethod("GetRecommendedVideoQualitySettings", 0);
