@@ -647,6 +647,16 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
 REQUIRED_TOOLS = ["apktool.jar", "uber-apk-signer.jar", "gadget.so", "setup/classes.dex"]
 
 
+def stale_gadget(vendor):
+    """A source checkout keeps vendor/ between builds; an older gadget there
+    is not replaced by a missing-file check."""
+    from builder.bootstrap_tools import GADGET_VERSION
+    try:
+        return (vendor / "gadget.version").read_text(encoding="utf-8").strip() != GADGET_VERSION
+    except OSError:
+        return True
+
+
 def missing_tools(vendor):
     return [name for name in REQUIRED_TOOLS if not (vendor / name).is_file()]
 
@@ -656,7 +666,8 @@ def prepare_tools(vendor, log):
     Linux), it fetches the pinned, checksum-verified tools and compiles the
     setup screens itself instead of stopping at the first missing file."""
     missing = missing_tools(vendor)
-    if not missing:
+    stale = not getattr(sys, "frozen", False) and stale_gadget(vendor)
+    if not missing and not stale:
         return
     if getattr(sys, "frozen", False):
         raise ValueError("The builder is missing: " + ", ".join(missing))
@@ -667,7 +678,7 @@ def prepare_tools(vendor, log):
         raise ValueError(
             "Install a JDK (17 or newer) so that " + " and ".join(absent)
             + " are on PATH; it is needed to prepare: " + ", ".join(missing))
-    if [name for name in missing if name != "setup/classes.dex"] or not (vendor / "android.jar").is_file():
+    if stale or [name for name in missing if name != "setup/classes.dex"] or not (vendor / "android.jar").is_file():
         log("Downloading the build tools (pinned versions, checksums verified)…")
         invoke([sys.executable, "-m", "builder.bootstrap_tools", "--vendor", vendor], log, cwd=root)
     if not (vendor / "setup/classes.dex").is_file():

@@ -12,6 +12,9 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+# Recorded next to vendor/gadget.so: a checkout prepared with an older gadget
+# is refreshed by the build (report 16: 17.2.4 stayed and ran at 15 FPS).
+GADGET_VERSION = "17.23.3"
 
 
 def download(url, target, digest=None, algorithm="sha256"):
@@ -103,6 +106,7 @@ def main():
     )
     with lzma.open(gadget_archive) as src, (vendor / "gadget.so").open("wb") as out:
         shutil.copyfileobj(src, out)
+    (vendor / "gadget.version").write_text(GADGET_VERSION, encoding="utf-8")
     download(
         "https://raw.githubusercontent.com/frida/frida-core/17.23.3/COPYING",
         vendor / "COPYING-frida",
