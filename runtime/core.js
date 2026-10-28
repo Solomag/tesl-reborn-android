@@ -7560,15 +7560,25 @@ Il2Cpp.perform(() => {
       auto = JSON.parse(readTextFile(autoFile) || "{}") || {};
     } catch (_) {
     }
-    let low = 0, steady = 0, best = 0, msaaOff = auto.msaaOff === true;
-    if (ladder.includes(Number(auto.rate)) && Number(auto.rate) < ceiling) {
-      globalThis.__teslRateCap = Number(auto.rate);
-      log(`graphics: auto frame rate ${auto.rate} of ${ceiling} (learned ${auto.at || "earlier"})${msaaOff ? ", antiAliasing off" : ""}`);
-      if (!rate) schedule(0, () => applyRate("auto start"), "graphics auto rate");
+    const learnedRate = (value) => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
+    const modes = {
+      menu: { cap: learnedRate(auto.menu?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
+      battle: { cap: learnedRate(auto.battle?.rate ?? auto.rate), low: 0, steady: 0, best: 0 }
+    };
+    let msaaOff = auto.msaaOff === true, mode = "menu", boardType = null;
+    globalThis.__teslRateCap = modes.menu.cap;
+    if (modes.menu.cap || modes.battle.cap || msaaOff) {
+      log(`graphics: auto frame rate menu ${modes.menu.cap || ceiling}, battle ${modes.battle.cap || ceiling} of ${ceiling} (learned ${auto.at || "earlier"})${msaaOff ? ", antiAliasing off" : ""}`);
+      if (!rate && modes.menu.cap) schedule(0, () => applyRate("auto start"), "graphics auto rate");
     }
     const saveAuto = () => {
       try {
-        writeTextFile(autoFile, JSON.stringify({ rate: globalThis.__teslRateCap || ceiling, msaaOff, at: (/* @__PURE__ */ new Date()).toISOString() }));
+        writeTextFile(autoFile, JSON.stringify({
+          menu: { rate: modes.menu.cap || ceiling },
+          battle: { rate: modes.battle.cap || ceiling },
+          msaaOff,
+          at: (/* @__PURE__ */ new Date()).toISOString()
+        }));
       } catch (_) {
       }
     };
@@ -7581,12 +7591,30 @@ Il2Cpp.perform(() => {
       else throw Error("no antiAliasing setter");
       return samples;
     }
+    function inBattle() {
+      if (boardType === null) boardType = img.classes.find((c) => c.name === "BoardInputController")?.type.object || false;
+      if (!boardType) return false;
+      const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(boardType);
+      return !isNull(found);
+    }
     globalThis.__teslGovernor = (measured, loading) => {
-      if (loading) {
-        low = 0;
-        steady = 0;
+      if (loading) return;
+      let next = mode;
+      try {
+        next = inBattle() ? "battle" : "menu";
+      } catch (_) {
+      }
+      if (next !== mode) {
+        mode = next;
+        const state2 = modes[mode];
+        state2.low = 0;
+        state2.steady = 0;
+        globalThis.__teslRateCap = state2.cap;
+        log(`graphics: ${mode}, frame rate ${state2.cap || ceiling}`);
+        applyRate(state2.cap ? `${mode} rate` : "cap lifted");
         return;
       }
+      const state = modes[mode];
       if (msaaOff) {
         try {
           const samples = antiAliasingOff();
@@ -7595,24 +7623,24 @@ Il2Cpp.perform(() => {
         }
       }
       const effective = currentRate() || 60;
-      best = Math.max(best, Math.min(measured, effective));
-      const reference = Math.min(effective, best);
+      state.best = Math.max(state.best, Math.min(measured, effective));
+      const reference = Math.min(effective, state.best);
       if (measured < reference * 0.75) {
-        low++;
-        steady = 0;
+        state.low++;
+        state.steady = 0;
       } else {
-        low = 0;
-        steady = measured >= effective * 0.85 ? steady + 1 : 0;
+        state.low = 0;
+        state.steady = measured >= effective * 0.85 ? state.steady + 1 : 0;
       }
-      if (low >= 2) {
-        low = 0;
+      if (state.low >= 2) {
+        state.low = 0;
         if (!msaaOff) {
           try {
             const samples = antiAliasingOff();
             msaaOff = true;
             saveAuto();
             if (samples) {
-              log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${reference} for 30 s)`);
+              log(`graphics: antiAliasing ${samples}x -> off (${mode} fps ${measured} of ${reference} for 30 s)`);
               return;
             }
           } catch (error) {
@@ -7621,18 +7649,18 @@ Il2Cpp.perform(() => {
         }
         const lower = ladder.find((step) => step < effective);
         if (!lower) return;
-        globalThis.__teslRateCap = lower;
+        state.cap = globalThis.__teslRateCap = lower;
         saveAuto();
-        log(`graphics: auto frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
         applyRate("auto down");
-      } else if (steady >= 20 && globalThis.__teslRateCap) {
-        steady = 0;
+      } else if (state.steady >= 20 && state.cap) {
+        state.steady = 0;
         const higher = ladder.filter((step) => step > effective && step <= ceiling).pop();
         if (!higher) return;
-        globalThis.__teslRateCap = higher >= ceiling ? 0 : higher;
+        state.cap = globalThis.__teslRateCap = higher >= ceiling ? 0 : higher;
         saveAuto();
-        log(`graphics: auto frame rate ${effective} -> ${higher} (held ${measured} for 5 min)`);
-        applyRate(globalThis.__teslRateCap ? "auto up" : "cap lifted");
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 5 min)`);
+        applyRate(state.cap ? "auto up" : "cap lifted");
       }
     };
     globalThis.__teslApplyRate = applyRate;

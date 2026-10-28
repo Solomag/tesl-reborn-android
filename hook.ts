@@ -3666,19 +3666,30 @@ function uiComponent(go, type) {
     // then steps the rate down. 5 minutes at the rate steps it back up, to
     // the chosen one at most. What was learned is kept per phone, so the next
     // start begins at a rate the phone holds instead of overheating first.
+    // Battle and menu are learned apart (the drops are in battle): a battle
+    // is an active BoardInputController, checked with each 15 s sample.
     const autoFile = `${persistentPath()}/tesl-reborn-graphics-auto.json`;
     const ladder = [120, 90, 60, 40, 30], ceiling = rate || 60;
     let auto: any = {};
     try { auto = JSON.parse(readTextFile(autoFile) || "{}") || {}; } catch (_) {}
-    let low = 0, steady = 0, best = 0, msaaOff = auto.msaaOff === true;
-    if (ladder.includes(Number(auto.rate)) && Number(auto.rate) < ceiling) {
-      globalThis.__teslRateCap = Number(auto.rate);
-      log(`graphics: auto frame rate ${auto.rate} of ${ceiling} (learned ${auto.at || "earlier"})${msaaOff ? ", antiAliasing off" : ""}`);
+    const learnedRate = value => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
+    // Patch 117 kept one rate for both.
+    const modes = {
+      menu: { cap: learnedRate(auto.menu?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
+      battle: { cap: learnedRate(auto.battle?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
+    };
+    let msaaOff = auto.msaaOff === true, mode = "menu", boardType = null;
+    globalThis.__teslRateCap = modes.menu.cap;
+    if (modes.menu.cap || modes.battle.cap || msaaOff) {
+      log(`graphics: auto frame rate menu ${modes.menu.cap || ceiling}, battle ${modes.battle.cap || ceiling} of ${ceiling} (learned ${auto.at || "earlier"})${msaaOff ? ", antiAliasing off" : ""}`);
       // A chosen rate is applied at start below; the game's own 60 is not.
-      if (!rate) schedule(0, () => applyRate("auto start"), "graphics auto rate");
+      if (!rate && modes.menu.cap) schedule(0, () => applyRate("auto start"), "graphics auto rate");
     }
     const saveAuto = () => {
-      try { writeTextFile(autoFile, JSON.stringify({ rate: globalThis.__teslRateCap || ceiling, msaaOff, at: new Date().toISOString() })); } catch (_) {}
+      try {
+        writeTextFile(autoFile, JSON.stringify({ menu: { rate: modes.menu.cap || ceiling }, battle: { rate: modes.battle.cap || ceiling },
+          msaaOff, at: new Date().toISOString() }));
+      } catch (_) {}
     };
     function antiAliasingOff() {
       const quality = ucls("UnityEngine.QualitySettings"), samples = Number(quality.method("get_antiAliasing", 0).invoke());
@@ -3691,38 +3702,56 @@ function uiComponent(go, type) {
       else throw Error("no antiAliasing setter");
       return samples;
     }
+    function inBattle() {
+      if (boardType === null) boardType = img.classes.find(c => c.name === "BoardInputController")?.type.object || false;
+      if (!boardType) return false;
+      const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(boardType);
+      return !isNull(found);
+    }
     globalThis.__teslGovernor = (measured, loading) => {
-      if (loading) { low = 0; steady = 0; return; }
+      if (loading) return;
+      let next = mode;
+      try { next = inBattle() ? "battle" : "menu"; } catch (_) {}
+      if (next !== mode) {
+        // The first sample after a switch still mixes both.
+        mode = next; const state = modes[mode];
+        state.low = 0; state.steady = 0;
+        globalThis.__teslRateCap = state.cap;
+        log(`graphics: ${mode}, frame rate ${state.cap || ceiling}`);
+        applyRate(state.cap ? `${mode} rate` : "cap lifted");
+        return;
+      }
+      const state = modes[mode];
       // A quality change turns MSAA back on; a phone that needed it off keeps it off.
       if (msaaOff) {
         try { const samples = antiAliasingOff(); if (samples) log(`graphics: antiAliasing ${samples}x -> off (remembered)`); } catch (_) {}
       }
       const effective = currentRate() || 60;
-      best = Math.max(best, Math.min(measured, effective));
-      const reference = Math.min(effective, best);
-      if (measured < reference * 0.75) { low++; steady = 0; }
-      else { low = 0; steady = measured >= effective * 0.85 ? steady + 1 : 0; }
-      if (low >= 2) {
-        low = 0;
+      state.best = Math.max(state.best, Math.min(measured, effective));
+      const reference = Math.min(effective, state.best);
+      if (measured < reference * 0.75) { state.low++; state.steady = 0; }
+      else { state.low = 0; state.steady = measured >= effective * 0.85 ? state.steady + 1 : 0; }
+      if (state.low >= 2) {
+        state.low = 0;
         if (!msaaOff) {
           try {
             const samples = antiAliasingOff();
             msaaOff = true; saveAuto();
-            if (samples) { log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${reference} for 30 s)`); return; }
+            if (samples) { log(`graphics: antiAliasing ${samples}x -> off (${mode} fps ${measured} of ${reference} for 30 s)`); return; }
           } catch (error) { log(`graphics: antiAliasing drop failed: ${error}`); }
         }
         const lower = ladder.find(step => step < effective);
         if (!lower) return;
-        globalThis.__teslRateCap = lower; saveAuto();
-        log(`graphics: auto frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
+        state.cap = globalThis.__teslRateCap = lower; saveAuto();
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
         applyRate("auto down");
-      } else if (steady >= 20 && globalThis.__teslRateCap) {
-        steady = 0;
+      } else if (state.steady >= 20 && state.cap) {
+        state.steady = 0;
         const higher = ladder.filter(step => step > effective && step <= ceiling).pop();
         if (!higher) return;
-        globalThis.__teslRateCap = higher >= ceiling ? 0 : higher; saveAuto();
-        log(`graphics: auto frame rate ${effective} -> ${higher} (held ${measured} for 5 min)`);
-        applyRate(globalThis.__teslRateCap ? "auto up" : "cap lifted");
+        state.cap = globalThis.__teslRateCap = higher >= ceiling ? 0 : higher; saveAuto();
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 5 min)`);
+        applyRate(state.cap ? "auto up" : "cap lifted");
       }
     };
     globalThis.__teslApplyRate = applyRate;
