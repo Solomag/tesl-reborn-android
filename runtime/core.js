@@ -7364,6 +7364,15 @@ Il2Cpp.perform(() => {
               const go = call(dropdown, "get_gameObject");
               const shown = Boolean(call(go, "get_activeSelf"));
               if (!shown) call(go, "SetActive", true);
+              const top = call(call(window.target, "get_gameObject"), "get_transform");
+              let parents = 0;
+              for (let node = call(call(go, "get_transform"), "get_parent"); unityAlive(node) && !node.handle.equals(top.handle) && parents < 6; node = call(node, "get_parent"), parents++) {
+                const holder = call(node, "get_gameObject");
+                if (!call(holder, "get_activeSelf")) {
+                  call(holder, "SetActive", true);
+                  log(`graphics: showed hidden parent ${call(holder, "get_name")?.content}`);
+                }
+              }
               const options = Number(call(call(dropdown, "get_options"), "get_Count"));
               state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, live=${Boolean(call(go, "get_activeInHierarchy"))}`;
             }

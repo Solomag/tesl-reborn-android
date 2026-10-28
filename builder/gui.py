@@ -370,6 +370,9 @@ class BuilderWindow:
         self.text = tk.Text(root, height=12, wrap="word", state="disabled")
         self.text.pack(fill="both", expand=True, pady=8)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
+        if self.preferences().get("expert"):
+            self.expert.set(True)
+            self.expert_changed()
         self.window.after(100, self.poll)
         if getattr(sys, "frozen", False):
             selfupdate.cleanup()
@@ -476,7 +479,25 @@ class BuilderWindow:
             widget.state(["disabled"] if self.data_only.get() else ["!disabled"])
         self.build_button.configure(text=self.build_text())
 
+    @staticmethod
+    def preferences_path():
+        return application_directory() / "builder-settings.json"
+
+    def preferences(self):
+        try:
+            value = json.loads(self.preferences_path().read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
     def expert_changed(self):
+        preferences = self.preferences()
+        if preferences.get("expert") != self.expert.get():
+            preferences["expert"] = self.expert.get()
+            try:
+                self.preferences_path().write_text(json.dumps(preferences), encoding="utf-8")
+            except OSError:
+                pass  # A read-only folder only loses the remembered choice.
         if self.expert.get():
             self.expert_row.pack(fill="x", before=self.build_button)
         else:

@@ -8,7 +8,7 @@ emoji setup and OBB inspection tool are described in
 [Android features and updates](docs/android-updates.md).
 
 The experimental portable Windows builder and separate language/resource transfer
-are described in [Сборщик и ресурсы](docs/builder-ru.md). Windows binaries are built
+are described in [the Builder guide](docs/builder.md) ([на русском](docs/builder-ru.md)). Windows binaries are built
 by the `Build Windows Builder` Actions workflow; device validation is still required.
 
 ## What you get

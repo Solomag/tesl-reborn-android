@@ -636,6 +636,40 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
     return files[0]
 
 
+REQUIRED_TOOLS = ["apktool.jar", "uber-apk-signer.jar", "gadget.so", "setup/classes.dex"]
+
+
+def missing_tools(vendor):
+    return [name for name in REQUIRED_TOOLS if not (vendor / name).is_file()]
+
+
+def prepare_tools(vendor, log):
+    """A packaged Builder carries its tools. Run from a source checkout (as on
+    Linux), it fetches the pinned, checksum-verified tools and compiles the
+    setup screens itself instead of stopping at the first missing file."""
+    missing = missing_tools(vendor)
+    if not missing:
+        return
+    if getattr(sys, "frozen", False):
+        raise ValueError("The builder is missing: " + ", ".join(missing))
+    root = Path(__file__).resolve().parents[1]
+    needed = ["java"] + (["javac"] if "setup/classes.dex" in missing else [])
+    absent = [tool for tool in needed if not shutil.which(tool)]
+    if absent:
+        raise ValueError(
+            "Install a JDK (17 or newer) so that " + " and ".join(absent)
+            + " are on PATH; it is needed to prepare: " + ", ".join(missing))
+    if [name for name in missing if name != "setup/classes.dex"] or not (vendor / "android.jar").is_file():
+        log("Downloading the build tools (pinned versions, checksums verified)…")
+        invoke([sys.executable, "-m", "builder.bootstrap_tools", "--vendor", vendor], log, cwd=root)
+    if not (vendor / "setup/classes.dex").is_file():
+        log("Compiling the setup screens (setup/classes.dex)…")
+        invoke([sys.executable, root / "android-setup/build.py", "--vendor", vendor], log, cwd=root)
+    missing = missing_tools(vendor)
+    if missing:
+        raise ValueError("The builder is still missing: " + ", ".join(missing))
+
+
 def builder_channel():
     from .selfupdate import current
 
@@ -706,14 +740,7 @@ def _build(
     if format not in ("xapk", "manual", "apk", "data"):
         raise ValueError("Unknown output format")
     vendor = data_root() / "vendor"
-    for name in [
-        "apktool.jar",
-        "uber-apk-signer.jar",
-        "gadget.so",
-        "setup/classes.dex",
-    ]:
-        if not (vendor / name).is_file():
-            raise ValueError("The builder is missing: " + name)
+    prepare_tools(vendor, log)
     output.mkdir(parents=True, exist_ok=True)
     scratch.mkdir(parents=True, exist_ok=True)
     if shutil.disk_usage(output).free < 2 * xapk.stat().st_size + 1024**3:
