@@ -4,8 +4,8 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 107,
-  "version": "android-107-builder-version",
+  "revision": 108,
+  "version": "android-108-runtime-info",
   "bytes": 426267,
   "sha256": "811da50dc9d1216a5dd63eb869eb5675f6cdc847863b9a0d03546237248c36cf",
   "resources": [
