@@ -3,7 +3,9 @@
 
 Run in CI after packaging, in the main repository only. The executable goes to
 the builder-<channel> release, replacing the previous build, with the build
-number in the asset's label ("TESL-Reborn-Builder.exe · build 7"). The
+number in the asset's label ("[Windows][Test]TESL-Reborn-Builder.exe · build 7").
+The file name itself stays TESL-Reborn-Builder(.exe): older Builders look
+for it to update themselves. The
 Builder reads that label and the SHA-256 GitHub reports for the asset
 (builder/selfupdate.py); nothing else is uploaded. The release is created on
 first use; test is marked as a pre-release.
@@ -19,8 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGACY_ASSETS = ("builder-windows.json", "builder-linux.json")
 
 
-def label(executable, build):
-    return f"{executable.name} · build {build}"
+def label(executable, build, channel="test", windows=sys.platform == "win32"):
+    """The name shown on the release page: [platform][channel] then the file."""
+    return f"[{'Windows' if windows else 'Linux'}][{channel.capitalize()}]{executable.name} · build {build}"
 
 
 def main():
@@ -40,7 +43,7 @@ def main():
         # A parallel job may have created it first.
         if created.returncode != 0 and subprocess.run(["gh", "release", "view", tag], capture_output=True).returncode != 0:
             raise SystemExit("Could not create release " + tag)
-    subprocess.run(["gh", "release", "upload", tag, f"{executable}#{label(executable, version['build'])}", "--clobber"],
+    subprocess.run(["gh", "release", "upload", tag, f"{executable}#{label(executable, version['build'], version['channel'])}", "--clobber"],
                    check=True)
     for name in LEGACY_ASSETS:
         subprocess.run(["gh", "release", "delete-asset", tag, name, "--yes"], capture_output=True)

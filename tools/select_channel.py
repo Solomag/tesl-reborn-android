@@ -34,6 +34,10 @@ def main():
     version = dict(channel=name, build=int(os.environ.get("GITHUB_RUN_NUMBER", "0")) if official else 0,
                    commit=os.environ.get("GITHUB_SHA", ""))
     (path.parents[1] / "builder/version.json").write_text(json.dumps(version) + "\n", encoding="utf-8")
+    # The CI artifacts are named [Platform][Channel]TESL-Reborn-Builder.
+    if os.environ.get("GITHUB_ENV"):
+        with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+            env.write(f"BUILDER_CHANNEL={name.capitalize()}\n")
     print(f"CHANNEL: {name} for {repository} {ref}; Builder build {version['build']}")
 
 

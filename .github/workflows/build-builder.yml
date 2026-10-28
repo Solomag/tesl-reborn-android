@@ -67,7 +67,7 @@ jobs:
           Get-Content dist/self-test.json
       - uses: actions/upload-artifact@v4
         with:
-          name: TESL-Reborn-Builder-Windows
+          name: "[Windows][${{ env.BUILDER_CHANNEL }}]TESL-Reborn-Builder"
           path: |
             dist/TESL-Reborn-Builder.exe
             dist/self-test.json
@@ -127,7 +127,7 @@ jobs:
           cat dist/self-test.json
       - uses: actions/upload-artifact@v4
         with:
-          name: TESL-Reborn-Builder-Linux-x86_64
+          name: "[Linux][${{ env.BUILDER_CHANNEL }}]TESL-Reborn-Builder"
           path: |
             dist/TESL-Reborn-Builder-Linux-x86_64.tar.gz
             dist/self-test.json

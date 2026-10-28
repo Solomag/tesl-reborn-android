@@ -91,7 +91,7 @@ Open a previous build позволяет выбрать папку предыд�
 
 GitHub Actions Build Windows Builder выполняет рецепт на Windows и проверяет
 замороженный EXE. После успешного запуска скачай artifact
-TESL-Reborn-Builder-Windows и распакуй в отдельную папку.
+[Windows][Test] или [Windows][Stable]TESL-Reborn-Builder и распакуй в отдельную папку.
 
 Для ручной сборки на Windows нужны Python 3.12, Node 18+ и JDK 17:
 
