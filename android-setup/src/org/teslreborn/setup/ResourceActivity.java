@@ -406,21 +406,23 @@ public class ResourceActivity extends Activity {
   }
 
   /**
-   * A labelled slider from min to max in steps; the label shows the value.
+   * A labelled slider over the given values; the label shows the value.
    * The default value removes the key, so the game keeps its own setting.
    */
   private void addGraphicsSlider(LinearLayout box, File file, JSONObject graphics, String key, String title,
-      int min, int max, int step, int standard, String unit, String hint) {
+      int[] values, int standard, String unit, String hint) {
     TextView label = UiStyle.label(this, box, title);
     SeekBar bar = new SeekBar(this);
-    bar.setMax((max - min) / step);
-    int saved = Math.max(min, Math.min(max, graphics.optInt(key, standard)));
-    bar.setProgress((saved - min) / step);
+    bar.setMax(values.length - 1);
+    int saved = graphics.optInt(key, standard), nearest = 0;
+    for (int i = 0; i < values.length; i++)
+      if (Math.abs(values[i] - saved) < Math.abs(values[nearest] - saved)) nearest = i;
+    bar.setProgress(nearest);
     bar.setProgressTintList(android.content.res.ColorStateList.valueOf(UiStyle.GOLD));
     bar.setThumbTintList(android.content.res.ColorStateList.valueOf(UiStyle.GOLD));
     bar.setPadding(UiStyle.dp(this, 8), UiStyle.dp(this, 12), UiStyle.dp(this, 8), UiStyle.dp(this, 12));
     Runnable show = () -> {
-      int value = min + bar.getProgress() * step;
+      int value = values[bar.getProgress()];
       label.setText(title + ": " + value + unit + (value == standard ? " (" + tr("standard") + ")" : ""));
     };
     show.run();
@@ -436,7 +438,7 @@ public class ResourceActivity extends Activity {
 
           @Override
           public void onStopTrackingTouch(SeekBar seekBar) {
-            int value = min + seekBar.getProgress() * step;
+            int value = values[seekBar.getProgress()];
             try {
               if (value == standard) graphics.remove(key);
               else graphics.put(key, value);
@@ -460,16 +462,26 @@ public class ResourceActivity extends Activity {
       config = new JSONObject();
     }
     final JSONObject graphics = config;
-    // Up to the fastest refresh rate this display offers (at least 60).
-    int fastest = 60;
+    // Report 44: 90 FPS on a 120 Hz display ran at 60, because frames are
+    // paced to whole refresh intervals. Offer only rates that divide one of
+    // this display's refresh rates (and always 60).
+    java.util.TreeSet<Integer> rates = new java.util.TreeSet<>();
+    rates.add(60);
     try {
-      for (android.view.Display.Mode mode : getWindowManager().getDefaultDisplay().getSupportedModes())
-        fastest = Math.max(fastest, Math.round(mode.getRefreshRate()));
+      for (android.view.Display.Mode mode : getWindowManager().getDefaultDisplay().getSupportedModes()) {
+        int hz = Math.round(mode.getRefreshRate());
+        for (int rate = 20; rate <= hz; rate++) if (hz % rate == 0) rates.add(rate);
+      }
     } catch (Exception ignored) {
     }
-    addGraphicsSlider(box, file, graphics, "frameRate", tr("Frame rate"), 20, fastest, 5, 60, " FPS",
+    int[] rateValues = new int[rates.size()];
+    int at = 0;
+    for (int rate : rates) rateValues[at++] = rate;
+    int[] scales = new int[15];
+    for (int i = 0; i < scales.length; i++) scales[i] = 30 + i * 5;
+    addGraphicsSlider(box, file, graphics, "frameRate", tr("Frame rate"), rateValues, 60, " FPS",
         tr("Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display."));
-    addGraphicsSlider(box, file, graphics, "renderScale", tr("Render resolution"), 30, 100, 5, 100, "%",
+    addGraphicsSlider(box, file, graphics, "renderScale", tr("Render resolution"), scales, 100, "%",
         tr("Lower resolution draws fewer pixels: faster and cooler, slightly softer. Applies on the next game start."));
     // The hook's corner frame counter. Until it is set here the hook shows it
     // on the Test channel only.

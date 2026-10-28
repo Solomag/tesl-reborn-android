@@ -7230,6 +7230,15 @@ Il2Cpp.perform(() => {
       if (call(call(node, "get_gameObject"), "get_activeInHierarchy")) shown.push(node);
     }
     if (shown.length < 2) return null;
+    const size = call(shown[0], "get_rect"), width = Number(size.field("m_Width").value), height = Number(size.field("m_Height").value);
+    if (width > 0 && height > 0) {
+      const layout = uiComponent(call(button, "get_gameObject"), "UnityEngine.UI.LayoutElement");
+      if (!isNull(layout)) {
+        call(layout, "set_preferredWidth", width);
+        call(layout, "set_preferredHeight", height);
+      }
+      call(button, "set_sizeDelta", call(shown[0], "get_sizeDelta"));
+    }
     const at = (node) => {
       const p = call(node, "get_position");
       return { x: Number(p.field("x").value), y: Number(p.field("y").value), z: Number(p.field("z").value) };

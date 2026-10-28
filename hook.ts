@@ -3360,6 +3360,15 @@ function uiComponent(go, type) {
       if (call(call(node, "get_gameObject"), "get_activeInHierarchy")) shown.push(node);
     }
     if (shown.length < 2) return null;
+    // Report 44: opened in battle, the tabs had no size yet when the button
+    // was styled (0x0), so it stayed too small and Preferences ran into it.
+    // Take the size again from a visible tab now.
+    const size = call(shown[0], "get_rect"), width = Number(size.field("m_Width").value), height = Number(size.field("m_Height").value);
+    if (width > 0 && height > 0) {
+      const layout = uiComponent(call(button, "get_gameObject"), "UnityEngine.UI.LayoutElement");
+      if (!isNull(layout)) { call(layout, "set_preferredWidth", width); call(layout, "set_preferredHeight", height); }
+      call(button, "set_sizeDelta", call(shown[0], "get_sizeDelta"));
+    }
     const at = node => { const p = call(node, "get_position"); return { x: Number(p.field("x").value), y: Number(p.field("y").value), z: Number(p.field("z").value) }; };
     const first = at(shown[0]), last = at(shown[shown.length - 1]);
     const gap = (last.x - first.x) / (shown.length - 1);
