@@ -3650,6 +3650,37 @@ function loadOverrides() {
   return o;
 }
 let currentSection = "startup";
+const cpuReport = (() => {
+  try {
+    const getCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
+    const read = (path) => {
+      try {
+        return String(File.readAllText(path)).trim();
+      } catch (_) {
+        return "";
+      }
+    };
+    return () => {
+      const allowed = (read("/proc/self/status").match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || "?";
+      const clocks = [];
+      for (let cpu = 0; cpu < 16; cpu++) {
+        const base = `/sys/devices/system/cpu/cpu${cpu}/cpufreq/`, current = Number(read(base + "scaling_cur_freq"));
+        if (!current) continue;
+        const max = Number(read(base + "cpuinfo_max_freq"));
+        clocks.push(`${cpu}:${(current / 1e6).toFixed(2)}/${(max / 1e6).toFixed(2)}`);
+      }
+      const heat = [];
+      for (let zone = 0; zone < 48; zone++) {
+        const temp = Number(read(`/sys/class/thermal/thermal_zone${zone}/temp`));
+        if (temp > 1e3) heat.push({ name: read(`/sys/class/thermal/thermal_zone${zone}/type`) || `zone${zone}`, c: temp / 1e3 });
+      }
+      heat.sort((a, b) => b.c - a.c);
+      log(`cpu: allowed ${allowed}, this thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; heat ${heat.slice(0, 3).map((h) => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
+    };
+  } catch (_) {
+    return null;
+  }
+})();
 const hookTimer = (() => {
   try {
     const spent = /* @__PURE__ */ new Map();
@@ -3673,6 +3704,10 @@ const hookTimer = (() => {
         total += value.us;
       });
       log(`hook cost: ${(total / seconds / 1e3).toFixed(1)} ms/s; ${top.join("; ")}`);
+      try {
+        cpuReport?.();
+      } catch (_) {
+      }
       spent.clear();
       since = Date.now();
       reportAt = since + 15e3;
@@ -4490,12 +4525,13 @@ Il2Cpp.perform(() => {
     pending.push({ at: Date.now() + delayMs, fn, tag });
   }
   function runPending() {
-    const now = Date.now();
-    for (let i = pending.length - 1; i >= 0; i--) {
-      if (pending[i].at > now) continue;
-      const task = pending.splice(i, 1)[0];
-      try {
-        Il2Cpp.mainThread.schedule(() => {
+    if (!pending.length) return;
+    const now = Date.now(), due = [];
+    for (let i = pending.length - 1; i >= 0; i--) if (pending[i].at <= now) due.push(pending.splice(i, 1)[0]);
+    if (!due.length) return;
+    try {
+      Il2Cpp.mainThread.schedule(() => {
+        for (const task of due) {
           const started = Date.now();
           try {
             task.fn();
@@ -4506,10 +4542,10 @@ Il2Cpp.perform(() => {
           const probe = globalThis.__teslRebornStallProbe;
           if (probe) probe.tasks++;
           if (took >= 100) log(`scheduled task slow ${took}ms (${task.tag || "untagged"})`);
-        });
-      } catch (e) {
-        log(`could not schedule a task: ${e}`);
-      }
+        }
+      });
+    } catch (e) {
+      log(`could not schedule a task: ${e}`);
     }
   }
   section("main thread scheduler", () => {
@@ -5163,10 +5199,14 @@ Il2Cpp.perform(() => {
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
     let lastLanguage = "", lastRestored = "", lastRestoredDictionary = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0, recentExplicitInputAt = 0, switchingAt = 0;
-    function noteLanguageInput() {
+    let inputMethods = null;
+    function noteLanguageInput(full = true) {
       try {
-        const input = ucls("UnityEngine.Input");
-        if (Number(input.method("get_touchCount", 0).invoke()) > 0 || input.method("GetMouseButtonDown", 1).invoke(0) || input.method("GetMouseButtonUp", 1).invoke(0)) {
+        if (!inputMethods) {
+          const input = ucls("UnityEngine.Input");
+          inputMethods = { touches: input.method("get_touchCount", 0), down: input.method("GetMouseButtonDown", 1), up: input.method("GetMouseButtonUp", 1) };
+        }
+        if (Number(inputMethods.touches.invoke()) > 0 || full && (inputMethods.down.invoke(0) || inputMethods.up.invoke(0))) {
           recentExplicitInputAt = Date.now();
           if (resourceSettingsOpen()) recentInputAt = recentExplicitInputAt;
         }
@@ -5176,7 +5216,7 @@ Il2Cpp.perform(() => {
     try {
       hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
         onEnter() {
-          noteLanguageInput();
+          noteLanguageInput(false);
         }
       });
     } catch (error) {
@@ -7474,6 +7514,7 @@ Il2Cpp.perform(() => {
   section("graphics: frame rate and quality", () => {
     const file = `${persistentPath()}/tesl-reborn-graphics.json`;
     const rate = graphicsFrameRate(readTextFile(file));
+    globalThis.__teslTargetRate = rate || 60;
     let chosenQuality = graphicsQuality(readTextFile(file));
     const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
     const icall = (names, ret, args) => {
@@ -9481,7 +9522,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
-    let loadingState = null;
+    let loadingState = null, lowFpsWindows = 0;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
@@ -9680,6 +9721,20 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           if (Date.now() >= fpsLogAt && measured) {
             fpsLogAt = Date.now() + 15e3;
             log(`fps: ${measured}`);
+            const target = globalThis.__teslTargetRate || 60;
+            lowFpsWindows = !versionScreen.visible && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
+            if (lowFpsWindows >= 2) {
+              lowFpsWindows = 0;
+              try {
+                const quality = ucls("UnityEngine.QualitySettings"), samples = Number(quality.method("get_antiAliasing", 0).invoke());
+                if (samples > 0) {
+                  quality.method("set_antiAliasing", 1).invoke(0);
+                  log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${target} for 30 s)`);
+                }
+              } catch (error) {
+                log(`graphics: antiAliasing drop failed: ${error}`);
+              }
+            }
           }
           if (fps) {
             uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);

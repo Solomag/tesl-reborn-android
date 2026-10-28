@@ -143,6 +143,33 @@ function loadOverrides(): Record<string, string> {
 // Interceptor.attach itself, which this Frida does not allow: the hook failed
 // before its first log line and was rolled back. Nothing here may throw.
 let currentSection = "startup";
+// Report 10: the Pixel 8 Pro ran the hook 4-13x slower with MTE off. Every 15 s
+// say where the process may run, which core this thread is on, the core clocks
+// and the hottest sensors, to tell small cores, low clocks and heat apart.
+const cpuReport = (() => {
+  try {
+    const getCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
+    const read = (path: string) => { try { return String((File as any).readAllText(path)).trim(); } catch (_) { return ""; } };
+    return () => {
+      const allowed = (read("/proc/self/status").match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || "?";
+      const clocks = [];
+      for (let cpu = 0; cpu < 16; cpu++) {
+        const base = `/sys/devices/system/cpu/cpu${cpu}/cpufreq/`, current = Number(read(base + "scaling_cur_freq"));
+        if (!current) continue;
+        const max = Number(read(base + "cpuinfo_max_freq"));
+        clocks.push(`${cpu}:${(current / 1e6).toFixed(2)}/${(max / 1e6).toFixed(2)}`);
+      }
+      const heat = [];
+      for (let zone = 0; zone < 48; zone++) {
+        const temp = Number(read(`/sys/class/thermal/thermal_zone${zone}/temp`));
+        if (temp > 1000) heat.push({ name: read(`/sys/class/thermal/thermal_zone${zone}/type`) || `zone${zone}`, c: temp / 1000 });
+      }
+      heat.sort((a, b) => b.c - a.c);
+      log(`cpu: allowed ${allowed}, this thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; ` +
+        `heat ${heat.slice(0, 3).map(h => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
+    };
+  } catch (_) { return null; }
+})();
 const hookTimer = (() => {
   try {
     const spent = new Map<string, { us: number; calls: number }>();
@@ -159,6 +186,7 @@ const hookTimer = (() => {
         .map(([key, value]) => `${key} ${(value.us / seconds / 1000).toFixed(1)} ms/s ${Math.round(value.calls / seconds)}/s`);
       let total = 0; spent.forEach(value => { total += value.us; });
       log(`hook cost: ${(total / seconds / 1000).toFixed(1)} ms/s; ${top.join("; ")}`);
+      try { cpuReport?.(); } catch (_) {}
       spent.clear(); since = Date.now(); reportAt = since + 15000;
     };
     micros();
@@ -950,12 +978,15 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     pending.push({ at: Date.now() + delayMs, fn, tag });
   }
   function runPending() {
-    const now = Date.now();
-    for (let i = pending.length - 1; i >= 0; i--) {
-      if (pending[i].at > now) continue;
-      const task = pending.splice(i, 1)[0];
-      try {
-        Il2Cpp.mainThread.schedule(() => {
+    if (!pending.length) return;
+    const now = Date.now(), due = [];
+    for (let i = pending.length - 1; i >= 0; i--) if (pending[i].at <= now) due.push(pending.splice(i, 1)[0]);
+    if (!due.length) return;
+    // One dispatch for all due tasks: each Il2Cpp.mainThread.schedule is a
+    // managed call of its own.
+    try {
+      Il2Cpp.mainThread.schedule(() => {
+        for (const task of due) {
           const started = Date.now();
           try { task.fn(); } catch (e) { log(`scheduled task failed: ${e}`); }
           // Deferred hook work runs on the main thread, so a slow task is a
@@ -965,9 +996,9 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           const probe = (globalThis as any).__teslRebornStallProbe;
           if (probe) probe.tasks++;
           if (took >= 100) log(`scheduled task slow ${took}ms (${task.tag || "untagged"})`);
-        });
-      } catch (e) { log(`could not schedule a task: ${e}`); }
-    }
+        }
+      });
+    } catch (e) { log(`could not schedule a task: ${e}`); }
   }
   section("main thread scheduler", () => {
     const services = cls(img, "SparkleServices.ServicesManager");
@@ -1602,11 +1633,17 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   section("translation fixes", () => {
     const localization = cls(img, "LocalizationManager");
     let lastLanguage = "", lastRestored = "", lastRestoredDictionary = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0, recentExplicitInputAt = 0, switchingAt = 0;
-    function noteLanguageInput() {
+    let inputMethods = null;
+    // Every frame only the touch count is read (one call instead of three plus
+    // lookups, ~10 ms/s on the Pixel 8 Pro); the mouse is checked on demand.
+    function noteLanguageInput(full = true) {
       try {
-        const input = ucls("UnityEngine.Input");
-        if (Number(input.method("get_touchCount", 0).invoke()) > 0 ||
-            input.method("GetMouseButtonDown", 1).invoke(0) || input.method("GetMouseButtonUp", 1).invoke(0)) {
+        if (!inputMethods) {
+          const input = ucls("UnityEngine.Input");
+          inputMethods = { touches: input.method("get_touchCount", 0), down: input.method("GetMouseButtonDown", 1), up: input.method("GetMouseButtonUp", 1) };
+        }
+        if (Number(inputMethods.touches.invoke()) > 0 ||
+            full && (inputMethods.down.invoke(0) || inputMethods.up.invoke(0))) {
           recentExplicitInputAt = Date.now();
           if (resourceSettingsOpen()) recentInputAt = recentExplicitInputAt;
         }
@@ -1616,7 +1653,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // the UI callback has returned. Remember actual input, not just stack depth.
     try {
       hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-        onEnter() { noteLanguageInput(); }
+        onEnter() { noteLanguageInput(false); }
       });
     } catch (error) { log(`resources: settings input trace unavailable: ${error}`); }
     // Account/bootstrap code also calls SetLanguage. Only an actual settings
@@ -3582,6 +3619,7 @@ function uiComponent(go, type) {
   section("graphics: frame rate and quality", () => {
     const file = `${persistentPath()}/tesl-reborn-graphics.json`;
     const rate = graphicsFrameRate(readTextFile(file));
+    globalThis.__teslTargetRate = rate || 60;
     let chosenQuality = graphicsQuality(readTextFile(file));
     // Report 38: Unity ignores targetFrameRate while vSync is on, and every
     // quality level turns it on. The managed setter is stripped; the engine
@@ -5224,7 +5262,7 @@ const chatWindows = new Map();
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
-    let loadingState = null;
+    let loadingState = null, lowFpsWindows = 0;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     // Unity's own null check: a destroyed object compares equal to null
@@ -5426,7 +5464,23 @@ const chatWindows = new Map();
           const measured = fpsSample(fpsCounter, Date.now());
           // Report 39: the setting looked like it did nothing; the log now
           // keeps the measured rate, so a report shows what changed.
-          if (Date.now() >= fpsLogAt && measured) { fpsLogAt = Date.now() + 15000; log(`fps: ${measured}`); }
+          if (Date.now() >= fpsLogAt && measured) {
+            fpsLogAt = Date.now() + 15000; log(`fps: ${measured}`);
+            // MSAA halved the frame rate on both test phones (reports 46-47).
+            // Below 3/4 of the target for 30 s outside loading: drop it.
+            const target = globalThis.__teslTargetRate || 60;
+            lowFpsWindows = !versionScreen.visible && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
+            if (lowFpsWindows >= 2) {
+              lowFpsWindows = 0;
+              try {
+                const quality = ucls("UnityEngine.QualitySettings"), samples = Number(quality.method("get_antiAliasing", 0).invoke());
+                if (samples > 0) {
+                  quality.method("set_antiAliasing", 1).invoke(0);
+                  log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${target} for 30 s)`);
+                }
+              } catch (error) { log(`graphics: antiAliasing drop failed: ${error}`); }
+            }
+          }
           if (fps) {
             uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);
             call(fpsText, "set_text", Il2Cpp.string(`${measured} FPS`));
