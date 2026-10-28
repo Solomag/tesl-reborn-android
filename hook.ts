@@ -3677,7 +3677,9 @@ function uiComponent(go, type) {
     {
       const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
       let next = 0;
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+      // Not hookAttach: the wait is idle time, and timing it showed the cap
+      // as ~100 ms/s of hook cost (report 17).
+      Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
         onEnter() {
           const limit = currentRate();
           if (!limit || limit >= 60) { next = 0; return; }

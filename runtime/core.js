@@ -7566,7 +7566,7 @@ Il2Cpp.perform(() => {
     {
       const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
       let next = 0;
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+      Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
         onEnter() {
           const limit = currentRate();
           if (!limit || limit >= 60) {
