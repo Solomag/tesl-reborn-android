@@ -3716,6 +3716,20 @@ function uiComponent(go, type) {
       else throw Error("no antiAliasing setter");
       return samples;
     }
+    // Report (1)(2): CPH2723 held 25 FPS in battle at any quality, cool, with
+    // the process allowed cores 0-5 only. The cpu: line is written from
+    // another thread; say where the game's own (main) thread runs, each minute.
+    let mainCpu = null, mainSamples = 0, mainReported = "";
+    function mainThreadReport() {
+      if (mainSamples++ % 4) return;
+      try {
+        if (mainCpu === null) mainCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
+        let allowed = "?";
+        try { allowed = (String((File as any).readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || "?"; } catch (_) {}
+        const line = `main thread on ${mainCpu()}, allowed ${allowed}`;
+        if (line !== mainReported || mainSamples % 20 === 1) { mainReported = line; log(`graphics: ${mode}, ${line}`); }
+      } catch (error) { if (mainReported !== "failed") { mainReported = "failed"; log(`graphics: main thread cpu unavailable: ${error}`); } }
+    }
     function inBattle() {
       if (boardType === null) boardType = img.classes.find(c => c.name === "BoardInputController")?.type.object || false;
       if (!boardType) return false;
@@ -3753,6 +3767,7 @@ function uiComponent(go, type) {
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
       if (loading) return;
+      mainThreadReport();
       let next = mode;
       try { next = inBattle() ? "battle" : "menu"; } catch (_) {}
       if (next !== mode) {
@@ -3783,7 +3798,10 @@ function uiComponent(go, type) {
             if (samples) { log(`graphics: antiAliasing ${samples}x -> off (${mode} fps ${measured} of ${reference} for 30 s)`); return; }
           } catch (error) { log(`graphics: antiAliasing drop failed: ${error}`); }
         }
-        const lower = ladder.find(step => step < effective);
+        // A cap above the measured rate changes nothing: CPH2723 went
+        // 120 -> 90 -> 60 -> 40 -> 30 at a steady 25. Go straight to the
+        // highest step near what the phone actually reaches.
+        const lower = ladder.find(step => step < effective && step <= Math.max(30, measured * 1.25));
         if (!lower) return;
         state.cap = globalThis.__teslRateCap = lower; saveAuto();
         log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);

@@ -7604,6 +7604,28 @@ Il2Cpp.perform(() => {
       else throw Error("no antiAliasing setter");
       return samples;
     }
+    let mainCpu = null, mainSamples = 0, mainReported = "";
+    function mainThreadReport() {
+      if (mainSamples++ % 4) return;
+      try {
+        if (mainCpu === null) mainCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
+        let allowed = "?";
+        try {
+          allowed = (String(File.readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || "?";
+        } catch (_) {
+        }
+        const line = `main thread on ${mainCpu()}, allowed ${allowed}`;
+        if (line !== mainReported || mainSamples % 20 === 1) {
+          mainReported = line;
+          log(`graphics: ${mode}, ${line}`);
+        }
+      } catch (error) {
+        if (mainReported !== "failed") {
+          mainReported = "failed";
+          log(`graphics: main thread cpu unavailable: ${error}`);
+        }
+      }
+    }
     function inBattle() {
       if (boardType === null) boardType = img.classes.find((c) => c.name === "BoardInputController")?.type.object || false;
       if (!boardType) return false;
@@ -7645,6 +7667,7 @@ Il2Cpp.perform(() => {
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
       if (loading) return;
+      mainThreadReport();
       let next = mode;
       try {
         next = inBattle() ? "battle" : "menu";
@@ -7693,7 +7716,7 @@ Il2Cpp.perform(() => {
             log(`graphics: antiAliasing drop failed: ${error}`);
           }
         }
-        const lower = ladder.find((step) => step < effective);
+        const lower = ladder.find((step) => step < effective && step <= Math.max(30, measured * 1.25));
         if (!lower) return;
         state.cap = globalThis.__teslRateCap = lower;
         saveAuto();
