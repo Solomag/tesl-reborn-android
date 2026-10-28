@@ -3440,12 +3440,14 @@ function uiComponent(go, type) {
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
-      Interceptor.attach(setRate.virtualAddress, {
-        onEnter(args) { args[0] = ptr(rate); },
-        onLeave() { schedule(0, () => { try { quality.method("set_vSyncCount", 1).invoke(0); } catch (_) {} }, "graphics vsync"); }
-      });
+      Interceptor.attach(setRate.virtualAddress, { onEnter(args) { args[0] = ptr(rate); } });
+      // Report 36: this player strips QualitySettings.set_vSyncCount, and
+      // failing on it skipped the rate itself. Android does not wait for
+      // vSync in Unity 2017 unless asked, so the rate goes on without it.
       schedule(0, () => {
-        try { quality.method("set_vSyncCount", 1).invoke(0); setRate.invoke(rate); log(`graphics: frame rate ${rate}`); }
+        const vsync = quality.tryMethod("set_vSyncCount", 1);
+        try { if (vsync) vsync.invoke(0); } catch (_) {}
+        try { setRate.invoke(rate); log(`graphics: frame rate ${rate}, now ${Number(application.method("get_targetFrameRate", 0).invoke())}`); }
         catch (error) { log(`graphics: frame rate failed: ${error}`); }
       }, "graphics frame rate");
     }
@@ -3455,6 +3457,17 @@ function uiComponent(go, type) {
     const updateUi = cls(img, "SettingsWin").tryMethod("UpdateUi", 0);
     if (!updateUi || updateUi.virtualAddress.isNull()) return;
     let reported = "";
+    // The game asks to keep the display settings after a quality change; say
+    // what Unity applied so a test can compare levels.
+    const onQuality = cls(img, "SettingsWin").tryMethod("HandleQualityOnValueChanged", 1);
+    if (onQuality && !onQuality.virtualAddress.isNull()) Interceptor.attach(onQuality.virtualAddress, {
+      onLeave() {
+        schedule(0, () => {
+          const read = (name) => { try { return String(quality.method(name, 0).invoke()); } catch (_) { return "?"; } };
+          log(`graphics: quality level ${read("GetQualityLevel")}, antiAliasing ${read("get_antiAliasing")}, textureLimit ${read("get_masterTextureLimit")}`);
+        }, "graphics quality applied");
+      }
+    });
     Interceptor.attach(updateUi.virtualAddress, {
       onEnter(args) { this.self = args[0]; },
       onLeave() {
@@ -3468,16 +3481,14 @@ function uiComponent(go, type) {
               const go = call(dropdown, "get_gameObject");
               const shown = Boolean(call(go, "get_activeSelf"));
               if (!shown) call(go, "SetActive", true);
-              // Report 35: the dropdown itself is active but a parent row is
-              // hidden on mobile. Show the hidden parents up to the window.
-              const top = call(call(window.target, "get_gameObject"), "get_transform");
-              let parents = 0;
-              for (let node = call(call(go, "get_transform"), "get_parent"); unityAlive(node) && !node.handle.equals(top.handle) && parents < 6; node = call(node, "get_parent"), parents++) {
-                const holder = call(node, "get_gameObject");
-                if (!call(holder, "get_activeSelf")) { call(holder, "SetActive", true); log(`graphics: showed hidden parent ${call(holder, "get_name")?.content}`); }
-              }
+              // Report 36: showing the hidden Settings_Tab_Video panel laid it
+              // over Audio. The window has its own Video tab button
+              // (_videoButton, tab 0, left of Audio) that mobile hides; show
+              // it and let the game's tabs switch the panels.
+              const video = window.target.field("_videoButton").value;
               const options = Number(call(call(dropdown, "get_options"), "get_Count"));
-              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, live=${Boolean(call(go, "get_activeInHierarchy"))}`;
+              const tab = unityAlive(video) ? (call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown")) : "no video tab";
+              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}`;
             }
             if (state !== reported) { reported = state; log(`graphics: ${state}`); }
           } catch (error) { log(`graphics: quality check failed: ${error}`); }
@@ -4932,6 +4943,15 @@ const chatWindows = new Map();
     }catch(_){}
     // The splash component disappears while Unity is still loading resources.
     // Keep the version until real menu initialization, rather than that splash's lifetime.
+    if(!startupVersionComplete)try {
+      // Report 36: after a crash the game resumed straight into the match,
+      // the main menu never initialised and the badge stayed all battle.
+      for(const name of ["BoardInputController","MatchIntroWin"]) {
+        const owner=img.classes.find(c=>c.name===name);if(!owner)continue;
+        const values=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(owner.type.object);
+        for(let i=0;i<values.length;i++)if(call(call(values.get(i),"get_gameObject"),"get_activeInHierarchy")){startupVersionComplete=true;break;}
+      }
+    }catch(_){}
     if(!startupVersionComplete && !startupReadyHooked)try {
       const owner=img.classes.find(c=>c.name==="MainMenuNavManager");
       if(owner) {
@@ -4945,7 +4965,31 @@ const chatWindows = new Map();
     return versionScreenState={visible:startupVersionVisible(scene,startupVersionComplete),scene};
   }
 
+  // A frame counter for tests (Game Data cannot show the real rate). On by
+  // default on the Test channel; tesl-reborn-graphics.json "showFps" decides
+  // when present.
+  const fpsCounter = { frames: 0, since: Date.now(), value: 0 };
+  function fpsMeterEnabled() {
+    try {
+      const graphics = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`) || "null");
+      if (typeof graphics?.showFps === "boolean") return graphics.showFps;
+    } catch (_) {}
+    try {
+      const updater = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-updater.json`) || "null");
+      return /\/updates\/test\//.test(String(updater?.feedUrl || ""));
+    } catch (_) { return false; }
+  }
+  function fpsSample(counter, now) {
+    const elapsed = now - counter.since;
+    if (elapsed < 1000) return counter.value;
+    counter.value = Math.round(counter.frames * 1000 / elapsed);
+    counter.frames = 0; counter.since = now;
+    return counter.value;
+  }
+
   function createUpdateBanner() {
+    const showFps = fpsMeterEnabled();
+    let fps = null, fpsText = null;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
@@ -4990,6 +5034,7 @@ const chatWindows = new Map();
       }
       for(const asset of [gradientSprite,gradientTexture])if(asset)try{ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(asset);}catch(_){}
       gradientTexture=gradientSprite=badgeBackground=null;
+      fps = fpsText = null;
       root = label = canvas = panel = badge = badgeText = null;
     }
     function ensure(wanted) {
@@ -5079,6 +5124,15 @@ const chatWindows = new Map();
         try{call(badgeText,badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"set_richText":"set_supportRichText",true);}catch(_){}
         call(badgeText,"set_alignment",uiEnum(badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"TMPro.TextAlignmentOptions":"UnityEngine.TextAnchor",badgeText.class.type.name==="TMPro.TextMeshProUGUI"?"Center":"MiddleCenter"));
         call(badgeText, "set_color", rgba(1, 1, 1, 1));
+        if (showFps) {
+          fps = uiNew("RebornFps", call(go, "get_transform"));
+          const back = uiAdd(fps, "UnityEngine.UI.Image");
+          call(back, "set_color", rgba(0, 0, 0, .6)); call(back, "set_raycastTarget", false);
+          const inner = uiNew("Value", call(fps, "get_transform")); uiStretch(uiRect(inner));
+          fpsText = uiSystemText(inner, "", 22);
+          noticeTextLayout(fpsText);
+          call(fpsText, "set_color", rgba(.4, 1, .4, 1));
+        }
         // DontDestroyOnLoad only applies to root objects.
         if (!nested) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
         call(panel, "SetActive", false);
@@ -5102,7 +5156,7 @@ const chatWindows = new Map();
         }
         try {
           const versionScreen=loadingVersionState();
-          ensure(versionScreen.visible || Boolean(message));
+          ensure(versionScreen.visible || Boolean(message) || showFps);
           // No host yet: nothing was built; the message stays queued (report 25:
           // this tick went on with a null Canvas and never got past it).
           if (!root) return;
@@ -5128,6 +5182,10 @@ const chatWindows = new Map();
           if (shownVersion !== versionScreen.visible) {
             shownVersion = versionScreen.visible;
             log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);
+          }
+          if (fps) {
+            uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);
+            call(fpsText, "set_text", Il2Cpp.string(`${fpsSample(fpsCounter, Date.now())} FPS`));
           }
           const caption = portVersionCaption();
           call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android")+"</size>"));
@@ -5170,6 +5228,7 @@ const chatWindows = new Map();
     let nextPoll = 0, queued = false;
     Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
+        fpsCounter.frames++;
         if (queued || Date.now() < nextPoll) return;
         queued = true; nextPoll = Date.now() + 250;
         schedule(0, () => {
