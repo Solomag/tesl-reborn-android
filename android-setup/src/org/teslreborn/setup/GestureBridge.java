@@ -26,6 +26,7 @@ public final class GestureBridge {
 
   /** Temporary diagnostic overlay. Drawable overlays never receive/consume touch. */
   public static void onResume(Activity activity) {
+    requestRefreshRate(activity);
     View view = activity.getWindow().getDecorView();
     view.post(
         () -> {
@@ -62,6 +63,48 @@ public final class GestureBridge {
             status(activity, "marker-error: " + error.getClass().getSimpleName());
           }
         });
+  }
+
+  /**
+   * Unity 2017 never asks Android for a display rate, so phones keep old games
+   * at 60 Hz and a 90/120 FPS target cannot be reached. With a frame rate chosen
+   * in Game data, ask for the display mode of the same resolution whose
+   * refresh rate is the lowest one at or above it (the highest if none is).
+   */
+  static void requestRefreshRate(Activity activity) {
+    try {
+      int wanted =
+          PackInstaller.json(new File(activity.getExternalFilesDir(null), "tesl-reborn-graphics.json"))
+              .optInt("frameRate", 0);
+      if (wanted <= 0) return;
+      android.view.Display display = activity.getWindowManager().getDefaultDisplay();
+      android.view.Display.Mode current = display.getMode(), chosen = null;
+      for (android.view.Display.Mode mode : display.getSupportedModes()) {
+        if (mode.getPhysicalWidth() != current.getPhysicalWidth()
+            || mode.getPhysicalHeight() != current.getPhysicalHeight()) continue;
+        float rate = mode.getRefreshRate();
+        if (chosen == null) chosen = mode;
+        else if (chosen.getRefreshRate() < wanted - 0.5f
+            ? rate > chosen.getRefreshRate()
+            : rate >= wanted - 0.5f && rate < chosen.getRefreshRate()) chosen = mode;
+      }
+      if (chosen == null) return;
+      android.view.WindowManager.LayoutParams params = activity.getWindow().getAttributes();
+      if (params.preferredDisplayModeId != chosen.getModeId()) {
+        params.preferredDisplayModeId = chosen.getModeId();
+        activity.getWindow().setAttributes(params);
+      }
+      refreshStatus(activity, new JSONObject().put("wanted", wanted)
+          .put("chosenHz", chosen.getRefreshRate()).put("currentHz", current.getRefreshRate())
+          .put("modes", display.getSupportedModes().length));
+    } catch (Exception error) {
+      try { refreshStatus(activity, new JSONObject().put("error", error.toString())); } catch (Exception ignored) {}
+    }
+  }
+
+  private static void refreshStatus(Activity activity, JSONObject state) throws Exception {
+    File root = activity.getExternalFilesDir(null);
+    if (root != null) PackInstaller.writeJson(new File(root, "tesl-reborn-refresh-status.json"), state);
   }
 
   private static float zone(View view) {
