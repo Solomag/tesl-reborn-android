@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 111,
-  "version": "android-111-chat-scheduler",
-  "bytes": 429623,
-  "sha256": "ebdd640078493e819f921d7fcbec0bfb2eb085bcfdda196780e9e70de11d7192",
+  "revision": 112,
+  "version": "android-112-heat-cap",
+  "bytes": 431034,
+  "sha256": "dd2e01b5678a04b078ac08c3aec26fcda01535feb3348229c776c92a258dc94e",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "9832e9f2fed65faa2f8e3c862309f59cea21c5ec188d06d57145bbac21e4bd3d"
+  "sourceSha256": "6451304969a1fed54405784af8bc11313c4d44a1cc7793a58953a947bccafc2e"
 }

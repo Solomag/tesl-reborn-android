@@ -7537,16 +7537,18 @@ Il2Cpp.perform(() => {
     const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
     const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
     function applyRate(why) {
-      if (!rate) return;
+      const cap = globalThis.__teslRateCap, effective = cap ? Math.min(rate || 60, cap) : rate || (why === "cap lifted" ? 60 : 0);
+      if (!effective) return;
       try {
         if (setVSync) setVSync(0);
-        if (engineSetRate) engineSetRate(rate);
-        else setRate.invoke(rate);
+        if (engineSetRate) engineSetRate(effective);
+        else setRate.invoke(effective);
         log(`graphics: frame rate ${rate} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
       } catch (error) {
         log(`graphics: frame rate failed: ${error}`);
       }
     }
+    globalThis.__teslApplyRate = applyRate;
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
@@ -9541,7 +9543,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
-    let loadingState = null, lowFpsWindows = 0, bestFps = 0;
+    let loadingState = null, lowFpsWindows = 0, bestFps = 0, rateCapUntil = 0;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
@@ -9740,19 +9742,39 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           if (Date.now() >= fpsLogAt && measured) {
             fpsLogAt = Date.now() + 15e3;
             log(`fps: ${measured}`);
-            if (!versionScreen.visible) bestFps = Math.max(bestFps, measured);
-            const target = Math.min(globalThis.__teslTargetRate || 60, bestFps || 60);
-            lowFpsWindows = !versionScreen.visible && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
-            if (lowFpsWindows >= 2) {
+            const capped = globalThis.__teslRateCap;
+            if (capped && Date.now() >= rateCapUntil) {
+              globalThis.__teslRateCap = 0;
               lowFpsWindows = 0;
               try {
-                const quality = ucls("UnityEngine.QualitySettings"), samples = Number(quality.method("get_antiAliasing", 0).invoke());
+                globalThis.__teslApplyRate?.("cap lifted");
+              } catch (_) {
+              }
+            }
+            if (!versionScreen.visible && !capped) bestFps = Math.max(bestFps, measured);
+            const target = Math.min(globalThis.__teslTargetRate || 60, bestFps || 60);
+            lowFpsWindows = !versionScreen.visible && !capped && target > 30 && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
+            if (lowFpsWindows >= 2) {
+              lowFpsWindows = 0;
+              let samples = 0;
+              try {
+                const quality = ucls("UnityEngine.QualitySettings");
+                samples = Number(quality.method("get_antiAliasing", 0).invoke());
                 if (samples > 0) {
                   quality.method("set_antiAliasing", 1).invoke(0);
                   log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${target} for 30 s)`);
                 }
               } catch (error) {
                 log(`graphics: antiAliasing drop failed: ${error}`);
+              }
+              if (!samples) {
+                globalThis.__teslRateCap = 30;
+                rateCapUntil = Date.now() + 5 * 6e4;
+                log(`graphics: frame rate capped to 30 for 5 min (fps ${measured} of ${target} for 30 s)`);
+                try {
+                  globalThis.__teslApplyRate?.("heat cap");
+                } catch (_) {
+                }
               }
             }
           }
@@ -9858,15 +9880,16 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       onLeave() {
         if (taken || Date.now() - resourceTraceStarted < 6e4) return;
         taken = true;
-        schedule(0, () => {
-          const report = {
-            at: (/* @__PURE__ */ new Date()).toISOString(),
-            language: resourceLanguage(),
-            patch: globalThis.TeslRebornUpdater?.current()?.revision,
-            elapsedMs: Date.now() - resourceTraceStarted,
-            events: resourceTrace.slice(),
-            bundles: []
-          };
+        const report = {
+          at: (/* @__PURE__ */ new Date()).toISOString(),
+          language: resourceLanguage(),
+          patch: globalThis.TeslRebornUpdater?.current()?.revision,
+          elapsedMs: Date.now() - resourceTraceStarted,
+          events: resourceTrace.slice(),
+          bundles: []
+        };
+        const steps = [];
+        steps.push(() => {
           try {
             const manager = cls(img, "AssetBundles.AssetBundleManager");
             for (const field of manager.fields.filter((f) => f.isStatic && /load|bundle|error/i.test(f.name) && /Dictionary/.test(f.type.name))) {
@@ -9895,6 +9918,8 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           } catch (error) {
             report.error = String(error).slice(0, 160);
           }
+        });
+        steps.push(() => {
           try {
             report.menu = [];
             const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
@@ -9920,8 +9945,10 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           } catch (error) {
             report.menuError = String(error).slice(0, 160);
           }
+        });
+        steps.push(() => {
+          report.shopImages = [];
           try {
-            report.shopImages = [];
             const images = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object);
             for (let i = 0; i < images.length && report.shopImages.length < 40; i++) {
               const image = images.get(i), go = call(image, "get_gameObject");
@@ -9946,6 +9973,8 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           } catch (error) {
             report.shopError = String(error).slice(0, 160);
           }
+        });
+        steps.push(() => {
           try {
             const images = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.RawImage").type.object);
             for (let i = 0; i < images.length && report.shopImages.length < 64; i++) {
@@ -9965,10 +9994,23 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           } catch (error) {
             report.shopRawError = String(error).slice(0, 160);
           }
+        });
+        steps.push(() => {
           lastShop = rememberShopSnapshot(lastShop, report);
           report.lastShop = lastShop;
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`, JSON.stringify(report));
-        }, "resource diagnostics snapshot");
+        });
+        const next = () => {
+          const step = steps.shift();
+          if (step) schedule(0, () => {
+            try {
+              step();
+            } finally {
+              next();
+            }
+          }, "resource diagnostics snapshot");
+        };
+        next();
       }
     });
   });

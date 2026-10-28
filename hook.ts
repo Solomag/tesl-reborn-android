@@ -3647,13 +3647,16 @@ function uiComponent(go, type) {
     const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
     const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
     function applyRate(why) {
-      if (!rate) return;
+      // Without a chosen rate the game's own 60 is restored after a heat cap.
+      const cap = globalThis.__teslRateCap, effective = cap ? Math.min(rate || 60, cap) : rate || (why === "cap lifted" ? 60 : 0);
+      if (!effective) return;
       try {
         if (setVSync) setVSync(0);
-        if (engineSetRate) engineSetRate(rate); else setRate.invoke(rate);
+        if (engineSetRate) engineSetRate(effective); else setRate.invoke(effective);
         log(`graphics: frame rate ${rate} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
       } catch (error) { log(`graphics: frame rate failed: ${error}`); }
     }
+    globalThis.__teslApplyRate = applyRate;
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
@@ -5288,7 +5291,7 @@ const chatWindows = new Map();
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
-    let loadingState = null, lowFpsWindows = 0, bestFps = 0;
+    let loadingState = null, lowFpsWindows = 0, bestFps = 0, rateCapUntil = 0;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     // Unity's own null check: a destroyed object compares equal to null
@@ -5496,18 +5499,33 @@ const chatWindows = new Map();
             // Below 3/4 of the target for 30 s outside loading: drop it.
             // Report 11: 120 was chosen but 60 was the most the phone reached;
             // compare with the best rate seen, not the unreachable target.
-            if (!versionScreen.visible) bestFps = Math.max(bestFps, measured);
+            const capped = globalThis.__teslRateCap;
+            // Reports 11-13: a hot phone halves its clocks and the rate swings
+            // 60 -> 22. A steady 30 looks better and lets it cool; the cap is
+            // lifted after 5 minutes and comes back if the phone is still hot.
+            if (capped && Date.now() >= rateCapUntil) {
+              globalThis.__teslRateCap = 0; lowFpsWindows = 0;
+              try { globalThis.__teslApplyRate?.("cap lifted"); } catch (_) {}
+            }
+            if (!versionScreen.visible && !capped) bestFps = Math.max(bestFps, measured);
             const target = Math.min(globalThis.__teslTargetRate || 60, bestFps || 60);
-            lowFpsWindows = !versionScreen.visible && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
+            lowFpsWindows = !versionScreen.visible && !capped && target > 30 && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
             if (lowFpsWindows >= 2) {
               lowFpsWindows = 0;
+              let samples = 0;
               try {
-                const quality = ucls("UnityEngine.QualitySettings"), samples = Number(quality.method("get_antiAliasing", 0).invoke());
+                const quality = ucls("UnityEngine.QualitySettings");
+                samples = Number(quality.method("get_antiAliasing", 0).invoke());
                 if (samples > 0) {
                   quality.method("set_antiAliasing", 1).invoke(0);
                   log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${target} for 30 s)`);
                 }
               } catch (error) { log(`graphics: antiAliasing drop failed: ${error}`); }
+              if (!samples) {
+                globalThis.__teslRateCap = 30; rateCapUntil = Date.now() + 5 * 60000;
+                log(`graphics: frame rate capped to 30 for 5 min (fps ${measured} of ${target} for 30 s)`);
+                try { globalThis.__teslApplyRate?.("heat cap"); } catch (_) {}
+              }
             }
           }
           if (fps) {
@@ -5590,10 +5608,13 @@ const chatWindows = new Map();
       onLeave() {
         if (taken || Date.now() - resourceTraceStarted < 60000) return;
         taken = true;
-        schedule(0, () => {
-          const report:any = {at:new Date().toISOString(),language:resourceLanguage(),
+        // Report 13: the whole snapshot held the main thread for 430 ms. It
+        // needs Unity, so it stays there, one part per frame.
+        const report:any = {at:new Date().toISOString(),language:resourceLanguage(),
             patch:globalThis.TeslRebornUpdater?.current()?.revision,elapsedMs:Date.now()-resourceTraceStarted,
             events:resourceTrace.slice(),bundles:[]};
+        const steps=[];
+        steps.push(() => {
           try {
             const manager = cls(img,"AssetBundles.AssetBundleManager");
             for (const field of manager.fields.filter(f=>f.isStatic && /load|bundle|error/i.test(f.name) && /Dictionary/.test(f.type.name))) {
@@ -5611,6 +5632,8 @@ const chatWindows = new Map();
               report.bundles.push(item);
             }
           } catch(error) { report.error=String(error).slice(0,160); }
+        });
+        steps.push(() => {
           // A connected account can still show an empty main menu. Capture
           // component activity, not player text or a speculative scene reset.
           try {
@@ -5632,8 +5655,10 @@ const chatWindows = new Map();
               }
             }
           } catch(error) {report.menuError=String(error).slice(0,160);}
+        });
+        steps.push(() => {
+          report.shopImages=[];
           try {
-            report.shopImages=[];
             const images=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object);
             for(let i=0;i<images.length && report.shopImages.length<40;i++) {
               const image=images.get(i),go=call(image,"get_gameObject");
@@ -5648,6 +5673,8 @@ const chatWindows = new Map();
               report.shopImages.push(item);
             }
           }catch(error){report.shopError=String(error).slice(0,160);}
+        });
+        steps.push(() => {
           try {
             const images=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.RawImage").type.object);
             for(let i=0;i<images.length && report.shopImages.length<64;i++) {
@@ -5661,12 +5688,16 @@ const chatWindows = new Map();
               report.shopImages.push(item);
             }
           }catch(error){report.shopRawError=String(error).slice(0,160);}
+        });
+        steps.push(() => {
           // Preserve the last actual shop snapshot when navigating to Game Data
           // to share a report; the main-menu Store shortcut is not a shop view.
           lastShop=rememberShopSnapshot(lastShop,report);
           report.lastShop=lastShop;
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`,JSON.stringify(report));
-        }, "resource diagnostics snapshot");
+        });
+        const next = () => { const step = steps.shift(); if (step) schedule(0, () => { try { step(); } finally { next(); } }, "resource diagnostics snapshot"); };
+        next();
       }
     });
   });
