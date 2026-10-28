@@ -18,3 +18,12 @@ console.log('PASS: the Game Data frame rate is read only for 30/60/90/120; missi
 assert.equal(c.graphicsQuality('{"quality":0}'),0);assert.equal(c.graphicsQuality('{"quality":3}'),3);
 assert.equal(c.graphicsQuality('{"quality":4}'),null);assert.equal(c.graphicsQuality('{"frameRate":30}'),null);assert.equal(c.graphicsQuality('x'),null);
 console.log('PASS: a saved quality of VeryLow..High replaces the device pick; Auto keeps it');
+
+assert.equal(c.graphicsRenderScale('{"renderScale":75}'),75);assert.equal(c.graphicsRenderScale('{"renderScale":100}'),null);assert.equal(c.graphicsRenderScale('{}'),null);
+{
+ const state={width:0,height:0};
+ assert.deepEqual({...c.scaledResolution(state,2841,1344,75)},{width:2131,height:1008},'the screen size is scaled');
+ assert.deepEqual({...c.scaledResolution(state,2131,1008,75)},{width:2131,height:1008},'the scaled size is not scaled again');
+ assert.deepEqual({...c.scaledResolution(state,2841,1344,50)},{width:1421,height:672});
+ console.log('PASS: the render resolution scales the screen size once and never compounds');
+}

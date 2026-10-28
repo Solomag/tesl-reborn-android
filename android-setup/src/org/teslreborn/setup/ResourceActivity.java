@@ -444,6 +444,32 @@ public class ResourceActivity extends Activity {
         this,
         box,
         tr("Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display."));
+    UiStyle.label(this, box, tr("Render resolution"));
+    final int[] scales = {0, 75, 50};
+    Spinner resolution = new Spinner(this);
+    UiStyle.field(this, resolution);
+    resolution.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
+        new String[] {tr("Full screen (100%)"), "75%", "50%"}));
+    for (int i = 0; i < scales.length; i++) if (scales[i] == graphics.optInt("renderScale", 0)) resolution.setSelection(i);
+    resolution.setOnItemSelectedListener(
+        new android.widget.AdapterView.OnItemSelectedListener() {
+          @Override
+          public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+            if (graphics.optInt("renderScale", 0) == scales[position]) return;
+            try {
+              if (scales[position] == 0) graphics.remove("renderScale");
+              else graphics.put("renderScale", scales[position]);
+              PackInstaller.writeJson(file, graphics);
+            } catch (Exception error) {
+              message(error.toString());
+            }
+          }
+
+          @Override
+          public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+    box.addView(resolution);
+    UiStyle.body(this, box, tr("Lower resolution draws fewer pixels: faster and cooler, slightly softer. Applies on the next game start."));
     // The hook's corner frame counter. Until it is set here the hook shows it
     // on the Test channel only.
     Switch counter = new Switch(this);

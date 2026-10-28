@@ -7348,6 +7348,55 @@ Il2Cpp.perform(() => {
       return null;
     }
   }
+  function graphicsRenderScale(text) {
+    try {
+      const value = Number(JSON.parse(text || "null")?.renderScale);
+      return [50, 75].includes(value) ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function scaledResolution(state, width, height, percent) {
+    if (width * height > state.width * state.height) {
+      state.width = width;
+      state.height = height;
+    }
+    const target = { width: Math.round(state.width * percent / 100), height: Math.round(state.height * percent / 100) };
+    return width > target.width ? target : { width, height };
+  }
+  section("graphics: render resolution", () => {
+    const percent = graphicsRenderScale(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`));
+    if (!percent) return;
+    const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+    const name = "UnityEngine.Screen::SetResolution(System.Int32,System.Int32,System.Boolean,System.Int32)";
+    const at = resolve(Memory.allocUtf8String(name));
+    if (at.isNull()) {
+      log("graphics: render resolution unavailable (no engine SetResolution)");
+      return;
+    }
+    const state = { width: 0, height: 0 };
+    Interceptor.attach(at, {
+      onEnter(args) {
+        const width = args[0].toInt32(), height = args[1].toInt32();
+        const size = scaledResolution(state, width, height, percent);
+        if (size.width === width) return;
+        args[0] = ptr(size.width);
+        args[1] = ptr(size.height);
+        log(`graphics: render resolution ${width}x${height} -> ${size.width}x${size.height} (${percent}%)`);
+      }
+    });
+    const setResolution = new NativeFunction(at, "void", ["int", "int", "bool", "int"]);
+    schedule(0, () => {
+      try {
+        const screen = ucls("UnityEngine.Screen");
+        const width = Number(screen.method("get_width", 0).invoke()), height = Number(screen.method("get_height", 0).invoke());
+        const fullscreen = Boolean(screen.method("get_fullScreen", 0).invoke());
+        setResolution(width, height, fullscreen ? 1 : 0, 0);
+      } catch (error) {
+        log(`graphics: render resolution failed: ${error}`);
+      }
+    }, "graphics render resolution");
+  });
   section("graphics: frame rate and quality", () => {
     const file = `${persistentPath()}/tesl-reborn-graphics.json`;
     const rate = graphicsFrameRate(readTextFile(file));

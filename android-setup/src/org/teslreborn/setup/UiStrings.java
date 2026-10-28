@@ -115,6 +115,33 @@ final class UiStrings {
           "Otomatik yama güncellemeleri"
         });
     TEXT.put(
+        "Render resolution",
+        new String[] {
+          "Render resolution", "Renderauflösung", "Resolución de renderizado", "Resolución de renderizado",
+          "Résolution de rendu", "Risoluzione di rendering", "Rozdzielczość renderowania", "Resolução de renderização",
+          "Разрешение рендера", "İşleme çözünürlüğü"
+        });
+    TEXT.put(
+        "Full screen (100%)",
+        new String[] {
+          "Full screen (100%)", "Voll (100 %)", "Completa (100%)", "Completa (100%)", "Pleine (100 %)",
+          "Piena (100%)", "Pełna (100%)", "Total (100%)", "Полное (100%)", "Tam (%100)"
+        });
+    TEXT.put(
+        "Lower resolution draws fewer pixels: faster and cooler, slightly softer. Applies on the next game start.",
+        new String[] {
+          "Lower resolution draws fewer pixels: faster and cooler, slightly softer. Applies on the next game start.",
+          "Geringere Auflösung zeichnet weniger Pixel: schneller und kühler, etwas weicher. Gilt ab dem nächsten Spielstart.",
+          "Menor resolución dibuja menos píxeles: más rápido y menos calor, algo más suave. Se aplica en el próximo inicio.",
+          "Menor resolución dibuja menos píxeles: más rápido y menos calor, algo más suave. Se aplica en el próximo inicio.",
+          "Une résolution plus basse dessine moins de pixels : plus rapide et moins chaud, un peu plus doux. S’applique au prochain lancement.",
+          "Una risoluzione più bassa disegna meno pixel: più veloce e meno calore, un po' più morbida. Si applica al prossimo avvio.",
+          "Niższa rozdzielczość rysuje mniej pikseli: szybciej i chłodniej, nieco miękciej. Działa od następnego uruchomienia.",
+          "Resolução menor desenha menos pixels: mais rápido e menos calor, um pouco mais suave. Aplica-se no próximo início.",
+          "Меньшее разрешение рисует меньше пикселей: быстрее и меньше греет, картинка чуть мягче. Применится при следующем запуске игры.",
+          "Düşük çözünürlük daha az piksel çizer: daha hızlı ve serin, biraz daha yumuşak. Bir sonraki oyun başlangıcında uygulanır."
+        });
+    TEXT.put(
         "Show FPS counter",
         new String[] {
           "Show FPS counter", "FPS-Zähler anzeigen", "Mostrar contador de FPS", "Mostrar contador de FPS",

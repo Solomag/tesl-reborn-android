@@ -3466,6 +3466,53 @@ function uiComponent(go, type) {
       return Number.isInteger(value) && value >= 0 && value <= 3 ? value : null;
     } catch (_) { return null; }
   }
+  // Render resolution in percent of the screen; 100 (or nothing) keeps it.
+  function graphicsRenderScale(text) {
+    try {
+      const value = Number(JSON.parse(text || "null")?.renderScale);
+      return [50, 75].includes(value) ? value : null;
+    } catch (_) { return null; }
+  }
+  // The width and height to draw at: the largest size asked for so far is
+  // the screen; smaller requests (the game re-applying the scaled size) are
+  // left alone, so the scale never compounds.
+  function scaledResolution(state, width, height, percent) {
+    if (width * height > state.width * state.height) { state.width = width; state.height = height; }
+    const target = { width: Math.round(state.width * percent / 100), height: Math.round(state.height * percent / 100) };
+    return width > target.width ? target : { width, height };
+  }
+  section("graphics: render resolution", () => {
+    const percent = graphicsRenderScale(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`));
+    if (!percent) return;
+    // Report from a Pixel 8 Pro: the game draws at the full 2841x1344 with 4x
+    // antialiasing and drops to 5-12 FPS in matches. Unity scales the picture
+    // and touches to the screen itself; every resolution request goes
+    // through this engine function, so it is the one place to lower it.
+    const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+    const name = "UnityEngine.Screen::SetResolution(System.Int32,System.Int32,System.Boolean,System.Int32)";
+    const at = resolve(Memory.allocUtf8String(name));
+    if (at.isNull()) { log("graphics: render resolution unavailable (no engine SetResolution)"); return; }
+    const state = { width: 0, height: 0 };
+    Interceptor.attach(at, {
+      onEnter(args) {
+        const width = args[0].toInt32(), height = args[1].toInt32();
+        const size = scaledResolution(state, width, height, percent);
+        if (size.width === width) return;
+        args[0] = ptr(size.width); args[1] = ptr(size.height);
+        log(`graphics: render resolution ${width}x${height} -> ${size.width}x${size.height} (${percent}%)`);
+      }
+    });
+    // The game set its resolution before the hook ran: apply the scale now.
+    const setResolution = new NativeFunction(at, "void", ["int", "int", "bool", "int"]);
+    schedule(0, () => {
+      try {
+        const screen = ucls("UnityEngine.Screen");
+        const width = Number(screen.method("get_width", 0).invoke()), height = Number(screen.method("get_height", 0).invoke());
+        const fullscreen = Boolean(screen.method("get_fullScreen", 0).invoke());
+        setResolution(width, height, fullscreen ? 1 : 0, 0);
+      } catch (error) { log(`graphics: render resolution failed: ${error}`); }
+    }, "graphics render resolution");
+  });
   section("graphics: frame rate and quality", () => {
     const file = `${persistentPath()}/tesl-reborn-graphics.json`;
     const rate = graphicsFrameRate(readTextFile(file));
