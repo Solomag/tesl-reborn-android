@@ -4521,13 +4521,21 @@ Il2Cpp.perform(() => {
   let statsFinishedLoading = false;
   let statsLoadingSince = 0;
   const pending = [];
+  let nextDue = Infinity;
   function schedule(delayMs, fn, tag) {
-    pending.push({ at: Date.now() + delayMs, fn, tag });
+    const at = Date.now() + delayMs;
+    pending.push({ at, fn, tag });
+    if (at < nextDue) nextDue = at;
   }
   function runPending() {
-    if (!pending.length) return;
-    const now = Date.now(), due = [];
-    for (let i = pending.length - 1; i >= 0; i--) if (pending[i].at <= now) due.push(pending.splice(i, 1)[0]);
+    const now = Date.now();
+    if (now < nextDue) return;
+    const due = [];
+    nextDue = Infinity;
+    for (let i = pending.length - 1; i >= 0; i--) {
+      if (pending[i].at <= now) due.push(pending.splice(i, 1)[0]);
+      else if (pending[i].at < nextDue) nextDue = pending[i].at;
+    }
     if (!due.length) return;
     try {
       Il2Cpp.mainThread.schedule(() => {
@@ -8708,12 +8716,21 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     writeTextFile(`${persistentPath()}/tesl-reborn-chat-scale.json`, JSON.stringify({ factor: record.factor }));
     log(`chat UI: scale saved factor=${record.factor.toFixed(2)}`);
   }
-  function chatScaleUpdate(record) {
+  let chatInputMethods = null;
+  function chatInput() {
+    if (!chatInputMethods) {
+      const input = ucls("UnityEngine.Input");
+      chatInputMethods = { touchCount: input.method("get_touchCount", 0), getTouch: input.method("GetTouch", 1) };
+    }
+    return chatInputMethods;
+  }
+  function chatScaleUpdate(record, count) {
     if (!record.scaleEnabled) return false;
-    const input = ucls("UnityEngine.Input"), count = Number(input.method("get_touchCount", 0).invoke());
-    const camera = call(record.canvas.target, "get_worldCamera");
+    const input = chatInput();
+    if (count === void 0) count = Number(input.touchCount.invoke());
     if (count >= 2) {
-      const a = input.method("GetTouch", 1).invoke(0), b = input.method("GetTouch", 1).invoke(1);
+      const camera = call(record.canvas.target, "get_worldCamera");
+      const a = input.getTouch.invoke(0), b = input.getTouch.invoke(1);
       const ap = uiXY(a.method("get_position", 0).invoke()), bp = uiXY(b.method("get_position", 0).invoke());
       const phases = [a, b].map((t) => enumVal(t.method("get_phase", 0).invoke()));
       if (phases.some((p) => p === 3 || p === 4)) {
@@ -8938,20 +8955,24 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     if (!record || record.errors > 3) return;
     try {
       if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
-      if (chatScaleUpdate(record)) return;
+      const touches = Number(chatInput().touchCount.invoke());
+      if (chatScaleUpdate(record, touches)) return;
       const input = record.input.target;
       if (Boolean(call(input, "get_isFocused"))) {
-        const caret = input.tryMethod("get_stringPosition", 0) || input.tryMethod("get_caretPosition", 0);
-        if (caret) record.caret = Number(caret.invoke());
+        if (record.caretMethod === void 0) record.caretMethod = input.tryMethod("get_stringPosition", 0) || input.tryMethod("get_caretPosition", 0) || null;
+        if (record.caretMethod) record.caret = Number(record.caretMethod.invoke());
       }
       const unityInput = ucls("UnityEngine.Input");
       let point, held, down;
-      if (Number(unityInput.method("get_touchCount").invoke()) > 0) {
-        const touch = unityInput.method("GetTouch", 1).invoke(0);
+      if (touches > 0) {
+        const touch = chatInput().getTouch.invoke(0);
         point = uiXY(touch.method("get_position", 0).invoke());
         const phase = enumVal(touch.method("get_phase", 0).invoke());
         down = phase === 0;
         held = phase !== 3 && phase !== 4;
+      } else if (!record.armed && !record.dragging) {
+        record.errors = 0;
+        return;
       } else {
         point = uiXY(unityInput.method("get_mousePosition").invoke());
         held = Boolean(unityInput.method("GetMouseButton", 1).invoke(0));
@@ -8984,8 +9005,6 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         log("chat UI: position saved");
       }
       if (!held) record.armed = false;
-      chatApplyPosition(record);
-      chatScaleApply(record);
       if (down && record.picker && Boolean(call(record.picker.target, "get_activeSelf")) && !chatContains(uiRect(record.picker.target), point, camera) && !chatContains(record.pickerButton.target, point, camera))
         call(record.picker.target, "SetActive", false);
       record.errors = 0;
@@ -9522,7 +9541,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
-    let loadingState = null, lowFpsWindows = 0;
+    let loadingState = null, lowFpsWindows = 0, bestFps = 0;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
@@ -9721,7 +9740,8 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           if (Date.now() >= fpsLogAt && measured) {
             fpsLogAt = Date.now() + 15e3;
             log(`fps: ${measured}`);
-            const target = globalThis.__teslTargetRate || 60;
+            if (!versionScreen.visible) bestFps = Math.max(bestFps, measured);
+            const target = Math.min(globalThis.__teslTargetRate || 60, bestFps || 60);
             lowFpsWindows = !versionScreen.visible && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
             if (lowFpsWindows >= 2) {
               lowFpsWindows = 0;
