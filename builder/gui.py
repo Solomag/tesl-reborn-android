@@ -395,6 +395,10 @@ class BuilderWindow:
         threading.Thread(target=work, daemon=True).start()
 
     def offer_update(self, offer, manual):
+        # The start-up check and "Check for updates" can both offer the same
+        # build; a second install overwrote the restarted Builder (WinError 32).
+        if getattr(self, "installing", False):
+            return
         self.update_button.state(["!disabled"])
         if not offer:
             if manual:
@@ -407,11 +411,13 @@ class BuilderWindow:
             if manual:
                 messagebox.showinfo("Builder", self.tr("Wait for the build to finish, then update."))
             return
+        self.installing = True
         if not messagebox.askyesno(
             "Builder",
             self.tr("A new Builder is available. Update and restart now?")
             + f"\n{self.version_text()} → build {offer['build']}",
         ):
+            self.installing = False
             return
         self.update_button.state(["disabled"])
         self.log(f"Downloading Builder build {offer['build']}…")
@@ -865,6 +871,7 @@ class BuilderWindow:
                     self.offer_update(*value)
                 elif kind == "update-error":
                     message, manual = value
+                    self.installing = False
                     self.update_button.state(["!disabled"])
                     self.log("Builder update check failed: " + message)
                     if manual:
