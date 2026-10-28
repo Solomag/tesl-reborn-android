@@ -224,6 +224,7 @@ public final class GestureBridge {
               zone,
               SystemClock.uptimeMillis());
       if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+        SoftInputStyle.afterTap(activity);
         Marker marker = MARKERS.get(activity);
         if (marker != null)
           marker.feedback(complete ? 3 : TAPS.progress(SystemClock.uptimeMillis()));
