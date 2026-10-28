@@ -7533,6 +7533,7 @@ Il2Cpp.perform(() => {
       return null;
     };
     const setVSync = icall(["UnityEngine.QualitySettings::set_vSyncCount(System.Int32)", "UnityEngine.QualitySettings::set_vSyncCount"], "void", ["int"]);
+    globalThis.__teslSetAntiAliasing = icall(["UnityEngine.QualitySettings::set_antiAliasing(System.Int32)", "UnityEngine.QualitySettings::set_antiAliasing"], "void", ["int"]);
     const getVSync = icall(["UnityEngine.QualitySettings::get_vSyncCount()", "UnityEngine.QualitySettings::get_vSyncCount"], "int", []);
     const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
     const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
@@ -9769,11 +9770,15 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
                 const quality = ucls("UnityEngine.QualitySettings");
                 samples = Number(quality.method("get_antiAliasing", 0).invoke());
                 if (samples > 0) {
-                  quality.method("set_antiAliasing", 1).invoke(0);
+                  const managed = quality.tryMethod("set_antiAliasing", 1);
+                  if (managed) managed.invoke(0);
+                  else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
+                  else throw Error("no antiAliasing setter");
                   log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${target} for 30 s)`);
                 }
               } catch (error) {
                 log(`graphics: antiAliasing drop failed: ${error}`);
+                samples = 0;
               }
               if (!samples) {
                 globalThis.__teslRateCap = 30;

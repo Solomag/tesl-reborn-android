@@ -3640,6 +3640,7 @@ function uiComponent(go, type) {
       return null;
     };
     const setVSync = icall(["UnityEngine.QualitySettings::set_vSyncCount(System.Int32)", "UnityEngine.QualitySettings::set_vSyncCount"], "void", ["int"]);
+    globalThis.__teslSetAntiAliasing = icall(["UnityEngine.QualitySettings::set_antiAliasing(System.Int32)", "UnityEngine.QualitySettings::set_antiAliasing"], "void", ["int"]);
     const getVSync = icall(["UnityEngine.QualitySettings::get_vSyncCount()", "UnityEngine.QualitySettings::get_vSyncCount"], "int", []);
     // Report 40: the managed setter reads its value from another register
     // than the one the hook replaced, so the game's 60 always won. The
@@ -5525,10 +5526,18 @@ const chatWindows = new Map();
                 const quality = ucls("UnityEngine.QualitySettings");
                 samples = Number(quality.method("get_antiAliasing", 0).invoke());
                 if (samples > 0) {
-                  quality.method("set_antiAliasing", 1).invoke(0);
+                  // Report 19: the managed setter is stripped on some builds;
+                  // the engine function behind it stays (as for vSync).
+                  const managed = quality.tryMethod("set_antiAliasing", 1);
+                  if (managed) managed.invoke(0);
+                  else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
+                  else throw Error("no antiAliasing setter");
                   log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${target} for 30 s)`);
                 }
-              } catch (error) { log(`graphics: antiAliasing drop failed: ${error}`); }
+              } catch (error) {
+                // Without a working setter the frame-rate cap is the remedy.
+                log(`graphics: antiAliasing drop failed: ${error}`); samples = 0;
+              }
               if (!samples) {
                 globalThis.__teslRateCap = 30; rateCapUntil = Date.now() + 5 * 60000;
                 log(`graphics: frame rate capped to 30 for 5 min (fps ${measured} of ${target} for 30 s)`);
