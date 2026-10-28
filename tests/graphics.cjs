@@ -14,3 +14,7 @@ console.log('PASS: the Game Data frame rate is read only for 30/60/90/120; missi
  counter.frames=110;assert.equal(u.fpsSample(counter,3000),110);
  console.log('PASS: the FPS meter shows frames per second, refreshed each second');
 }
+
+assert.equal(c.graphicsQuality('{"quality":0}'),0);assert.equal(c.graphicsQuality('{"quality":3}'),3);
+assert.equal(c.graphicsQuality('{"quality":4}'),null);assert.equal(c.graphicsQuality('{"frameRate":30}'),null);assert.equal(c.graphicsQuality('x'),null);
+console.log('PASS: a saved quality of VeryLow..High replaces the device pick; Auto keeps it');

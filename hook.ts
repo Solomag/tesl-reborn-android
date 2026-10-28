@@ -3435,25 +3435,76 @@ function uiComponent(go, type) {
       return GRAPHICS_FRAME_RATES.includes(value) ? value : null;
     } catch (_) { return null; }
   }
+  // Saved quality: VeryLow 0 .. High 3; Auto (4) and anything else keep the
+  // game's own pick for the device.
+  function graphicsQuality(text) {
+    try {
+      const value = JSON.parse(text || "null")?.quality;
+      return Number.isInteger(value) && value >= 0 && value <= 3 ? value : null;
+    } catch (_) { return null; }
+  }
   section("graphics: frame rate and quality", () => {
-    const rate = graphicsFrameRate(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`));
+    const file = `${persistentPath()}/tesl-reborn-graphics.json`;
+    const rate = graphicsFrameRate(readTextFile(file));
+    let chosenQuality = graphicsQuality(readTextFile(file));
+    // Report 38: Unity ignores targetFrameRate while vSync is on, and every
+    // quality level turns it on. The managed setter is stripped; the engine
+    // function behind it is still there.
+    const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+    const icall = (names, ret, args) => {
+      for (const name of names) { const at = resolve(Memory.allocUtf8String(name)); if (!at.isNull()) return new NativeFunction(at, ret, args); }
+      return null;
+    };
+    const setVSync = icall(["UnityEngine.QualitySettings::set_vSyncCount(System.Int32)", "UnityEngine.QualitySettings::set_vSyncCount"], "void", ["int"]);
+    const getVSync = icall(["UnityEngine.QualitySettings::get_vSyncCount()", "UnityEngine.QualitySettings::get_vSyncCount"], "int", []);
+    const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
+    function applyRate(why) {
+      if (!rate) return;
+      try {
+        if (setVSync) setVSync(0);
+        setRate.invoke(rate);
+        log(`graphics: frame rate ${rate} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
+      } catch (error) { log(`graphics: frame rate failed: ${error}`); }
+    }
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
       Interceptor.attach(setRate.virtualAddress, { onEnter(args) { args[0] = ptr(rate); } });
-      // Report 36: this player strips QualitySettings.set_vSyncCount, and
-      // failing on it skipped the rate itself. Android does not wait for
-      // vSync in Unity 2017 unless asked, so the rate goes on without it.
-      schedule(0, () => {
-        const vsync = quality.tryMethod("set_vSyncCount", 1);
-        try { if (vsync) vsync.invoke(0); } catch (_) {}
-        try { setRate.invoke(rate); log(`graphics: frame rate ${rate}, now ${Number(application.method("get_targetFrameRate", 0).invoke())}`); }
-        catch (error) { log(`graphics: frame rate failed: ${error}`); }
-      }, "graphics frame rate");
+      schedule(0, () => applyRate("start"), "graphics frame rate");
     }
     // Quality: SettingsWin.UpdateUi hides resolution and windowed mode on
     // mobile but only fills the quality dropdown. Show it if the mobile
     // window has one and keeps it hidden; say what was found either way.
+    // Report 38: on phones SettingsManager.SetQuality only logs, and the
+    // quality comes from ScalabilityUtils' pick for the device. The choice is
+    // saved, given as that pick, and applied at once; a quality level also
+    // turns vSync back on, so the frame rate is applied again after it.
+    const manager = cls(img, "SettingsManager");
+    const recommended = cls(img, "ScalabilityUtils").tryMethod("GetRecommendedVideoQualitySettings", 0);
+    if (recommended) Interceptor.attach(recommended.virtualAddress, {
+      onLeave(result) { if (chosenQuality !== null) result.replace(ptr(chosenQuality)); }
+    });
+    const updateQuality = manager.tryMethod("UpdateUnityQuality", 1);
+    if (updateQuality) Interceptor.attach(updateQuality.virtualAddress, {
+      onLeave() { schedule(0, () => applyRate("after quality"), "graphics rate after quality"); }
+    });
+    const setQuality = manager.tryMethod("SetQuality", 1);
+    if (setQuality) Interceptor.attach(setQuality.virtualAddress, {
+      onEnter(args) {
+        const self = new Il2Cpp.Object(args[0]).ref(false), value = args[1].toInt32();
+        schedule(0, () => {
+          try {
+            chosenQuality = value >= 0 && value <= 3 ? value : null;
+            let saved = {};
+            try { saved = JSON.parse(readTextFile(file) || "{}") || {}; } catch (_) {}
+            if (chosenQuality === null) delete saved.quality; else saved.quality = chosenQuality;
+            writeTextFile(file, JSON.stringify(saved));
+            self.target.method("UpdateUnityQuality", 1).invoke(value);
+          } catch (error) { log(`graphics: quality apply failed: ${error}`); }
+          finally { self.free(); }
+        }, "graphics quality choice");
+      }
+    });
     const updateUi = cls(img, "SettingsWin").tryMethod("UpdateUi", 0);
     if (!updateUi || updateUi.virtualAddress.isNull()) return;
     let reported = "";
