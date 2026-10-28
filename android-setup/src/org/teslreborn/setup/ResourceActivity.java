@@ -249,6 +249,7 @@ public class ResourceActivity extends Activity {
     } catch (Exception error) {
       message(error.toString());
     }
+    addFrameRateChoice(box);
     actions.add(system);
     LinearLayout advanced = new LinearLayout(this);
     advanced.setOrientation(1);
@@ -400,6 +401,49 @@ public class ResourceActivity extends Activity {
         this,
         box,
         tr("The channel applies on the next game start. Test gets new patches first and may be less stable."));
+  }
+
+  /** Read by the hook at game start; 0 keeps the game's own 60. */
+  static final int[] FRAME_RATES = {0, 30, 90, 120};
+
+  private void addFrameRateChoice(LinearLayout box) {
+    File file = new File(root, "tesl-reborn-graphics.json");
+    JSONObject config;
+    try {
+      config = file.isFile() ? new JSONObject(new String(PackInstaller.read(new java.io.FileInputStream(file), 64 * 1024), "UTF-8")) : new JSONObject();
+    } catch (Exception error) {
+      config = new JSONObject();
+    }
+    final JSONObject graphics = config;
+    UiStyle.label(this, box, tr("Frame rate"));
+    String[] labels = {tr("Standard (60)"), "30", "90", "120"};
+    Spinner rate = new Spinner(this);
+    UiStyle.field(this, rate);
+    rate.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+    int saved = graphics.optInt("frameRate", 0);
+    for (int i = 0; i < FRAME_RATES.length; i++) if (FRAME_RATES[i] == saved) rate.setSelection(i);
+    rate.setOnItemSelectedListener(
+        new android.widget.AdapterView.OnItemSelectedListener() {
+          @Override
+          public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+            if (graphics.optInt("frameRate", 0) == FRAME_RATES[position]) return;
+            try {
+              if (FRAME_RATES[position] == 0) graphics.remove("frameRate");
+              else graphics.put("frameRate", FRAME_RATES[position]);
+              PackInstaller.writeJson(file, graphics);
+            } catch (Exception error) {
+              message(error.toString());
+            }
+          }
+
+          @Override
+          public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+    box.addView(rate);
+    UiStyle.body(
+        this,
+        box,
+        tr("Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display."));
   }
 
   private void addDiagnosticsAndUpdates(LinearLayout box) {

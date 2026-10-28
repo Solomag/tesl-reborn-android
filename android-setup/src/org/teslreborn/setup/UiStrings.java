@@ -115,6 +115,33 @@ final class UiStrings {
           "Otomatik yama güncellemeleri"
         });
     TEXT.put(
+        "Frame rate",
+        new String[] {
+          "Frame rate", "Bildrate", "Fotogramas por segundo", "Fotogramas por segundo",
+          "Images par seconde", "Frequenza fotogrammi", "Liczba klatek", "Taxa de quadros",
+          "Частота кадров", "Kare hızı"
+        });
+    TEXT.put(
+        "Standard (60)",
+        new String[] {
+          "Standard (60)", "Standard (60)", "Estándar (60)", "Estándar (60)", "Standard (60)",
+          "Standard (60)", "Standardowa (60)", "Padrão (60)", "Стандартная (60)", "Standart (60)"
+        });
+    TEXT.put(
+        "Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display.",
+        new String[] {
+          "Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display.",
+          "Gilt ab dem nächsten Spielstart. 30 spart Akku und Wärme; 90 und 120 brauchen ein schnelles Display.",
+          "Se aplica en el próximo inicio. 30 ahorra batería y calor; 90 y 120 requieren una pantalla rápida.",
+          "Se aplica en el próximo inicio. 30 ahorra batería y calor; 90 y 120 requieren una pantalla rápida.",
+          "S’applique au prochain lancement. 30 économise batterie et chaleur ; 90 et 120 demandent un écran rapide.",
+          "Si applica al prossimo avvio. 30 risparmia batteria e calore; 90 e 120 richiedono uno schermo veloce.",
+          "Działa od następnego uruchomienia. 30 oszczędza baterię i ciepło; 90 i 120 wymagają szybkiego ekranu.",
+          "Aplica-se no próximo início. 30 poupa bateria e calor; 90 e 120 exigem uma tela rápida.",
+          "Применится при следующем запуске игры. 30 бережёт батарею и меньше греет; 90 и 120 — для быстрых экранов.",
+          "Bir sonraki oyun başlangıcında uygulanır. 30 pil ve ısı tasarrufu sağlar; 90 ve 120 hızlı ekran ister."
+        });
+    TEXT.put(
         "Update channel",
         new String[] {
           "Update channel",

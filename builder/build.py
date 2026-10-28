@@ -181,6 +181,13 @@ def patch_manifest(path):
     )
     write_window_themes(path.parent, game_parent)
     game.set(ANDROID + "theme", "@style/TeslRebornGame")
+    # Without a declared limit Android letterboxes old-target apps at 16:9-ish
+    # (1.86) on tall phones: black bars at the sides. Allow up to 21:9 and
+    # let Unity fill the screen.
+    game.set(ANDROID + "maxAspectRatio", "2.4")
+    game.set(ANDROID + "resizeableActivity", "true")
+    if not any(m.get(ANDROID + "name") == "android.max_aspect" for m in application.findall("meta-data")):
+        ET.SubElement(application, "meta-data", {ANDROID + "name": "android.max_aspect", ANDROID + "value": "2.4"})
     application.set(ANDROID + "usesCleartextTraffic", "true")
     if not any(
         e.get(ANDROID + "name") == "android.permission.INTERNET"

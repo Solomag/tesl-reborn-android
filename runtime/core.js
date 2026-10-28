@@ -7309,6 +7309,77 @@ Il2Cpp.perform(() => {
     } });
     log(`settings game data: ${hooks} window hooks, ${closeAddresses.size} close hooks and prefab fallback`);
   });
+  const GRAPHICS_FRAME_RATES = [30, 60, 90, 120];
+  function graphicsFrameRate(text) {
+    try {
+      const value = Number(JSON.parse(text || "null")?.frameRate);
+      return GRAPHICS_FRAME_RATES.includes(value) ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  section("graphics: frame rate and quality", () => {
+    const rate = graphicsFrameRate(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`));
+    const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
+    const setRate = application.method("set_targetFrameRate", 1);
+    if (rate) {
+      Interceptor.attach(setRate.virtualAddress, {
+        onEnter(args) {
+          args[0] = ptr(rate);
+        },
+        onLeave() {
+          schedule(0, () => {
+            try {
+              quality.method("set_vSyncCount", 1).invoke(0);
+            } catch (_) {
+            }
+          }, "graphics vsync");
+        }
+      });
+      schedule(0, () => {
+        try {
+          quality.method("set_vSyncCount", 1).invoke(0);
+          setRate.invoke(rate);
+          log(`graphics: frame rate ${rate}`);
+        } catch (error) {
+          log(`graphics: frame rate failed: ${error}`);
+        }
+      }, "graphics frame rate");
+    }
+    const updateUi = cls(img, "SettingsWin").tryMethod("UpdateUi", 0);
+    if (!updateUi || updateUi.virtualAddress.isNull()) return;
+    let reported = "";
+    Interceptor.attach(updateUi.virtualAddress, {
+      onEnter(args) {
+        this.self = args[0];
+      },
+      onLeave() {
+        const window = new Il2Cpp.Object(this.self).ref(false);
+        schedule(0, () => {
+          try {
+            const dropdown = window.target.field("_qualityDropdown").value;
+            let state;
+            if (!unityAlive(dropdown)) state = "no quality dropdown in this window";
+            else {
+              const go = call(dropdown, "get_gameObject");
+              const shown = Boolean(call(go, "get_activeSelf"));
+              if (!shown) call(go, "SetActive", true);
+              const options = Number(call(call(dropdown, "get_options"), "get_Count"));
+              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, live=${Boolean(call(go, "get_activeInHierarchy"))}`;
+            }
+            if (state !== reported) {
+              reported = state;
+              log(`graphics: ${state}`);
+            }
+          } catch (error) {
+            log(`graphics: quality check failed: ${error}`);
+          } finally {
+            window.free();
+          }
+        }, "graphics quality");
+      }
+    });
+  });
   section("settings and language diagnostics", () => {
     let lastPoll = 0, lastRequest = "";
     function collect(request) {
