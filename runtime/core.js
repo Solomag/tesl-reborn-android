@@ -8430,7 +8430,11 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   section("chat message layout refresh", () => {
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) {
+      let refreshedAt = 0;
       hookAttach(render.virtualAddress, { onEnter() {
+        const now = Date.now();
+        if (now - refreshedAt < 200) return;
+        refreshedAt = now;
         chatRefreshMessageSizes();
       } });
     } else {

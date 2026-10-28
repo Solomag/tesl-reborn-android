@@ -4365,7 +4365,14 @@ const emojiByName = new Map(), emojiByAscii = new Map();
   section("chat message layout refresh", () => {
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) {
-      hookAttach(render.virtualAddress, { onEnter() { chatRefreshMessageSizes(); } });
+      // New messages are sized when rendered; the per-message Unity calls of a
+      // full pass cost ~2 ms on slower phones, so re-check only every 200 ms.
+      let refreshedAt = 0;
+      hookAttach(render.virtualAddress, { onEnter() {
+        const now = Date.now();
+        if (now - refreshedAt < 200) return;
+        refreshedAt = now; chatRefreshMessageSizes();
+      } });
     } else {
       const tick = () => { chatRefreshMessageSizes(); schedule(100, tick, "chat message sizes"); }; schedule(100, tick, "chat message sizes");
     }
