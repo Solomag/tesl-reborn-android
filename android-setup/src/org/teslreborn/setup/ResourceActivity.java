@@ -444,6 +444,28 @@ public class ResourceActivity extends Activity {
         this,
         box,
         tr("Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display."));
+    // The hook's corner frame counter. Until it is set here the hook shows it
+    // on the Test channel only.
+    Switch counter = new Switch(this);
+    counter.setText(tr("Show FPS counter"));
+    counter.setTextColor(UiStyle.TEXT);
+    boolean testChannel = false;
+    try {
+      testChannel =
+          UpdateConfig.ensure(root, setup.optString("hookFeed", "")).optString("feedUrl", "").contains("/updates/test/");
+    } catch (Exception ignored) {
+    }
+    counter.setChecked(graphics.optBoolean("showFps", testChannel));
+    counter.setOnCheckedChangeListener(
+        (button, shown) -> {
+          try {
+            graphics.put("showFps", shown);
+            PackInstaller.writeJson(file, graphics);
+          } catch (Exception error) {
+            message(error.toString());
+          }
+        });
+    box.addView(counter);
   }
 
   private void addDiagnosticsAndUpdates(LinearLayout box) {

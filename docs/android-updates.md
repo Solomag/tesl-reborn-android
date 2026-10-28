@@ -1,6 +1,6 @@
 # Android feature parity and update loader
 
-For the fork-first device test procedure, see [Проверка перед PR](testing-ru.md).
+The channels and how a patch is promoted are in [release-channels.md](release-channels.md).
 
 ## Behavior included
 

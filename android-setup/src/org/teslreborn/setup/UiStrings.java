@@ -115,6 +115,13 @@ final class UiStrings {
           "Otomatik yama güncellemeleri"
         });
     TEXT.put(
+        "Show FPS counter",
+        new String[] {
+          "Show FPS counter", "FPS-Zähler anzeigen", "Mostrar contador de FPS", "Mostrar contador de FPS",
+          "Afficher le compteur d’IPS", "Mostra contatore FPS", "Pokaż licznik FPS", "Mostrar contador de FPS",
+          "Показывать счётчик FPS", "FPS sayacını göster"
+        });
+    TEXT.put(
         "Frame rate",
         new String[] {
           "Frame rate", "Bildrate", "Fotogramas por segundo", "Fotogramas por segundo",

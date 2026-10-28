@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Inject frida-gadget + the TESL hook script into the Android APK (arm64-v8a only).
 
+This is the minimal hook-only build: no setup screens (Game data, update
+channel, frame rate), launcher or data import. For the same APK the Builder
+makes, pass the original XAPK and the script runs the Builder's pipeline:
+
+    python3 build_apk.py --xapk TESL.xapk [--game "PC game folder"] [--format apk]
+    (same as: python3 -m builder.cli --help)
+
 The patched classes.dex is rebuilt at build time from base.apk and the committed
 JNIBridge_a.patched.smali (no proprietary binary blob is shipped in the repo).
 A leftover patched_classes.dex is used only with an explicit --prebuilt-dex.
@@ -8,7 +15,11 @@ A leftover patched_classes.dex is used only with an explicit --prebuilt-dex.
 Usage: python3 build_apk.py [base.apk] [out.apk] [--prebuilt-dex] [--allow-stale-hook]
                             [--ks FILE --ks-alias NAME --ks-pass PASS [--ks-key-pass PASS]]
 """
-import argparse, hashlib, json, re, os, shutil, subprocess, sys, zipfile, lief
+import sys
+if "--xapk" in sys.argv:
+    from builder.cli import main
+    sys.exit(main(sys.argv[1:]))
+import argparse, hashlib, json, re, os, shutil, subprocess, zipfile, lief
 
 HERE     = os.path.dirname(os.path.abspath(__file__))
 GADGET   = os.path.join(HERE, "gadget.so")
@@ -30,6 +41,7 @@ ap.add_argument("--ks-alias")
 ap.add_argument("--ks-pass")
 ap.add_argument("--ks-key-pass")
 args = ap.parse_args()
+print("note: hook-only APK without the setup screens; for the Builder's APK use --xapk (see --help)")
 BASE, OUT_NAME = args.base, args.out
 
 # fail before the long extract and repack, not at the end with a traceback

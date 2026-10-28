@@ -30,6 +30,18 @@ A Russian version of this guide is in [builder-ru.md](builder-ru.md).
   python android-setup/build.py
   ```
 
+### Command line
+
+The same build without the window (also what `build_apk.py --xapk …` runs):
+
+```bash
+python -m builder.cli --xapk TESL.xapk --game "/path/to/PC game"   --format manual --languages en_us,ru_ru
+```
+
+`--format` is `manual` (APK + data ZIP), `xapk`, `apk` (APK only) or `data`
+(data ZIP only). `build_apk.py` without `--xapk` still makes the old minimal
+APK: the hook only, without the setup screens, Game data or the launcher.
+
 ## Inputs
 
 - The PC game folder. Steam libraries are found automatically; you can also
