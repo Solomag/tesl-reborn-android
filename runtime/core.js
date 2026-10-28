@@ -9896,6 +9896,10 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           events: resourceTrace.slice(),
           bundles: []
         };
+        const snapshotActive = (type) => {
+          const active = ucls("UnityEngine.Object").tryMethod("FindObjectsOfType", 1);
+          return (active || ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")).invoke(type);
+        };
         const steps = [];
         steps.push(() => {
           try {
@@ -9957,7 +9961,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
         steps.push(() => {
           report.shopImages = [];
           try {
-            const images = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object);
+            const images = snapshotActive(ucls("UnityEngine.UI.Image").type.object);
             for (let i = 0; i < images.length && report.shopImages.length < 40; i++) {
               const image = images.get(i), go = call(image, "get_gameObject");
               if (!call(go, "get_activeInHierarchy")) continue;
@@ -9984,7 +9988,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
         });
         steps.push(() => {
           try {
-            const images = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.RawImage").type.object);
+            const images = snapshotActive(ucls("UnityEngine.UI.RawImage").type.object);
             for (let i = 0; i < images.length && report.shopImages.length < 64; i++) {
               const image = images.get(i), go = call(image, "get_gameObject");
               if (!call(go, "get_activeInHierarchy")) continue;
@@ -10008,15 +10012,21 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           report.lastShop = lastShop;
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`, JSON.stringify(report));
         });
+        let part = 0;
         const next = () => {
           const step = steps.shift();
-          if (step) schedule(0, () => {
+          if (!step) return;
+          const index = ++part;
+          schedule(0, () => {
+            const started = Date.now();
             try {
               step();
             } finally {
+              const took = Date.now() - started;
+              if (took >= 50) log(`resource diagnostics snapshot: part ${index} took ${took}ms`);
               next();
             }
-          }, "resource diagnostics snapshot");
+          }, `resource diagnostics snapshot ${index}`);
         };
         next();
       }

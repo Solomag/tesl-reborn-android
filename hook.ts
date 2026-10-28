@@ -5619,6 +5619,13 @@ const chatWindows = new Map();
         const report:any = {at:new Date().toISOString(),language:resourceLanguage(),
             patch:globalThis.TeslRebornUpdater?.current()?.revision,elapsedMs:Date.now()-resourceTraceStarted,
             events:resourceTrace.slice(),bundles:[]};
+        // Report 14: one part still took 866 ms. The shop scans asked for every
+        // loaded image, prefabs and hidden ones included, and then skipped the
+        // inactive ones: ask Unity for the active ones only.
+        const snapshotActive = (type) => {
+          const active = ucls("UnityEngine.Object").tryMethod("FindObjectsOfType", 1);
+          return (active || ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")).invoke(type);
+        };
         const steps=[];
         steps.push(() => {
           try {
@@ -5665,7 +5672,7 @@ const chatWindows = new Map();
         steps.push(() => {
           report.shopImages=[];
           try {
-            const images=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Image").type.object);
+            const images=snapshotActive(ucls("UnityEngine.UI.Image").type.object);
             for(let i=0;i<images.length && report.shopImages.length<40;i++) {
               const image=images.get(i),go=call(image,"get_gameObject");
               if(!call(go,"get_activeInHierarchy")) continue;
@@ -5682,7 +5689,7 @@ const chatWindows = new Map();
         });
         steps.push(() => {
           try {
-            const images=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.RawImage").type.object);
+            const images=snapshotActive(ucls("UnityEngine.UI.RawImage").type.object);
             for(let i=0;i<images.length && report.shopImages.length<64;i++) {
               const image=images.get(i),go=call(image,"get_gameObject");if(!call(go,"get_activeInHierarchy"))continue;
               let node=call(go,"get_transform"),path="";
@@ -5702,7 +5709,20 @@ const chatWindows = new Map();
           report.lastShop=lastShop;
           writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`,JSON.stringify(report));
         });
-        const next = () => { const step = steps.shift(); if (step) schedule(0, () => { try { step(); } finally { next(); } }, "resource diagnostics snapshot"); };
+        // Each part is timed, so a slow one is named in the log.
+        let part = 0;
+        const next = () => {
+          const step = steps.shift(); if (!step) return;
+          const index = ++part;
+          schedule(0, () => {
+            const started = Date.now();
+            try { step(); } finally {
+              const took = Date.now() - started;
+              if (took >= 50) log(`resource diagnostics snapshot: part ${index} took ${took}ms`);
+              next();
+            }
+          }, `resource diagnostics snapshot ${index}`);
+        };
         next();
       }
     });
