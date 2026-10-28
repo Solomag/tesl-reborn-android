@@ -40,7 +40,7 @@ playing still requires the Reborn server. Auto-login works once a
 - Java JDK (for `zipalign` and `uber-apk-signer.jar`).
 - Android build-tools 14 (`android-14-buildtools`, must provide `zipalign`).
 - Node.js and npm (`npm ci` installs the pinned build tool).
-- A Frida gadget for Android arm64 v8a (the builder pins 17.2.4, written as
+- A Frida gadget for Android arm64 v8a (the builder pins 17.23.3, written as
   `gadget.so`).
 - Minimum Android: 10 (Android 14 was the development target).
 - Base artefacts:

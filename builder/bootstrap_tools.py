@@ -95,14 +95,16 @@ def main():
     pins["signer"] = digest
     gadget_archive = archives / "gadget.so.xz"
     download(
-        "https://github.com/frida/frida/releases/download/17.2.4/frida-gadget-17.2.4-android-arm64.so.xz",
+        # 17.2.4 crashed on Android 17 (Pixel 6 Pro, Pixel 8 Pro: a signal
+        # inside the gadget during ART stack walks, "setjmp cookie mismatch").
+        "https://github.com/frida/frida/releases/download/17.23.3/frida-gadget-17.23.3-android-arm64.so.xz",
         gadget_archive,
-        "b3433370b61225e868874677a774bc1117934feb6c2b3044d4b93ef4e7f67c9d",
+        "aeb3109844d69f5745438597667841a9141e8701a174341999e1479a4c97925f",
     )
     with lzma.open(gadget_archive) as src, (vendor / "gadget.so").open("wb") as out:
         shutil.copyfileobj(src, out)
     download(
-        "https://raw.githubusercontent.com/frida/frida-core/17.2.4/COPYING",
+        "https://raw.githubusercontent.com/frida/frida-core/17.23.3/COPYING",
         vendor / "COPYING-frida",
         "5ea1544b51a28bc823b03159190d4108f9fb4f4ef912389f5137c6d295e175b2",
     )

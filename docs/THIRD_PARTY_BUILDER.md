@@ -13,8 +13,8 @@ Upstream build/runtime components:
 - qrcode / Pillow: https://github.com/lincolnloop/python-qrcode and https://python-pillow.org/
 - Apktool 3.0.3: https://github.com/iBotPeaches/Apktool/releases/tag/v3.0.3
 - uber-apk-signer 1.3.0: https://github.com/patrickfav/uber-apk-signer/releases/tag/v1.3.0
-- Frida gadget 17.2.4: https://github.com/frida/frida/releases/tag/17.2.4
-  and corresponding component source https://github.com/frida/frida-core/tree/17.2.4
+- Frida gadget 17.23.3: https://github.com/frida/frida/releases/tag/17.23.3
+  and corresponding component source https://github.com/frida/frida-core/tree/17.23.3
   (the Android gadget is not modified).
 - Existing IL2CPP bridge snapshot: runtime/IL2CPP-BRIDGE-LICENSE and runtime/README.md.
 - Android build-tools 35.0.0: https://developer.android.com/tools/releases/build-tools
