@@ -3659,6 +3659,72 @@ function uiComponent(go, type) {
         log(`graphics: frame rate ${effective} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
       } catch (error) { log(`graphics: frame rate failed: ${error}`); }
     }
+    // Automatic frame rate (reports 11-19). A hot phone halves its clocks
+    // and swings 60 -> 22; a CPH2723 set to 90 never passed 36 and then sat
+    // at 25. Every 15 s the measured rate is compared with the rate in force:
+    // 30 s below 3/4 of it (or of the best reached) turns MSAA off first,
+    // then steps the rate down. 5 minutes at the rate steps it back up, to
+    // the chosen one at most. What was learned is kept per phone, so the next
+    // start begins at a rate the phone holds instead of overheating first.
+    const autoFile = `${persistentPath()}/tesl-reborn-graphics-auto.json`;
+    const ladder = [120, 90, 60, 40, 30], ceiling = rate || 60;
+    let auto: any = {};
+    try { auto = JSON.parse(readTextFile(autoFile) || "{}") || {}; } catch (_) {}
+    let low = 0, steady = 0, best = 0, msaaOff = auto.msaaOff === true;
+    if (ladder.includes(Number(auto.rate)) && Number(auto.rate) < ceiling) {
+      globalThis.__teslRateCap = Number(auto.rate);
+      log(`graphics: auto frame rate ${auto.rate} of ${ceiling} (learned ${auto.at || "earlier"})${msaaOff ? ", antiAliasing off" : ""}`);
+      // A chosen rate is applied at start below; the game's own 60 is not.
+      if (!rate) schedule(0, () => applyRate("auto start"), "graphics auto rate");
+    }
+    const saveAuto = () => {
+      try { writeTextFile(autoFile, JSON.stringify({ rate: globalThis.__teslRateCap || ceiling, msaaOff, at: new Date().toISOString() })); } catch (_) {}
+    };
+    function antiAliasingOff() {
+      const quality = ucls("UnityEngine.QualitySettings"), samples = Number(quality.method("get_antiAliasing", 0).invoke());
+      if (samples <= 0) return 0;
+      // Report 19: the managed setter is stripped on some builds; the
+      // engine function behind it stays (as for vSync).
+      const managed = quality.tryMethod("set_antiAliasing", 1);
+      if (managed) managed.invoke(0);
+      else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
+      else throw Error("no antiAliasing setter");
+      return samples;
+    }
+    globalThis.__teslGovernor = (measured, loading) => {
+      if (loading) { low = 0; steady = 0; return; }
+      // A quality change turns MSAA back on; a phone that needed it off keeps it off.
+      if (msaaOff) {
+        try { const samples = antiAliasingOff(); if (samples) log(`graphics: antiAliasing ${samples}x -> off (remembered)`); } catch (_) {}
+      }
+      const effective = currentRate() || 60;
+      best = Math.max(best, Math.min(measured, effective));
+      const reference = Math.min(effective, best);
+      if (measured < reference * 0.75) { low++; steady = 0; }
+      else { low = 0; steady = measured >= effective * 0.85 ? steady + 1 : 0; }
+      if (low >= 2) {
+        low = 0;
+        if (!msaaOff) {
+          try {
+            const samples = antiAliasingOff();
+            msaaOff = true; saveAuto();
+            if (samples) { log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${reference} for 30 s)`); return; }
+          } catch (error) { log(`graphics: antiAliasing drop failed: ${error}`); }
+        }
+        const lower = ladder.find(step => step < effective);
+        if (!lower) return;
+        globalThis.__teslRateCap = lower; saveAuto();
+        log(`graphics: auto frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
+        applyRate("auto down");
+      } else if (steady >= 20 && globalThis.__teslRateCap) {
+        steady = 0;
+        const higher = ladder.filter(step => step > effective && step <= ceiling).pop();
+        if (!higher) return;
+        globalThis.__teslRateCap = higher >= ceiling ? 0 : higher; saveAuto();
+        log(`graphics: auto frame rate ${effective} -> ${higher} (held ${measured} for 5 min)`);
+        applyRate(globalThis.__teslRateCap ? "auto up" : "cap lifted");
+      }
+    };
     globalThis.__teslApplyRate = applyRate;
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
@@ -5300,7 +5366,7 @@ const chatWindows = new Map();
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
-    let loadingState = null, lowFpsWindows = 0, bestFps = 0, rateCapUntil = 0;
+    let loadingState = null;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     // Unity's own null check: a destroyed object compares equal to null
@@ -5504,46 +5570,8 @@ const chatWindows = new Map();
           // keeps the measured rate, so a report shows what changed.
           if (Date.now() >= fpsLogAt && measured) {
             fpsLogAt = Date.now() + 15000; log(`fps: ${measured}`);
-            // MSAA halved the frame rate on both test phones (reports 46-47).
-            // Below 3/4 of the target for 30 s outside loading: drop it.
-            // Report 11: 120 was chosen but 60 was the most the phone reached;
-            // compare with the best rate seen, not the unreachable target.
-            const capped = globalThis.__teslRateCap;
-            // Reports 11-13: a hot phone halves its clocks and the rate swings
-            // 60 -> 22. A steady 30 looks better and lets it cool; the cap is
-            // lifted after 5 minutes and comes back if the phone is still hot.
-            if (capped && Date.now() >= rateCapUntil) {
-              globalThis.__teslRateCap = 0; lowFpsWindows = 0;
-              try { globalThis.__teslApplyRate?.("cap lifted"); } catch (_) {}
-            }
-            if (!versionScreen.visible && !capped) bestFps = Math.max(bestFps, measured);
-            const target = Math.min(globalThis.__teslTargetRate || 60, bestFps || 60);
-            lowFpsWindows = !versionScreen.visible && !capped && target > 30 && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
-            if (lowFpsWindows >= 2) {
-              lowFpsWindows = 0;
-              let samples = 0;
-              try {
-                const quality = ucls("UnityEngine.QualitySettings");
-                samples = Number(quality.method("get_antiAliasing", 0).invoke());
-                if (samples > 0) {
-                  // Report 19: the managed setter is stripped on some builds;
-                  // the engine function behind it stays (as for vSync).
-                  const managed = quality.tryMethod("set_antiAliasing", 1);
-                  if (managed) managed.invoke(0);
-                  else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
-                  else throw Error("no antiAliasing setter");
-                  log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${target} for 30 s)`);
-                }
-              } catch (error) {
-                // Without a working setter the frame-rate cap is the remedy.
-                log(`graphics: antiAliasing drop failed: ${error}`); samples = 0;
-              }
-              if (!samples) {
-                globalThis.__teslRateCap = 30; rateCapUntil = Date.now() + 5 * 60000;
-                log(`graphics: frame rate capped to 30 for 5 min (fps ${measured} of ${target} for 30 s)`);
-                try { globalThis.__teslApplyRate?.("heat cap"); } catch (_) {}
-              }
-            }
+            try { globalThis.__teslGovernor?.(measured, versionScreen.visible); }
+            catch (error) { log(`graphics: auto frame rate failed: ${error}`); }
           }
           if (fps) {
             uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);

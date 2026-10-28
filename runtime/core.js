@@ -7553,6 +7553,88 @@ Il2Cpp.perform(() => {
         log(`graphics: frame rate failed: ${error}`);
       }
     }
+    const autoFile = `${persistentPath()}/tesl-reborn-graphics-auto.json`;
+    const ladder = [120, 90, 60, 40, 30], ceiling = rate || 60;
+    let auto = {};
+    try {
+      auto = JSON.parse(readTextFile(autoFile) || "{}") || {};
+    } catch (_) {
+    }
+    let low = 0, steady = 0, best = 0, msaaOff = auto.msaaOff === true;
+    if (ladder.includes(Number(auto.rate)) && Number(auto.rate) < ceiling) {
+      globalThis.__teslRateCap = Number(auto.rate);
+      log(`graphics: auto frame rate ${auto.rate} of ${ceiling} (learned ${auto.at || "earlier"})${msaaOff ? ", antiAliasing off" : ""}`);
+      if (!rate) schedule(0, () => applyRate("auto start"), "graphics auto rate");
+    }
+    const saveAuto = () => {
+      try {
+        writeTextFile(autoFile, JSON.stringify({ rate: globalThis.__teslRateCap || ceiling, msaaOff, at: (/* @__PURE__ */ new Date()).toISOString() }));
+      } catch (_) {
+      }
+    };
+    function antiAliasingOff() {
+      const quality2 = ucls("UnityEngine.QualitySettings"), samples = Number(quality2.method("get_antiAliasing", 0).invoke());
+      if (samples <= 0) return 0;
+      const managed = quality2.tryMethod("set_antiAliasing", 1);
+      if (managed) managed.invoke(0);
+      else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
+      else throw Error("no antiAliasing setter");
+      return samples;
+    }
+    globalThis.__teslGovernor = (measured, loading) => {
+      if (loading) {
+        low = 0;
+        steady = 0;
+        return;
+      }
+      if (msaaOff) {
+        try {
+          const samples = antiAliasingOff();
+          if (samples) log(`graphics: antiAliasing ${samples}x -> off (remembered)`);
+        } catch (_) {
+        }
+      }
+      const effective = currentRate() || 60;
+      best = Math.max(best, Math.min(measured, effective));
+      const reference = Math.min(effective, best);
+      if (measured < reference * 0.75) {
+        low++;
+        steady = 0;
+      } else {
+        low = 0;
+        steady = measured >= effective * 0.85 ? steady + 1 : 0;
+      }
+      if (low >= 2) {
+        low = 0;
+        if (!msaaOff) {
+          try {
+            const samples = antiAliasingOff();
+            msaaOff = true;
+            saveAuto();
+            if (samples) {
+              log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${reference} for 30 s)`);
+              return;
+            }
+          } catch (error) {
+            log(`graphics: antiAliasing drop failed: ${error}`);
+          }
+        }
+        const lower = ladder.find((step) => step < effective);
+        if (!lower) return;
+        globalThis.__teslRateCap = lower;
+        saveAuto();
+        log(`graphics: auto frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
+        applyRate("auto down");
+      } else if (steady >= 20 && globalThis.__teslRateCap) {
+        steady = 0;
+        const higher = ladder.filter((step) => step > effective && step <= ceiling).pop();
+        if (!higher) return;
+        globalThis.__teslRateCap = higher >= ceiling ? 0 : higher;
+        saveAuto();
+        log(`graphics: auto frame rate ${effective} -> ${higher} (held ${measured} for 5 min)`);
+        applyRate(globalThis.__teslRateCap ? "auto up" : "cap lifted");
+      }
+    };
     globalThis.__teslApplyRate = applyRate;
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
@@ -9552,7 +9634,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
-    let loadingState = null, lowFpsWindows = 0, bestFps = 0, rateCapUntil = 0;
+    let loadingState = null;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
@@ -9751,44 +9833,10 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           if (Date.now() >= fpsLogAt && measured) {
             fpsLogAt = Date.now() + 15e3;
             log(`fps: ${measured}`);
-            const capped = globalThis.__teslRateCap;
-            if (capped && Date.now() >= rateCapUntil) {
-              globalThis.__teslRateCap = 0;
-              lowFpsWindows = 0;
-              try {
-                globalThis.__teslApplyRate?.("cap lifted");
-              } catch (_) {
-              }
-            }
-            if (!versionScreen.visible && !capped) bestFps = Math.max(bestFps, measured);
-            const target = Math.min(globalThis.__teslTargetRate || 60, bestFps || 60);
-            lowFpsWindows = !versionScreen.visible && !capped && target > 30 && measured < target * 0.75 ? lowFpsWindows + 1 : 0;
-            if (lowFpsWindows >= 2) {
-              lowFpsWindows = 0;
-              let samples = 0;
-              try {
-                const quality = ucls("UnityEngine.QualitySettings");
-                samples = Number(quality.method("get_antiAliasing", 0).invoke());
-                if (samples > 0) {
-                  const managed = quality.tryMethod("set_antiAliasing", 1);
-                  if (managed) managed.invoke(0);
-                  else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
-                  else throw Error("no antiAliasing setter");
-                  log(`graphics: antiAliasing ${samples}x -> off (fps ${measured} of ${target} for 30 s)`);
-                }
-              } catch (error) {
-                log(`graphics: antiAliasing drop failed: ${error}`);
-                samples = 0;
-              }
-              if (!samples) {
-                globalThis.__teslRateCap = 30;
-                rateCapUntil = Date.now() + 5 * 6e4;
-                log(`graphics: frame rate capped to 30 for 5 min (fps ${measured} of ${target} for 30 s)`);
-                try {
-                  globalThis.__teslApplyRate?.("heat cap");
-                } catch (_) {
-                }
-              }
+            try {
+              globalThis.__teslGovernor?.(measured, versionScreen.visible);
+            } catch (error) {
+              log(`graphics: auto frame rate failed: ${error}`);
             }
           }
           if (fps) {
