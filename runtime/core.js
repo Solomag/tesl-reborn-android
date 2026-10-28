@@ -7383,6 +7383,20 @@ Il2Cpp.perform(() => {
         args[0] = ptr(rate);
       } });
       schedule(0, () => applyRate("start"), "graphics frame rate");
+      log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
+      if (rate < 60) {
+        const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
+        const frame = 1e3 / rate;
+        let next = 0;
+        Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+          onEnter() {
+            const now = Date.now();
+            if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1e3));
+            next = Math.max(next + frame, Date.now());
+          }
+        });
+        log(`graphics: frame limiter at ${rate} FPS`);
+      }
     }
     const manager = cls(img, "SettingsManager");
     const recommended = cls(img, "ScalabilityUtils").tryMethod("GetRecommendedVideoQualitySettings", 0);

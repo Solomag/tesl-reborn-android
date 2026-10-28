@@ -3499,6 +3499,24 @@ function uiComponent(go, type) {
       const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
       if (!engineAt.isNull()) Interceptor.attach(engineAt, { onEnter(args) { args[0] = ptr(rate); } });
       schedule(0, () => applyRate("start"), "graphics frame rate");
+      log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
+      // Report 41: with the target at 30 and vSync off the game still went
+      // back to 55-58 FPS within half a minute. Below the display rate the
+      // hook now paces frames itself: the main thread waits out the rest of
+      // each frame before the game's update runs.
+      if (rate < 60) {
+        const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
+        const frame = 1000 / rate;
+        let next = 0;
+        Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+          onEnter() {
+            const now = Date.now();
+            if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1000));
+            next = Math.max(next + frame, Date.now());
+          }
+        });
+        log(`graphics: frame limiter at ${rate} FPS`);
+      }
     }
     // Quality: SettingsWin.UpdateUi hides resolution and windowed mode on
     // mobile but only fills the quality dropdown. Show it if the mobile
