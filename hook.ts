@@ -5040,7 +5040,7 @@ const chatWindows = new Map();
 
   function createUpdateBanner() {
     const showFps = fpsMeterEnabled();
-    let fps = null, fpsText = null;
+    let fps = null, fpsText = null, fpsLogAt = 0;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
@@ -5234,9 +5234,13 @@ const chatWindows = new Map();
             shownVersion = versionScreen.visible;
             log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);
           }
+          const measured = fpsSample(fpsCounter, Date.now());
+          // Report 39: the setting looked like it did nothing; the log now
+          // keeps the measured rate, so a report shows what changed.
+          if (Date.now() >= fpsLogAt && measured) { fpsLogAt = Date.now() + 15000; log(`fps: ${measured}`); }
           if (fps) {
             uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);
-            call(fpsText, "set_text", Il2Cpp.string(`${fpsSample(fpsCounter, Date.now())} FPS`));
+            call(fpsText, "set_text", Il2Cpp.string(`${measured} FPS`));
           }
           const caption = portVersionCaption();
           call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android")+"</size>"));
