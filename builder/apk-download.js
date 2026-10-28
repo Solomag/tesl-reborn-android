@@ -54,7 +54,7 @@ function installApkDownload(meta) {
    verified=true;
    if(blobUrl)URL.revokeObjectURL(blobUrl);
    blobUrl=URL.createObjectURL(new Blob(parts,{type:'application/vnd.android.package-archive'}));
-   save.href=blobUrl;save.download='tesl-reborn.apk';save.hidden=false;
+   save.href=blobUrl;save.download=meta.name||'tesl-reborn.apk';save.hidden=false;
    status.textContent='APK verified. Tap Save verified APK, then open it from Downloads.';
    // Tell the PC: a browser cannot see the installation, but it can say the
    // verified APK reached the phone. Best effort; the page works without it.

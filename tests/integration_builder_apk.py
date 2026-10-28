@@ -158,9 +158,9 @@ def main():
                     converter=fake_convert,
                 )
                 if fmt in ("manual", "apk"):
-                    apk = result / "tesl-reborn.apk"
+                    apk = next(result.glob("*.apk"), result / "missing.apk")
                 else:
-                    with zipfile.ZipFile(result / "tesl-reborn.xapk") as z:
+                    with zipfile.ZipFile(next(result.glob("*.xapk"), result / "missing.xapk")) as z:
                         apk = root / "inspect.apk"
                         apk.write_bytes(z.read(PACKAGE + ".apk"))
                 subprocess.run(
@@ -211,7 +211,7 @@ def main():
                 import http.client
 
                 transfer_source = (
-                    apk if fmt in ("manual", "apk") else result / "tesl-reborn.xapk"
+                    apk if fmt in ("manual", "apk") else next(result.glob("*.xapk"), result / "missing.xapk")
                 )
                 server = ResourceServer(
                     result / "resources",

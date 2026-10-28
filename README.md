@@ -13,8 +13,8 @@ by the `Build Windows Builder` Actions workflow; device validation is still requ
 
 ## What you get
 
-The portable Windows builder defaults to two files: a compact `tesl-reborn.apk`
-and one `tesl-reborn-data.zip` containing the original OBB, recovered PC bundles
+The portable Windows builder defaults to two files: a compact APK named after the channel and Builder
+build (`TESL-Reborn-Test-build46.apk`) and one `tesl-reborn-data.zip` containing the original OBB, recovered PC bundles
 and selected languages. Install the APK and choose **Import data ZIP** on the
 phone, or transfer missing data through the temporary PC server and QR code.
 Game data is opened from **Settings**, and optional languages can be transferred

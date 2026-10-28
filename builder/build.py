@@ -657,6 +657,14 @@ def stale_gadget(vendor):
         return True
 
 
+def output_name(builder, extension):
+    """The channel and Builder build in the file name, e.g.
+    TESL-Reborn-Test-build46.apk; Android updates by package, not file name."""
+    channel = str(builder.get("channel") or "test").capitalize()
+    build = int(builder.get("build") or 0)
+    return f"TESL-Reborn-{channel}-{'build' + str(build) if build else 'local'}.{extension}"
+
+
 def missing_tools(vendor):
     return [name for name in REQUIRED_TOOLS if not (vendor / name).is_file()]
 
@@ -882,9 +890,9 @@ def _build(
             if format == "data":
                 pass
             elif format in ("manual", "apk"):
-                shutil.copyfile(apk, result / "tesl-reborn.apk")
+                shutil.copyfile(apk, result / output_name(setup["builder"], "apk"))
             else:
-                final = result / "tesl-reborn.xapk"
+                final = result / output_name(setup["builder"], "xapk")
                 obb_path = f"Android/obb/{PACKAGE}/{OBB}"
                 meta.update(
                     package_name=PACKAGE,

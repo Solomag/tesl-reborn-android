@@ -4,8 +4,9 @@
 Run in CI after packaging, in the main repository only. The executable goes to
 the builder-<channel> release, replacing the previous build, with the build
 number in the asset's label ("[Windows][Test]TESL-Reborn-Builder.exe · build 7").
-The file name itself stays TESL-Reborn-Builder(.exe): older Builders look
-for it to update themselves. The
+It goes up twice: named with its channel (TESL-Reborn-Builder-Test.exe) for
+people, and as TESL-Reborn-Builder(.exe), which older Builders look for to
+update themselves. The
 Builder reads that label and the SHA-256 GitHub reports for the asset
 (builder/selfupdate.py); nothing else is uploaded. The release is created on
 first use; test is marked as a pre-release.
@@ -13,6 +14,7 @@ first use; test is marked as a pre-release.
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -38,13 +40,16 @@ def main():
         flags = ["--prerelease"] if version["channel"] == "test" else []
         created = subprocess.run(["gh", "release", "create", tag, "--title", title, "--notes",
                                   "Updated by CI; the Builder updates itself from here. "
-                                  "Download TESL-Reborn-Builder.exe (Windows) or TESL-Reborn-Builder (Linux).",
+                                  "Download TESL-Reborn-Builder-<Channel>.exe (Windows) or TESL-Reborn-Builder-<Channel> (Linux).",
                                   "--target", os.environ.get("GITHUB_SHA", "HEAD"), *flags])
         # A parallel job may have created it first.
         if created.returncode != 0 and subprocess.run(["gh", "release", "view", tag], capture_output=True).returncode != 0:
             raise SystemExit("Could not create release " + tag)
-    subprocess.run(["gh", "release", "upload", tag, f"{executable}#{label(executable, version['build'], version['channel'])}", "--clobber"],
-                   check=True)
+    named = executable.with_name(executable.stem + "-" + version["channel"].capitalize() + executable.suffix)
+    shutil.copyfile(executable, named)
+    for path in (named, executable):
+        subprocess.run(["gh", "release", "upload", tag, f"{path}#{label(path, version['build'], version['channel'])}", "--clobber"],
+                       check=True)
     for name in LEGACY_ASSETS:
         subprocess.run(["gh", "release", "delete-asset", tag, name, "--yes"], capture_output=True)
     print(f"BUILDER: {executable.name} build {version['build']} on {tag}")

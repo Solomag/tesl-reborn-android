@@ -43,6 +43,8 @@ class ResourceServer:
         ):
             raise ValueError("The APK selected for transfer is missing")
         self.apk_member = None
+        # The phone saves the APK under the Builder's name for it (channel and build).
+        self.download_name = (self.apk.stem + ".apk") if self.apk else "tesl-reborn.apk"
         self.apk_size = self.apk.stat().st_size if self.apk else 0
         if self.apk and self.apk.suffix.lower() == ".xapk":
             self.apk_member = PACKAGE + ".apk"
@@ -270,7 +272,7 @@ class ResourceServer:
                     if browser:
                         self.send_header(
                             "Content-Disposition",
-                            'attachment; filename="tesl-reborn.apk"',
+                            f'attachment; filename="{owner.download_name}"',
                         )
                     if partial:
                         self.send_header(
@@ -417,7 +419,7 @@ class ResourceServer:
                '<a class="button" id="apk-save" hidden>Save verified APK</a>') if self.apk else "<p>This transfer has no APK.</p>"
         downloader = Path(__file__).with_name("apk-download.js").read_text(encoding="utf-8")
         config = json.dumps(dict(bytes=self.apk_size, sha256=self.apk_hash,
-                                 url=self.token + "/tesl-reborn.apk",
+                                 url=self.token + "/tesl-reborn.apk", name=self.download_name,
                                  verifiedUrl=self.token + "/apk-verified"))
         return (
             """<!doctype html><html lang="en"><meta charset="utf-8">

@@ -423,13 +423,13 @@ class BuilderResourcesTest(unittest.TestCase):
                     if fmt == "data":
                         # Data only: packs, OBB and data ZIP; no APK step at all.
                         self.assertEqual(len(native_calls), before, "no APK is built")
-                        self.assertFalse((result / "tesl-reborn.apk").exists())
-                        self.assertFalse((result / "tesl-reborn.xapk").exists())
+                        self.assertFalse((next(result.glob("*.apk"), result / "missing.apk")).exists())
+                        self.assertFalse((next(result.glob("*.xapk"), result / "missing.xapk")).exists())
                         with zipfile.ZipFile(result / "tesl-reborn-data.zip") as data:
                             self.assertEqual(data.read("game.obb"), (result / "resources/game.obb").read_bytes())
                         self.assertIn("_data-only_", result.name)
                     elif fmt == "apk":
-                        self.assertTrue((result / "tesl-reborn.apk").is_file())
+                        self.assertTrue((next(result.glob("*.apk"), result / "missing.apk")).is_file())
                         self.assertFalse((result / "tesl-reborn-data.zip").exists())
                         self.assertFalse((result / "resources/game.obb").exists())
                         self.assertFalse((result / "resources/packs").exists())
@@ -447,7 +447,7 @@ class BuilderResourcesTest(unittest.TestCase):
                             )
                             self.assertEqual(data.namelist()[0], "catalog.json")
                     else:
-                        with zipfile.ZipFile(result / "tesl-reborn.xapk") as z:
+                        with zipfile.ZipFile(next(result.glob("*.xapk"), result / "missing.xapk")) as z:
                             self.assertEqual(
                                 json.loads(z.read("manifest.json"))["package_name"],
                                 PACKAGE,

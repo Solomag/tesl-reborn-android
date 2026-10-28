@@ -26,8 +26,11 @@ def platform_name():
     return "windows" if sys.platform == "win32" else "linux"
 
 
-def asset_name():
-    return "TESL-Reborn-Builder" + (".exe" if sys.platform == "win32" else "")
+def asset_name(channel=None):
+    """TESL-Reborn-Builder-Test.exe; without a channel the name Builders
+    before the rename look for, which CI still uploads."""
+    suffix = "-" + channel.capitalize() if channel else ""
+    return "TESL-Reborn-Builder" + suffix + (".exe" if sys.platform == "win32" else "")
 
 
 def current(root):
@@ -62,7 +65,8 @@ def check(version, fetch=_get):
     """The newer build on this channel, or None. Raises on a bad release."""
     release = json.loads(fetch(RELEASE.format(channel=version["channel"]), 1024 * 1024,
                                accept="application/vnd.github+json").decode("utf-8"))
-    asset = next((a for a in release.get("assets") or [] if a.get("name") == asset_name()), None)
+    assets = {a.get("name"): a for a in release.get("assets") or []}
+    asset = assets.get(asset_name(version["channel"])) or assets.get(asset_name())
     # Being replaced right now (upload deletes, then adds): try again later.
     if asset is None or asset.get("state", "uploaded") != "uploaded":
         return None

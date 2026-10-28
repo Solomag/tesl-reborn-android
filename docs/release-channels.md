@@ -57,9 +57,11 @@ keeps its revision until stable catches up.
 
 CI of the main repository uploads the Builder to two permanent releases:
 `builder-test` (test branch, pre-release) and `builder-stable` (`main`). Each
-holds `TESL-Reborn-Builder.exe` (Windows) and `TESL-Reborn-Builder` (Linux);
-the release page shows them as `[Windows][Test]TESL-Reborn-Builder.exe · build
-7`. The build number is the CI run number. The Builder reads its channel's
+holds `TESL-Reborn-Builder-Test.exe` (Windows) and `TESL-Reborn-Builder-Test`
+(Linux), `-Stable` on stable, plus the same file as `TESL-Reborn-Builder(.exe)`
+that Builders before the rename look for; the release page shows them as
+`[Windows][Test]TESL-Reborn-Builder-Test.exe · build 7`. APKs the Builder makes
+are named the same way: `TESL-Reborn-Test-build46.apk`. The build number is the CI run number. The Builder reads its channel's
 release through the GitHub API: the label gives the number and `digest` the
 SHA-256 computed by GitHub. Channel and number are written into the Builder
 (`builder/version.json`, `tools/select_channel.py`); `tools/publish_builder.py`

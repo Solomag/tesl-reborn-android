@@ -723,14 +723,12 @@ class BuilderWindow:
                                 port=port,
                                 cert=cert,
                                 key=key,
-                                apk=(
-                                    (root.parent / "tesl-reborn.apk")
-                                    if (root.parent / "tesl-reborn.apk").is_file()
-                                    else (
-                                        (root.parent / "tesl-reborn.xapk")
-                                        if (root.parent / "tesl-reborn.xapk").is_file()
-                                        else None
-                                    )
+                                # Named after channel and build (TESL-Reborn-Test-build46.apk);
+                                # older builds used tesl-reborn.apk.
+                                apk=next(
+                                    (path for pattern in ("*.apk", "*.xapk")
+                                     for path in sorted(root.parent.glob(pattern)) if path.is_file()),
+                                    None,
                                 ),
                             ).start(),
                             public,
