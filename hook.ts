@@ -2889,10 +2889,34 @@ function uiComponent(go, type) {
     call(input,"set_characterLimit",100);return input;
     }finally{root.free();}
   }
+  // The search text used Unity's built-in Arial in white and looked like the
+  // phone's own font next to the game UI. The game's own InputFields (the
+  // login form keeps them loaded) give the font, style and colours of their
+  // text and placeholder; without one, Arial stays.
+  function styleLikeGameInput(ours,label,hint) {
+    const values=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
+      .invoke(ucls("UnityEngine.UI.InputField").type.object);
+    for(let i=0;i<values.length;i++) {
+      const game=values.get(i);
+      if(!unityAlive(game)||game.handle.equals(ours.handle))continue;
+      const text=call(game,"get_textComponent");
+      if(!unityAlive(text)||isNull(call(text,"get_font")))continue;
+      call(label,"set_font",call(text,"get_font"));call(label,"set_fontStyle",call(text,"get_fontStyle"));
+      call(label,"set_color",call(text,"get_color"));
+      const placeholder=call(game,"get_placeholder");
+      if(hint&&unityAlive(placeholder)&&placeholder.class.type.name==="UnityEngine.UI.Text"){
+        call(hint,"set_font",call(placeholder,"get_font"));call(hint,"set_fontStyle",call(placeholder,"get_fontStyle"));
+        call(hint,"set_color",call(placeholder,"get_color"));
+      }else if(hint)call(hint,"set_font",call(text,"get_font"));
+      return String(call(call(game,"get_gameObject"),"get_name")?.content||"InputField");
+    }
+    return null;
+  }
   function deckSearchMatches(name,query) {
     const normalize=value=>String(value||"").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g,"").trim();
     return normalize(name).includes(normalize(query));
   }
+  let deckSearchStyleLogged=false;
   section("mobile deck picker search",()=>{
     const picker=cls(img,"DeckPickerWin"),tile=cls(img,"DeckTile"),records=new Map(),retries=new Map();
     const find=ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
@@ -2928,6 +2952,8 @@ function uiComponent(go, type) {
       const placeholderGO=create("Placeholder",call(viewport,"get_transform"));uiStretch(uiRect(placeholderGO));
       const labels={en_us:"Search decks…",ru_ru:"Поиск колод…",de_de:"Decks suchen…",es_es:"Buscar mazos…",es_mx:"Buscar mazos…",fr_fr:"Rechercher un deck…",it_it:"Cerca mazzi…",pl_pl:"Szukaj talii…",pt_br:"Buscar decks…",tr_tr:"Deste ara…"};
       phase="placeholder";const hint=hold(deckSearchText(placeholderGO,labels[resourceLanguage()]||labels.en_us,30));call(hint,"set_color",rgba(.65,.65,.65,1));call(input,"set_placeholder",hint);
+      phase="game font";try{const source=styleLikeGameInput(input,label,hint);if(source&&!deckSearchStyleLogged){deckSearchStyleLogged=true;log(`deck search: text styled like the game's ${source}`);}}
+      catch(error){log(`deck search: kept the built-in font: ${error}`);}
       phase="clear button";const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});uiPlace(clear,1,.5,1,.5,-8,0,76,56);
       const clearText=call(call(clear,"get_transform"),"Find",Il2Cpp.string("Label"));
       if(!isNull(clearText))call(uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI"),"set_fontSize",32);

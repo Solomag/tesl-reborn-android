@@ -6618,10 +6618,31 @@ Il2Cpp.perform(() => {
       root.free();
     }
   }
+  function styleLikeGameInput(ours, label, hint) {
+    const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.InputField").type.object);
+    for (let i = 0; i < values.length; i++) {
+      const game = values.get(i);
+      if (!unityAlive(game) || game.handle.equals(ours.handle)) continue;
+      const text = call(game, "get_textComponent");
+      if (!unityAlive(text) || isNull(call(text, "get_font"))) continue;
+      call(label, "set_font", call(text, "get_font"));
+      call(label, "set_fontStyle", call(text, "get_fontStyle"));
+      call(label, "set_color", call(text, "get_color"));
+      const placeholder = call(game, "get_placeholder");
+      if (hint && unityAlive(placeholder) && placeholder.class.type.name === "UnityEngine.UI.Text") {
+        call(hint, "set_font", call(placeholder, "get_font"));
+        call(hint, "set_fontStyle", call(placeholder, "get_fontStyle"));
+        call(hint, "set_color", call(placeholder, "get_color"));
+      } else if (hint) call(hint, "set_font", call(text, "get_font"));
+      return String(call(call(game, "get_gameObject"), "get_name")?.content || "InputField");
+    }
+    return null;
+  }
   function deckSearchMatches(name, query) {
     const normalize = (value) => String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g, "").trim();
     return normalize(name).includes(normalize(query));
   }
+  let deckSearchStyleLogged = false;
   section("mobile deck picker search", () => {
     const picker = cls(img, "DeckPickerWin"), tile = cls(img, "DeckTile"), records = /* @__PURE__ */ new Map(), retries = /* @__PURE__ */ new Map();
     const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
@@ -6690,6 +6711,16 @@ Il2Cpp.perform(() => {
         const hint = hold(deckSearchText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30));
         call(hint, "set_color", rgba(0.65, 0.65, 0.65, 1));
         call(input, "set_placeholder", hint);
+        phase = "game font";
+        try {
+          const source = styleLikeGameInput(input, label, hint);
+          if (source && !deckSearchStyleLogged) {
+            deckSearchStyleLogged = true;
+            log(`deck search: text styled like the game's ${source}`);
+          }
+        } catch (error) {
+          log(`deck search: kept the built-in font: ${error}`);
+        }
         phase = "clear button";
         const clear = uiLabeledButton("Clear", call(bar, "get_transform"), "X", -8, -8, 100, () => {
           call(input, "set_text", Il2Cpp.string(""));

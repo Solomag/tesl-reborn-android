@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 91,
-  "version": "android-91-login-badge-world-position",
-  "bytes": 408113,
-  "sha256": "df2984309b1e206ecb6b49da0f092a941b110f74997a4d51eb49f4250892fe32",
+  "revision": 92,
+  "version": "android-92-search-game-font",
+  "bytes": 409751,
+  "sha256": "9a512b88dda933d825f06a2a2a3e50192a882c433a5c1733cfd77a93d0a416a2",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "cac4fa22f4d8bed819a9def9e3f69471f3585eb9005916ec2728af502ee1f970"
+  "sourceSha256": "ec354abe77a0c94a3b1156a385dc1662c70892dbdb230fbbcd55cd82c9a092b5"
 }
