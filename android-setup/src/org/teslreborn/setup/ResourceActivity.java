@@ -46,6 +46,8 @@ public class ResourceActivity extends Activity {
   private File obbFile;
   private boolean initialized = false;
   private boolean dataChanged = false;
+  /** Frame rate, resolution and the FPS counter are read when the game starts. */
+  private boolean graphicsChanged = false;
   private boolean busy = false;
   private Future<?> catalogTask;
   private int catalogGeneration;
@@ -431,6 +433,7 @@ public class ResourceActivity extends Activity {
               if (FRAME_RATES[position] == 0) graphics.remove("frameRate");
               else graphics.put("frameRate", FRAME_RATES[position]);
               PackInstaller.writeJson(file, graphics);
+              graphicsChanged = true;
             } catch (Exception error) {
               message(error.toString());
             }
@@ -460,6 +463,7 @@ public class ResourceActivity extends Activity {
               if (scales[position] == 0) graphics.remove("renderScale");
               else graphics.put("renderScale", scales[position]);
               PackInstaller.writeJson(file, graphics);
+              graphicsChanged = true;
             } catch (Exception error) {
               message(error.toString());
             }
@@ -487,6 +491,7 @@ public class ResourceActivity extends Activity {
           try {
             graphics.put("showFps", shown);
             PackInstaller.writeJson(file, graphics);
+              graphicsChanged = true;
           } catch (Exception error) {
             message(error.toString());
           }
@@ -940,7 +945,7 @@ public class ResourceActivity extends Activity {
           String previousLanguage = "";
           try { previousLanguage = PackInstaller.json(new File(root, "tesl-reborn-language.json")).optString("language"); }
           catch (Exception ignored) {}
-          if (dataChanged || !code.equals(previousLanguage)) stopGameProcess();
+          if (dataChanged || graphicsChanged || !code.equals(previousLanguage)) stopGameProcess();
           PackInstaller.writeJson(new File(root, "tesl-reborn-language.json"),
               new JSONObject().put("language", code).put("system", chosen.equals("system")));
           getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2)
