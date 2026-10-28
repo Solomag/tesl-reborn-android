@@ -7331,11 +7331,10 @@ Il2Cpp.perform(() => {
     } });
     log(`settings game data: ${hooks} window hooks, ${closeAddresses.size} close hooks and prefab fallback`);
   });
-  const GRAPHICS_FRAME_RATES = [30, 60, 90, 120];
   function graphicsFrameRate(text) {
     try {
-      const value = Number(JSON.parse(text || "null")?.frameRate);
-      return GRAPHICS_FRAME_RATES.includes(value) ? value : null;
+      const value = JSON.parse(text || "null")?.frameRate;
+      return Number.isInteger(value) && value >= 20 && value <= 240 ? value : null;
     } catch (_) {
       return null;
     }
@@ -7350,8 +7349,8 @@ Il2Cpp.perform(() => {
   }
   function graphicsRenderScale(text) {
     try {
-      const value = Number(JSON.parse(text || "null")?.renderScale);
-      return [50, 75].includes(value) ? value : null;
+      const value = JSON.parse(text || "null")?.renderScale;
+      return Number.isInteger(value) && value >= 30 && value < 100 ? value : null;
     } catch (_) {
       return null;
     }

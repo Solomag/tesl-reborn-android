@@ -115,17 +115,17 @@ final class UiStrings {
           "Otomatik yama güncellemeleri"
         });
     TEXT.put(
+        "standard",
+        new String[] {
+          "standard", "Standard", "estándar", "estándar", "standard", "standard", "standardowa", "padrão",
+          "стандарт", "standart"
+        });
+    TEXT.put(
         "Render resolution",
         new String[] {
           "Render resolution", "Renderauflösung", "Resolución de renderizado", "Resolución de renderizado",
           "Résolution de rendu", "Risoluzione di rendering", "Rozdzielczość renderowania", "Resolução de renderização",
           "Разрешение рендера", "İşleme çözünürlüğü"
-        });
-    TEXT.put(
-        "Full screen (100%)",
-        new String[] {
-          "Full screen (100%)", "Voll (100 %)", "Completa (100%)", "Completa (100%)", "Pleine (100 %)",
-          "Piena (100%)", "Pełna (100%)", "Total (100%)", "Полное (100%)", "Tam (%100)"
         });
     TEXT.put(
         "Lower resolution draws fewer pixels: faster and cooler, slightly softer. Applies on the next game start.",
@@ -154,12 +154,6 @@ final class UiStrings {
           "Frame rate", "Bildrate", "Fotogramas por segundo", "Fotogramas por segundo",
           "Images par seconde", "Frequenza fotogrammi", "Liczba klatek", "Taxa de quadros",
           "Частота кадров", "Kare hızı"
-        });
-    TEXT.put(
-        "Standard (60)",
-        new String[] {
-          "Standard (60)", "Standard (60)", "Estándar (60)", "Estándar (60)", "Standard (60)",
-          "Standard (60)", "Standardowa (60)", "Padrão (60)", "Стандартная (60)", "Standart (60)"
         });
     TEXT.put(
         "Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display.",

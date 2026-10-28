@@ -3451,11 +3451,11 @@ function uiComponent(go, type) {
   // start. Game Data can choose 30 (weak or hot phones) or 90/120 (fast
   // displays) in tesl-reborn-graphics.json; the game's own call is given that
   // value, and vSync, which would cap the rate at the display's, is turned off.
-  const GRAPHICS_FRAME_RATES = [30, 60, 90, 120];
+  // Game data has sliders: any whole rate from 20 to 240 FPS.
   function graphicsFrameRate(text) {
     try {
-      const value = Number(JSON.parse(text || "null")?.frameRate);
-      return GRAPHICS_FRAME_RATES.includes(value) ? value : null;
+      const value = JSON.parse(text || "null")?.frameRate;
+      return Number.isInteger(value) && value >= 20 && value <= 240 ? value : null;
     } catch (_) { return null; }
   }
   // Saved quality: VeryLow 0 .. High 3; Auto (4) and anything else keep the
@@ -3469,8 +3469,8 @@ function uiComponent(go, type) {
   // Render resolution in percent of the screen; 100 (or nothing) keeps it.
   function graphicsRenderScale(text) {
     try {
-      const value = Number(JSON.parse(text || "null")?.renderScale);
-      return [50, 75].includes(value) ? value : null;
+      const value = JSON.parse(text || "null")?.renderScale;
+      return Number.isInteger(value) && value >= 30 && value < 100 ? value : null;
     } catch (_) { return null; }
   }
   // The width and height to draw at: the largest size asked for so far is

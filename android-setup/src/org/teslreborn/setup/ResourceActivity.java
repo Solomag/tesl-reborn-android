@@ -405,8 +405,51 @@ public class ResourceActivity extends Activity {
         tr("The channel applies on the next game start. Test gets new patches first and may be less stable."));
   }
 
-  /** Read by the hook at game start; 0 keeps the game's own 60. */
-  static final int[] FRAME_RATES = {0, 30, 90, 120};
+  /**
+   * A labelled slider from min to max in steps; the label shows the value.
+   * The default value removes the key, so the game keeps its own setting.
+   */
+  private void addGraphicsSlider(LinearLayout box, File file, JSONObject graphics, String key, String title,
+      int min, int max, int step, int standard, String unit, String hint) {
+    TextView label = UiStyle.label(this, box, title);
+    SeekBar bar = new SeekBar(this);
+    bar.setMax((max - min) / step);
+    int saved = Math.max(min, Math.min(max, graphics.optInt(key, standard)));
+    bar.setProgress((saved - min) / step);
+    bar.setProgressTintList(android.content.res.ColorStateList.valueOf(UiStyle.GOLD));
+    bar.setThumbTintList(android.content.res.ColorStateList.valueOf(UiStyle.GOLD));
+    bar.setPadding(UiStyle.dp(this, 8), UiStyle.dp(this, 12), UiStyle.dp(this, 8), UiStyle.dp(this, 12));
+    Runnable show = () -> {
+      int value = min + bar.getProgress() * step;
+      label.setText(title + ": " + value + unit + (value == standard ? " (" + tr("standard") + ")" : ""));
+    };
+    show.run();
+    bar.setOnSeekBarChangeListener(
+        new SeekBar.OnSeekBarChangeListener() {
+          @Override
+          public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+            show.run();
+          }
+
+          @Override
+          public void onStartTrackingTouch(SeekBar seekBar) {}
+
+          @Override
+          public void onStopTrackingTouch(SeekBar seekBar) {
+            int value = min + seekBar.getProgress() * step;
+            try {
+              if (value == standard) graphics.remove(key);
+              else graphics.put(key, value);
+              PackInstaller.writeJson(file, graphics);
+              graphicsChanged = true;
+            } catch (Exception error) {
+              message(error.toString());
+            }
+          }
+        });
+    box.addView(bar);
+    UiStyle.body(this, box, hint);
+  }
 
   private void addFrameRateChoice(LinearLayout box) {
     File file = new File(root, "tesl-reborn-graphics.json");
@@ -417,63 +460,17 @@ public class ResourceActivity extends Activity {
       config = new JSONObject();
     }
     final JSONObject graphics = config;
-    UiStyle.label(this, box, tr("Frame rate"));
-    String[] labels = {tr("Standard (60)"), "30", "90", "120"};
-    Spinner rate = new Spinner(this);
-    UiStyle.field(this, rate);
-    rate.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, labels));
-    int saved = graphics.optInt("frameRate", 0);
-    for (int i = 0; i < FRAME_RATES.length; i++) if (FRAME_RATES[i] == saved) rate.setSelection(i);
-    rate.setOnItemSelectedListener(
-        new android.widget.AdapterView.OnItemSelectedListener() {
-          @Override
-          public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
-            if (graphics.optInt("frameRate", 0) == FRAME_RATES[position]) return;
-            try {
-              if (FRAME_RATES[position] == 0) graphics.remove("frameRate");
-              else graphics.put("frameRate", FRAME_RATES[position]);
-              PackInstaller.writeJson(file, graphics);
-              graphicsChanged = true;
-            } catch (Exception error) {
-              message(error.toString());
-            }
-          }
-
-          @Override
-          public void onNothingSelected(android.widget.AdapterView<?> parent) {}
-        });
-    box.addView(rate);
-    UiStyle.body(
-        this,
-        box,
+    // Up to the fastest refresh rate this display offers (at least 60).
+    int fastest = 60;
+    try {
+      for (android.view.Display.Mode mode : getWindowManager().getDefaultDisplay().getSupportedModes())
+        fastest = Math.max(fastest, Math.round(mode.getRefreshRate()));
+    } catch (Exception ignored) {
+    }
+    addGraphicsSlider(box, file, graphics, "frameRate", tr("Frame rate"), 20, fastest, 5, 60, " FPS",
         tr("Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display."));
-    UiStyle.label(this, box, tr("Render resolution"));
-    final int[] scales = {0, 75, 50};
-    Spinner resolution = new Spinner(this);
-    UiStyle.field(this, resolution);
-    resolution.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
-        new String[] {tr("Full screen (100%)"), "75%", "50%"}));
-    for (int i = 0; i < scales.length; i++) if (scales[i] == graphics.optInt("renderScale", 0)) resolution.setSelection(i);
-    resolution.setOnItemSelectedListener(
-        new android.widget.AdapterView.OnItemSelectedListener() {
-          @Override
-          public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
-            if (graphics.optInt("renderScale", 0) == scales[position]) return;
-            try {
-              if (scales[position] == 0) graphics.remove("renderScale");
-              else graphics.put("renderScale", scales[position]);
-              PackInstaller.writeJson(file, graphics);
-              graphicsChanged = true;
-            } catch (Exception error) {
-              message(error.toString());
-            }
-          }
-
-          @Override
-          public void onNothingSelected(android.widget.AdapterView<?> parent) {}
-        });
-    box.addView(resolution);
-    UiStyle.body(this, box, tr("Lower resolution draws fewer pixels: faster and cooler, slightly softer. Applies on the next game start."));
+    addGraphicsSlider(box, file, graphics, "renderScale", tr("Render resolution"), 30, 100, 5, 100, "%",
+        tr("Lower resolution draws fewer pixels: faster and cooler, slightly softer. Applies on the next game start."));
     // The hook's corner frame counter. Until it is set here the hook shows it
     // on the Test channel only.
     Switch counter = new Switch(this);
