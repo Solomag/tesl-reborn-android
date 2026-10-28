@@ -137,41 +137,44 @@ function loadOverrides(): Record<string, string> {
 }
 
 // Hook cost: a lower render resolution gave no more FPS (report 45), so the
-// limit is the main thread, and the hook's own per-frame callbacks run there.
-// Every Interceptor callback is timed under the section that attached it;
-// every 15 s the costliest are logged as "hook cost: ...".
+// limit may be the main thread, and the hook's own per-frame callbacks run
+// there. hookAttach times every callback under the section that attached it;
+// every 15 s the costliest are logged as "hook cost: ...". Patch 104 replaced
+// Interceptor.attach itself, which this Frida does not allow: the hook failed
+// before its first log line and was rolled back. Nothing here may throw.
 let currentSection = "startup";
-const hookCost = (() => {
-  const spent = new Map<string, { us: number; calls: number }>();
-  const now = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("clock_gettime"), "int", ["int", "pointer"]);
-  const buffer = Memory.alloc(16);
-  const micros = () => { now(1, buffer); return buffer.readS64().toNumber() * 1e6 + buffer.add(8).readS64().toNumber() / 1e3; };
-  let reportAt = Date.now() + 15000, since = Date.now();
-  const record = (name: string, us: number) => {
-    const entry = spent.get(name) || { us: 0, calls: 0 };
-    entry.us += us; entry.calls++; spent.set(name, entry);
-    if (Date.now() < reportAt) return;
-    const seconds = (Date.now() - since) / 1000;
-    const top = [...spent.entries()].sort((a, b) => b[1].us - a[1].us).slice(0, 8)
-      .map(([key, value]) => `${key} ${(value.us / seconds / 1000).toFixed(1)} ms/s ${Math.round(value.calls / seconds)}/s`);
-    const total = [...spent.values()].reduce((sum, value) => sum + value.us, 0);
-    log(`hook cost: ${(total / seconds / 1000).toFixed(1)} ms/s; ${top.join("; ")}`);
-    spent.clear(); since = Date.now(); reportAt = since + 15000;
-  };
-  const timed = (name: string, fn: Function) => function (this: any, ...args: any[]) {
-    const start = micros();
-    try { return fn.apply(this, args); } finally { record(name, micros() - start); }
-  };
-  const attach = Interceptor.attach.bind(Interceptor);
-  (Interceptor as any).attach = (target: NativePointerValue, callbacks: any, data?: NativePointerValue) => {
-    if (typeof callbacks !== "object" || callbacks === null) return attach(target, callbacks, data);
-    const name = currentSection, wrapped: any = {};
-    if (callbacks.onEnter) wrapped.onEnter = timed(name, callbacks.onEnter);
-    if (callbacks.onLeave) wrapped.onLeave = timed(name, callbacks.onLeave);
-    return attach(target, wrapped, data);
-  };
-  return { timed };
+const hookTimer = (() => {
+  try {
+    const spent = new Map<string, { us: number; calls: number }>();
+    const now = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("clock_gettime"), "int", ["int", "pointer"]);
+    const buffer = Memory.alloc(16);
+    const micros = () => { now(1, buffer); return buffer.readS64().toNumber() * 1e6 + buffer.add(8).readS64().toNumber() / 1e3; };
+    let reportAt = Date.now() + 15000, since = Date.now();
+    const record = (name: string, us: number) => {
+      const entry = spent.get(name) || { us: 0, calls: 0 };
+      entry.us += us; entry.calls++; spent.set(name, entry);
+      if (Date.now() < reportAt) return;
+      const seconds = (Date.now() - since) / 1000;
+      const top = Array.from(spent.entries()).sort((a, b) => b[1].us - a[1].us).slice(0, 8)
+        .map(([key, value]) => `${key} ${(value.us / seconds / 1000).toFixed(1)} ms/s ${Math.round(value.calls / seconds)}/s`);
+      let total = 0; spent.forEach(value => { total += value.us; });
+      log(`hook cost: ${(total / seconds / 1000).toFixed(1)} ms/s; ${top.join("; ")}`);
+      spent.clear(); since = Date.now(); reportAt = since + 15000;
+    };
+    micros();
+    return (name: string, fn: Function) => function (this: any, ...args: any[]) {
+      const start = micros();
+      try { return fn.apply(this, args); } finally { try { record(name, micros() - start); } catch (_) {} }
+    };
+  } catch (_) { return null; }
 })();
+function hookAttach(target: NativePointerValue, callbacks: any): InvocationListener {
+  if (!hookTimer || typeof callbacks !== "object" || callbacks === null) return Interceptor.attach(target, callbacks);
+  const name = currentSection, wrapped: any = {};
+  if (callbacks.onEnter) wrapped.onEnter = hookTimer(name, callbacks.onEnter);
+  if (callbacks.onLeave) wrapped.onLeave = hookTimer(name, callbacks.onLeave);
+  return Interceptor.attach(target, wrapped);
+}
 
 function section(name: string, fn: () => void) {
   currentSection = name;
@@ -306,7 +309,7 @@ Il2Cpp.perform(() => {
   }
   section("request language before send", () => {
     const send = cls(img, "BestHTTP.HTTPRequest").tryMethod("Send", 0);
-    if (send && !send.virtualAddress.isNull()) Interceptor.attach(send.virtualAddress, {
+    if (send && !send.virtualAddress.isNull()) hookAttach(send.virtualAddress, {
       onEnter(args) { try { pinRequestLanguage(new Il2Cpp.Object(args[0])); } catch (error) { log(`request language: ${error}`); } }
     });
   });
@@ -367,7 +370,7 @@ Il2Cpp.perform(() => {
 
   // 2) Config redirect: FetchConfig.StartProcess(localConfigUrl, configUrl, attemptLocalConnect, callback)
   section("config redirect", () => {
-    Interceptor.attach(cls(img, "SparkleServices.FetchConfig").method("StartProcess").virtualAddress, {
+    hookAttach(cls(img, "SparkleServices.FetchConfig").method("StartProcess").virtualAddress, {
       onEnter(args) {
         args[1] = Il2Cpp.string(CONFIG_LOCAL).handle;
         args[2] = Il2Cpp.string(CONFIG_URL).handle;
@@ -379,14 +382,14 @@ Il2Cpp.perform(() => {
 
   // 3) HTTP: caching on, and the plugin version header on every request (BestHTTP namespace)
   section("http caching", () => {
-    Interceptor.attach(cls(img, "BestHTTP.HTTPManager").method("get_IsCachingDisabled").virtualAddress, {
+    hookAttach(cls(img, "BestHTTP.HTTPManager").method("get_IsCachingDisabled").virtualAddress, {
       onLeave(ret) { ret.replace(ptr(0)); },
     });
   });
   section("http header", () => {
     let seen = 0;
     const m = cls(img, "BestHTTP.HTTPRequest").method("EnumerateHeaders", 2);   // (callback, callBeforeSendCallback); the 1-arg overload is an 8-byte stub
-    Interceptor.attach(m.virtualAddress, {
+    hookAttach(m.virtualAddress, {
       onEnter(args) {
         try {
           const req = new Il2Cpp.Object(args[0]);
@@ -448,7 +451,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   }
   section("http trace", () => {
     let seen = 0;
-    Interceptor.attach(cls(img, "BestHTTP.HTTPRequest").method("CallCallback").virtualAddress, {
+    hookAttach(cls(img, "BestHTTP.HTTPRequest").method("CallCallback").virtualAddress, {
       onEnter(args) {
         try { reportHttpResult(new Il2Cpp.Object(args[0]), seen++ < 80); }
         catch (error) { log(`trace error: ${error}`); }
@@ -467,23 +470,23 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   };
 
   section("error tracing: ErrorHandler.OnError", () => {
-    Interceptor.attach(byName("ErrorHandler", "OnError", 4).virtualAddress, {
+    hookAttach(byName("ErrorHandler", "OnError", 4).virtualAddress, {
       onEnter(args) { log(`ErrorHandler.OnError code=${args[1].toInt32()} endpoint=${strOf(args[2])}`); },
     });
   });
   section("error tracing: websocket transport", () => {
     const wt = "BestHTTP.SocketIO.Transports.WebSocketTransport";
-    Interceptor.attach(byName(wt, "OnOpen").virtualAddress, { onEnter() { log("ws transport: open"); } });
-    Interceptor.attach(byName(wt, "OnError").virtualAddress, { onEnter(args) { log(`ws transport: ERROR ${msgOf(args[2])}`); } });
-    Interceptor.attach(byName(wt, "OnClosed").virtualAddress, {
+    hookAttach(byName(wt, "OnOpen").virtualAddress, { onEnter() { log("ws transport: open"); } });
+    hookAttach(byName(wt, "OnError").virtualAddress, { onEnter(args) { log(`ws transport: ERROR ${msgOf(args[2])}`); } });
+    hookAttach(byName(wt, "OnClosed").virtualAddress, {
       onEnter(args) { log(`ws transport: closed code=${args[2].toInt32() & 0xffff} msg=${strOf(args[3])}`); },
     });
   });
   section("error tracing: socket.io manager", () => {
     const sm = "BestHTTP.SocketIO.SocketManager";
-    Interceptor.attach(byName(sm, "OnTransportConnected").virtualAddress, { onEnter() { log("socket.io: transport connected"); } });
-    Interceptor.attach(byName(sm, "OnTransportError").virtualAddress, { onEnter(args) { log(`socket.io: transport error ${strOf(args[2])}`); } });
-    Interceptor.attach(byName(sm, "EmitError").virtualAddress, { onEnter(args) { log(`socket.io: EmitError code=${args[1].toInt32()} msg=${strOf(args[2])}`); } });
+    hookAttach(byName(sm, "OnTransportConnected").virtualAddress, { onEnter() { log("socket.io: transport connected"); } });
+    hookAttach(byName(sm, "OnTransportError").virtualAddress, { onEnter(args) { log(`socket.io: transport error ${strOf(args[2])}`); } });
+    hookAttach(byName(sm, "EmitError").virtualAddress, { onEnter(args) { log(`socket.io: EmitError code=${args[1].toInt32()} msg=${strOf(args[2])}`); } });
   });
 
   const rawStr = (q: NativePointer): string => {
@@ -501,27 +504,27 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   //       assets/android) is read locally or downloaded. Force "local" for that call only.
   section("bundles: desktop behaviour", () => {
     let inLoad = false;
-    Interceptor.attach(byName("AssetBundles.AssetBundleManager", "LoadAssetBundleInternal").virtualAddress, {
+    hookAttach(byName("AssetBundles.AssetBundleManager", "LoadAssetBundleInternal").virtualAddress, {
       onEnter() { inLoad = true; },
       onLeave() { inLoad = false; },
     });
     let once = 0;
-    Interceptor.attach(byName("PlatformUtils", "PlatformDownloadsBundles").virtualAddress, {
+    hookAttach(byName("PlatformUtils", "PlatformDownloadsBundles").virtualAddress, {
       onLeave(ret) { if (inLoad) { ret.replace(ptr(0)); if (once++ < 3) log("PlatformUtils.PlatformDownloadsBundles -> false (manifest from OBB)"); } },
     });
     let once2 = 0;
-    Interceptor.attach(byName("AssetCatalog", "PlatformDownloadsBundles").virtualAddress, {
+    hookAttach(byName("AssetCatalog", "PlatformDownloadsBundles").virtualAddress, {
       onLeave(ret) { ret.replace(ptr(0)); if (once2++ < 3) log("AssetCatalog.PlatformDownloadsBundles -> false (no CDN download)"); },
     });
     // Where do the streaming assets (the OBB) come from?
     try {
       let seenLocal = 0;
       const mgr = cls(img, "AssetBundles.AssetBundleManager");
-      Interceptor.attach(mgr.method("SetSourceAssetBundleURL").virtualAddress, {
+      hookAttach(mgr.method("SetSourceAssetBundleURL").virtualAddress, {
         onEnter(args) { log(`AssetBundleManager.SetSourceAssetBundleURL("${rawStr(args[1])}")`); },
       });
       const local = cls(img, "AssetBundles.AssetBundleLoadFromLocalOperation");
-      Interceptor.attach(local.method(".ctor", 1).virtualAddress, {
+      hookAttach(local.method(".ctor", 1).virtualAddress, {
         onEnter(args) { if (seenLocal++ < 4) log(`AssetBundleLoadFromLocalOperation("${rawStr(args[1])}")`); },
       });
     } catch (e) { log(`obb trace failed: ${e}`); }
@@ -539,7 +542,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const className = (o: any): string => {
       try { return isNull(o) ? "(null)" : (o as Il2Cpp.Object).class.name; } catch (_) { return "(?)"; }
     };
-    Interceptor.attach(init.virtualAddress, {
+    hookAttach(init.virtualAddress, {
       onEnter(args) {
         try {
           // Initialize(string manifestBundleName, BundleVersionInfo versionInfo) fills the
@@ -592,7 +595,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const m = cls(img, "BundleVersionInfo").methods.find(x => x.name === "Load");
     if (!m) throw new Error("BundleVersionInfo.Load not found");
     let path = "";
-    Interceptor.attach(m.virtualAddress, {
+    hookAttach(m.virtualAddress, {
       onEnter(args) { path = rawStr(args[1]); },    // instance: args[0] = this, args[1] = path
       onLeave(ret) { log(`BundleVersionInfo.Load("${path}") -> ${ret.toInt32() & 0xff ? "ok" : "FAILED"}`); },
     });
@@ -612,7 +615,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // delay above 12960000 seconds.
     const MAX_DELAY = 12960000;
     const setDelay = cache.method("Cache_SetExpirationDelay", 2);
-    Interceptor.attach(setDelay.virtualAddress, {
+    hookAttach(setDelay.virtualAddress, {
       onEnter(args) {
         const delay = args[2].toInt32();
         if (delay < MAX_DELAY) {
@@ -623,7 +626,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     });
     // The game removes the cached versions that are not in its version info.
     let cleared = 0;
-    Interceptor.attach(caching.method("ClearCachedVersion", 2).virtualAddress, {
+    hookAttach(caching.method("ClearCachedVersion", 2).virtualAddress, {
       onEnter() { if (cleared++ < 5) log("Caching.ClearCachedVersion -> ignored"); },
       onLeave(ret) { ret.replace(ptr(1)); },
     });
@@ -891,7 +894,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const createPush = pubSub.method("CreatePushNotification");
     const gameNetwork = cls(img, "SPTESL.GameNetworkManager");
 
-    Interceptor.attach(cls(img, "EndGameState").method("OnEnable").virtualAddress, {
+    hookAttach(cls(img, "EndGameState").method("OnEnable").virtualAddress, {
       onEnter() {
         try {
           const instance = (gameNetwork.method("get_Instance") as any).invoke();
@@ -903,7 +906,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       },
     });
 
-    Interceptor.attach(cls(img, "SoloArena").method("SoloArenaEndSequence").virtualAddress, {
+    hookAttach(cls(img, "SoloArena").method("SoloArenaEndSequence").virtualAddress, {
       onEnter() {
         try {
           (createPush as any).invoke(Il2Cpp.string("rewards"), Il2Cpp.string("{}"));
@@ -958,7 +961,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const services = cls(img, "SparkleServices.ServicesManager");
     const update = services.methods.find(m => m.name === "Update");
     if (!update) throw new Error("ServicesManager.Update not found");
-    Interceptor.attach(update.virtualAddress, { onEnter() { runPending(); } });
+    hookAttach(update.virtualAddress, { onEnter() { runPending(); } });
   });
 
   // A gap between two service updates means the main thread was busy or
@@ -975,7 +978,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
     const probe = (globalThis as any).__teslRebornStallProbe = { loads: 0, tasks: 0 };
     let last = Date.now(), quietUntil = 0;
-    Interceptor.attach(update.virtualAddress, {
+    hookAttach(update.virtualAddress, {
       onEnter() {
         const now = Date.now(), gap = now - last;
         last = now;
@@ -1045,7 +1048,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
 
   section("stats and deck statistics", () => {
     // Stats.OnResponse: the statistics arrived, ask for the extended data.
-    Interceptor.attach(cls(img, "SparkleServices.Stats").method("OnResponse").virtualAddress, {
+    hookAttach(cls(img, "SparkleServices.Stats").method("OnResponse").virtualAddress, {
       onEnter(args) {
         try {
           const response = new Il2Cpp.Object(args[1]);
@@ -1058,7 +1061,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     });
 
     // Inventory.OnResponse: the deck list arrived, ask for the deck stats.
-    Interceptor.attach(cls(img, "SparkleServices.Inventory").method("OnResponse").virtualAddress, {
+    hookAttach(cls(img, "SparkleServices.Inventory").method("OnResponse").virtualAddress, {
       onEnter(args) {
         try {
           const response = new Il2Cpp.Object(args[1]);
@@ -1073,7 +1076,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     for (const name of ["CreateDeck", "SaveDeck", "DeleteDeck"]) {
       const method = cls(img, "SparkleServices.Inventory").method(name);
       if (!method) continue;
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onLeave() { schedule(1000, () => refreshDeckStats(true), "deck stats refresh"); },
       });
     }
@@ -1083,7 +1086,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // extended data is still loading the match history keeps waiting.
     const getResponseStatus = cls(img, "SparkleServices.Stats").method("GetResponseStatus");
     if (getResponseStatus) {
-      Interceptor.attach(getResponseStatus.virtualAddress, {
+      hookAttach(getResponseStatus.virtualAddress, {
         onEnter(args) { this.instance = args[0]; },
         onLeave(retval) {
           try {
@@ -1272,7 +1275,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
 
   section("deck tile win/loss label", () => {
     const deckTile = cls(img, "DeckTile");
-    Interceptor.attach(deckTile.method("SetData", 2).virtualAddress, {
+    hookAttach(deckTile.method("SetData", 2).virtualAddress, {
       onEnter(args) { this.tile = args[0]; },
       onLeave() {
         try { if (this.tile) updateDeckTileLabel(new Il2Cpp.Object(this.tile)); }
@@ -1283,7 +1286,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // MonoBehaviour method. Weak references do not retain destroyed deck tiles.
     const destroy = deckTile.methods.find(m => m.name === "OnDestroy" && !m.isStatic && m.parameterCount === 0);
     if (destroy && !destroy.virtualAddress.isNull()) {
-      Interceptor.attach(destroy.virtualAddress, {
+      hookAttach(destroy.virtualAddress, {
         onEnter(args) { forgetDeckTile(args[0].toString()); }
       });
     }
@@ -1369,13 +1372,13 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     if (iterator) {
       const moveNext = iterator.methods.find(m => m.name === "MoveNext");
       if (moveNext) {
-        Interceptor.attach(moveNext.virtualAddress, {
+        hookAttach(moveNext.virtualAddress, {
           onLeave(retval) { retval.replace(ptr(0)); },     // finish the coroutine at once
         });
       }
     } else log("news: the game's news coroutine was not found");
 
-    Interceptor.attach(widget.method("OnEnable").virtualAddress, {
+    hookAttach(widget.method("OnEnable").virtualAddress, {
       onEnter(args) {
         try {
           const self = new Il2Cpp.Object(args[0]);
@@ -1400,7 +1403,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     if (!moveNext) throw new Error("the configuration coroutine has no MoveNext");
 
     let applied = false;
-    Interceptor.attach(moveNext.virtualAddress, {
+    hookAttach(moveNext.virtualAddress, {
       onEnter(args) { this.iterator = new Il2Cpp.Object(args[0]); },
       onLeave(retval) {
         if (applied) return;
@@ -1600,7 +1603,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // Settings may save a preference and load its language asynchronously, after
     // the UI callback has returned. Remember actual input, not just stack depth.
     try {
-      Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
         onEnter() { noteLanguageInput(); }
       });
     } catch (error) { log(`resources: settings input trace unavailable: ${error}`); }
@@ -1612,7 +1615,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
           && !m.isStatic && !m.virtualAddress.isNull())) {
         const key = method.virtualAddress.toString(); if (languageHandlers.has(key)) continue;
         languageHandlers.add(key);
-        Interceptor.attach(method.virtualAddress, {
+        hookAttach(method.virtualAddress, {
           onEnter() { languageInputDepth++; },
           onLeave() { languageInputDepth = Math.max(0, languageInputDepth - 1); }
         });
@@ -1729,7 +1732,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     for (const owner of img.classes) for (const method of owner.methods.filter(m =>
         /^(?:set_(?:GameLanguage|Language|LanguageCode|CurrentLanguage|SelectedLanguage|Locale|LocaleCode)|Set(?:Game|Client)?Language|(?:On|Select|Change).*Language.*)$/i.test(m.name)
         && m.parameterCount >= 1 && !m.isStatic && owner !== localization && !m.virtualAddress.isNull())) {
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) {
           try {
             const type = method.parameters[0].type;
@@ -1749,7 +1752,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       try {
         const dropdown = ucls(name), method = dropdown.tryMethod("OnSelectItem", 1) || dropdown.tryMethod("Set", 2) || dropdown.tryMethod("set_value", 1);
         if (!method || method.virtualAddress.isNull()) continue;
-        Interceptor.attach(method.virtualAddress, {
+        hookAttach(method.virtualAddress, {
           onEnter(args) {
             this.index = method.name === "OnSelectItem" ? null : args[1].toInt32();
             this.active = !globalThis.__teslNativeLanguageCallback && resourceSettingsOpen() && (method.name === "OnSelectItem" || method.parameterCount < 2 || args[2].toInt32() !== 0);
@@ -1774,7 +1777,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       } catch (_) {}
     }
     const setLanguage = localization.method("SetLanguage", 2);
-    Interceptor.attach(setLanguage.virtualAddress, {
+    hookAttach(setLanguage.virtualAddress, {
       onEnter(args) {
         try {
           const choice = resourceLanguage();
@@ -1806,7 +1809,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const pinnedStrings = new Map();
     const prefs = ucls("UnityEngine.PlayerPrefs");
     for (const method of prefs.methods.filter(m => m.name === "SetString" && m.parameterCount === 2)) {
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) {
           const key = rawStr(args[0]);
           if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(key)) return;
@@ -1818,7 +1821,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       });
     }
     for (const method of prefs.methods.filter(m => m.name === "GetString" && m.parameterCount >= 1)) {
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) { this.key = rawStr(args[0]); },
         onLeave(result) {
           if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(this.key || "")) return;
@@ -1831,7 +1834,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       });
     }
     const systemLanguage = ucls("UnityEngine.Application").tryMethod("get_systemLanguage", 0);
-    if (systemLanguage) Interceptor.attach(systemLanguage.virtualAddress, {
+    if (systemLanguage) hookAttach(systemLanguage.virtualAddress, {
       onLeave(result) {
         const choice = resourceLanguage(); if (!choice) return;
         const names = choice === "es_mx" ? ["spanish"] : languageNames[choice];
@@ -1839,7 +1842,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
         if (field) result.replace(ptr(enumVal(field.value)));
       }
     });
-    Interceptor.attach(localization.method("UpdateObjects").virtualAddress, {
+    hookAttach(localization.method("UpdateObjects").virtualAddress, {
       onEnter(args) {
         try {
           const manager = new Il2Cpp.Object(args[0]);
@@ -2276,7 +2279,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   section("tesl reborn credits", () => {
     const credits = cls(img, "CreditsLoader");
     const lineData = cls(img, "CreditsWin").nested("LineDisplayData");
-    Interceptor.attach(credits.method("LoadCreditsForDisplay").virtualAddress, {
+    hookAttach(credits.method("LoadCreditsForDisplay").virtualAddress, {
       onEnter(args) {
         try {
           const list = new Il2Cpp.Object(args[0]);
@@ -2307,7 +2310,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // shipped assets, so it falls back to the common one.
   // ---------------------------------------------------------------------
   section("legendary title banner", () => {
-    Interceptor.attach(cls(img, "UIResourceManager").method("GetTitleBannerSprite").virtualAddress, {
+    hookAttach(cls(img, "UIResourceManager").method("GetTitleBannerSprite").virtualAddress, {
       onEnter(args) {
         if (args[1].toInt32() !== RARITY_LEGENDARY) return;
         args[1] = ptr(0);
@@ -2353,7 +2356,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     if (!hooks.length) throw Error("No own Awake/OnEnable method on PlayerProfileTitles");
     for (const method of hooks) {
       if (method.virtualAddress.isNull()) continue;
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) { this.self = args[0]; },
         // Fields and mobile UI bindings must already have been initialized.
         onLeave() { try { revealLegendaryTitleFilter(new Il2Cpp.Object(this.self)); } catch (error) { log(`titles UI: ${error}`); } }
@@ -2425,7 +2428,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       const key = method.virtualAddress.toString();
       if (attached.has(key)) continue;
       attached.add(key);
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) { this.self = args[0]; },
         onLeave() { try { titleListColour(new Il2Cpp.Object(this.self)); }
           catch (error) { log(`titles UI: list tint failed: ${error}`); } }
@@ -2434,7 +2437,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // Use a render callback when present, otherwise the existing main-thread scheduler.
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) {
-      Interceptor.attach(render.virtualAddress, { onEnter() { maintainTitleListColours(); } });
+      hookAttach(render.virtualAddress, { onEnter() { maintainTitleListColours(); } });
       log("titles UI: list colour guard uses Canvas render callback");
     } else {
       const tick = () => { maintainTitleListColours(); schedule(100, tick, "title colours"); };
@@ -2446,7 +2449,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
 
   section("player info panel (legendary title banner)", () => {
     const pip = cls(img, "PlayerInfoPanel");
-    Interceptor.attach(pip.method("UpdateUi").virtualAddress, {
+    hookAttach(pip.method("UpdateUi").virtualAddress, {
       onEnter(args) { this.self = args[0]; },
       onLeave() {
         try {
@@ -2545,7 +2548,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // through a cached interface thunk rather than the replaced method body.
     const factory=owner.methods.find(m=>m.name==="LoadStoreImageCoroutine" && m.isStatic && m.parameterCount===4);
     if(!factory || factory.virtualAddress.isNull())throw Error("Store image factory unavailable");
-    Interceptor.attach(factory.virtualAddress,{onLeave(ret){
+    hookAttach(factory.virtualAddress,{onLeave(ret){
       if(ret.isNull())return;
       try {
         const self=new Il2Cpp.Object(ret),path=String(self.field("imageUrl").value?.content||"");
@@ -2570,7 +2573,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const catalog = cls(img, "AssetCatalog");
     let lastEnterPath = "", lastLoggedPath = "", lastLoggedAt = 0;
     for (const m of catalog.methods.filter(x => x.name === "LoadAssetFromPathAsync")) {
-      Interceptor.attach(m.virtualAddress, {
+      hookAttach(m.virtualAddress, {
         onEnter(args) {
           this.path = rawStr(args[1]);
           // The overloads call each other, so one lookup enters both hooks
@@ -2622,7 +2625,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // (seconds of main thread time). The report is a one-off diagnostic: it is
     // written once, and only retried while the manifest is still missing.
     let written = false, attempts = 0, last = 0;
-    Interceptor.attach(catalog.method("SetCacheExpiration").virtualAddress, {
+    hookAttach(catalog.method("SetCacheExpiration").virtualAddress, {
       onEnter() {
         const now = Date.now();
         if (written || attempts >= 3 || (attempts > 0 && now - last < 60000)) return;
@@ -2803,7 +2806,7 @@ function uiComponent(go, type) {
     }
     function pin(method) {
       if (!method || method.virtualAddress.isNull()) return;
-      Interceptor.attach(method.virtualAddress, {onEnter(args) {
+      hookAttach(method.virtualAddress, {onEnter(args) {
         try {
           const selected=resourceLanguage(), value=selected && resolve(selected, method === set && !set.isStatic ? new Il2Cpp.Object(args[0]) : null);
           if (value) args[method.isStatic?0:1]=value.raw;
@@ -2822,7 +2825,7 @@ function uiComponent(go, type) {
       try {
         const method=owner?.tryMethod(name,0);
         if (!method || method.returnType.name!==type.name || method.virtualAddress.isNull()) continue;
-        Interceptor.attach(method.virtualAddress,{onLeave(result) {
+        hookAttach(method.virtualAddress,{onLeave(result) {
           try { const value=resolve(resourceLanguage()); if(value) result.replace(value.raw); } catch (_) {}
         }});
       } catch (_) {}
@@ -2864,7 +2867,7 @@ function uiComponent(go, type) {
         });
       } catch(error) {log(`language state: ${error}`);}
     }
-    Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave:check});
+    hookAttach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave:check});
     // Observe a SetLanguage call made before the hook was installed by checking
     // live manager state as well as intercepting future calls.
     schedule(0,check);
@@ -3044,7 +3047,7 @@ function uiComponent(go, type) {
     // The game fills the grid in UpdateUi: install right then, with the list,
     // instead of up to 750 ms later through the polling gate below.
     const updateUi=picker.tryMethod("UpdateUi",0);
-    if(updateUi&&!updateUi.virtualAddress.isNull())Interceptor.attach(updateUi.virtualAddress,{onEnter(args){this.self=args[0];},onLeave(){
+    if(updateUi&&!updateUi.virtualAddress.isNull())hookAttach(updateUi.virtualAddress,{onEnter(args){this.self=args[0];},onLeave(){
       const ref=new Il2Cpp.Object(this.self).ref(false);
       schedule(0,()=>{try{const go=call(ref.target,"get_gameObject");if(call(go,"get_activeInHierarchy")){const record=records.get(ref.target.handle.toString());if(record)record.lastCount=-1;scanPicker(ref.target,go,true);}}
         catch(error){log(`deck search: ${error}`);}finally{ref.free();}},"deck search install");
@@ -3052,7 +3055,7 @@ function uiComponent(go, type) {
     // The first open of the deck list also waited for the frame and clear
     // icon (report 30). Load them into the cache once the menu has settled.
     const preloadAt=Date.now()+15000;let preloaded=false;
-    Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
+    hookAttach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
       if(!preloaded&&Date.now()>=preloadAt){preloaded=true;
         for(const path of ["AppBase/UI/Sprites/Core/UtilityAssets/input-frame","AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon"])
           schedule(0,()=>loadNativeUiSprite(path,null),"deck search sprite preload");}
@@ -3138,7 +3141,7 @@ function uiComponent(go, type) {
       record.window.free();
     }
     const show=seeking.method("Show");
-    Interceptor.attach(show.virtualAddress,{onEnter(args){this.self=args[0];},onLeave(){
+    hookAttach(show.virtualAddress,{onEnter(args){this.self=args[0];},onLeave(){
       const ref=new Il2Cpp.Object(this.self).ref(false);schedule(0,()=>{let record=null,key="";try{
         const go=call(ref.target,"get_gameObject");key=go.handle.toString();
         if(!call(go,"get_activeInHierarchy"))return;
@@ -3161,7 +3164,7 @@ function uiComponent(go, type) {
     for(const name of ["OnDisable","OnDestroy","HandleOnCancelSearch"]) {
       const method=seeking.tryMethod(name,0);if(!method||method.virtualAddress.isNull()){absent.push(name);continue;}
       closed.push(name);
-      Interceptor.attach(method.virtualAddress,{onEnter(args){try{
+      hookAttach(method.virtualAddress,{onEnter(args){try{
         const key=call(new Il2Cpp.Object(args[0]),"get_gameObject").handle.toString(),record=records.get(key);
         if(record){records.delete(key);schedule(0,()=>restore(record,name),"matching friends restore");}
       }catch(error){log(`matching friends restore: ${error}`);}}});
@@ -3191,7 +3194,7 @@ function uiComponent(go, type) {
     let selecting=0, selectionHooks=0;
     for(const name of ["UnityEngine.UI.Dropdown","TMPro.TMP_Dropdown"]) try {
       const method=ucls(name).tryMethod("OnSelectItem",1);if(!method || method.virtualAddress.isNull()) continue;
-      Interceptor.attach(method.virtualAddress,{onEnter(){selecting++;},onLeave(){selecting=Math.max(0,selecting-1);}});
+      hookAttach(method.virtualAddress,{onEnter(){selecting++;},onLeave(){selecting=Math.max(0,selecting-1);}});
       selectionHooks++;
     } catch(_) {}
     if(!selectionHooks) return;
@@ -3435,7 +3438,7 @@ function uiComponent(go, type) {
     let hooks = 0;
     for (const owner of classes) for (const method of owner.methods.filter(m =>
         ["Show", "OnEnable", "Awake", "Start"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) {
           this.self = args[0];
           if (method.name === "Show" || method.name === "OnEnable") {
@@ -3453,7 +3456,7 @@ function uiComponent(go, type) {
         /^(?:(?:On|Handle)?(?:Cancel|Close|Hide)(?:Button)?(?:Click|Clicked|Pressed)?|OnDisable|OnDestroy)$/i.test(m.name)
         && !m.isStatic && !m.virtualAddress.isNull())) {
       const key=method.virtualAddress.toString(); if(closeAddresses.has(key)) continue; closeAddresses.add(key);
-      Interceptor.attach(method.virtualAddress, {onEnter(args) {
+      hookAttach(method.virtualAddress, {onEnter(args) {
         try { settingsClosing(new Il2Cpp.Object(args[0]), owner.name+"."+method.name); }
         catch(error) { log(`settings UI close trace: ${error}`); }
       }});
@@ -3462,7 +3465,7 @@ function uiComponent(go, type) {
     // ancestors of active UI buttons, rather than thousands of scene objects.
     let last = 0;
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
-    Interceptor.attach(update.virtualAddress, { onLeave() {
+    hookAttach(update.virtualAddress, { onLeave() {
       if (Date.now()-last < 1000) return; last = Date.now();
       try {
         const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
@@ -3541,7 +3544,7 @@ function uiComponent(go, type) {
     const at = resolve(Memory.allocUtf8String(name));
     if (at.isNull()) { log("graphics: render resolution unavailable (no engine SetResolution)"); return; }
     const state = { width: 0, height: 0 };
-    Interceptor.attach(at, {
+    hookAttach(at, {
       onEnter(args) {
         const width = args[0].toInt32(), height = args[1].toInt32();
         const size = scaledResolution(state, width, height, percent);
@@ -3592,7 +3595,7 @@ function uiComponent(go, type) {
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
       const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
-      if (!engineAt.isNull()) Interceptor.attach(engineAt, { onEnter(args) { args[0] = ptr(rate); } });
+      if (!engineAt.isNull()) hookAttach(engineAt, { onEnter(args) { args[0] = ptr(rate); } });
       schedule(0, () => applyRate("start"), "graphics frame rate");
       log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
       // Report 41: with the target at 30 and vSync off the game still went
@@ -3603,7 +3606,7 @@ function uiComponent(go, type) {
         const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
         const frame = 1000 / rate;
         let next = 0;
-        Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+        hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
           onEnter() {
             const now = Date.now();
             if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1000));
@@ -3622,15 +3625,15 @@ function uiComponent(go, type) {
     // turns vSync back on, so the frame rate is applied again after it.
     const manager = cls(img, "SettingsManager");
     const recommended = cls(img, "ScalabilityUtils").tryMethod("GetRecommendedVideoQualitySettings", 0);
-    if (recommended) Interceptor.attach(recommended.virtualAddress, {
+    if (recommended) hookAttach(recommended.virtualAddress, {
       onLeave(result) { if (chosenQuality !== null) result.replace(ptr(chosenQuality)); }
     });
     const updateQuality = manager.tryMethod("UpdateUnityQuality", 1);
-    if (updateQuality) Interceptor.attach(updateQuality.virtualAddress, {
+    if (updateQuality) hookAttach(updateQuality.virtualAddress, {
       onLeave() { schedule(0, () => applyRate("after quality"), "graphics rate after quality"); }
     });
     const setQuality = manager.tryMethod("SetQuality", 1);
-    if (setQuality) Interceptor.attach(setQuality.virtualAddress, {
+    if (setQuality) hookAttach(setQuality.virtualAddress, {
       onEnter(args) {
         const self = new Il2Cpp.Object(args[0]).ref(false), value = args[1].toInt32();
         schedule(0, () => {
@@ -3652,7 +3655,7 @@ function uiComponent(go, type) {
     // The game asks to keep the display settings after a quality change; say
     // what Unity applied so a test can compare levels.
     const onQuality = cls(img, "SettingsWin").tryMethod("HandleQualityOnValueChanged", 1);
-    if (onQuality && !onQuality.virtualAddress.isNull()) Interceptor.attach(onQuality.virtualAddress, {
+    if (onQuality && !onQuality.virtualAddress.isNull()) hookAttach(onQuality.virtualAddress, {
       onLeave() {
         schedule(0, () => {
           const read = (name) => { try { return String(quality.method(name, 0).invoke()); } catch (_) { return "?"; } };
@@ -3660,7 +3663,7 @@ function uiComponent(go, type) {
         }, "graphics quality applied");
       }
     });
-    Interceptor.attach(updateUi.virtualAddress, {
+    hookAttach(updateUi.virtualAddress, {
       onEnter(args) { this.self = args[0]; },
       onLeave() {
         const window = new Il2Cpp.Object(this.self).ref(false);
@@ -3750,7 +3753,7 @@ function uiComponent(go, type) {
       } catch (error) { report.uiError = String(error).slice(0,300); }
       writeTextFile(`${persistentPath()}/tesl-reborn-settings-report-${request.label}.json`, JSON.stringify(report,null,2));
     }
-    Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress, {onLeave() {
+    hookAttach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress, {onLeave() {
       if (Date.now()-lastPoll<1000) return; lastPoll=Date.now();
       try {
         const request=JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-inspect-request.json`)||"null");
@@ -4015,7 +4018,7 @@ const historyRows = new Map(), historyTargets = new Map();
         m.parameters[0].type.name === "SparkleServices.Stats.MatchEntry")) {
       const address = method.virtualAddress.toString();
       if (method.virtualAddress.isNull() || seen.has(address)) continue; seen.add(address);
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) { this.row = args[0]; this.match = args[1]; },
         onLeave() {
           try {
@@ -4032,7 +4035,7 @@ const historyRows = new Map(), historyTargets = new Map();
     log(`history UI: tap hooks installed callbacks=${seen.size}`);
     const update = cls(img, "SparkleServices.ServicesManager").methods.find(m => m.name === "Update" && m.parameterCount === 0);
     if (!update) throw Error("ServicesManager.Update not found");
-    Interceptor.attach(update.virtualAddress, { onLeave() { historyPoll(); } });
+    hookAttach(update.virtualAddress, { onLeave() { historyPoll(); } });
   });
 // END android-ui: history-ui
 
@@ -4065,7 +4068,7 @@ const historyRows = new Map(), historyTargets = new Map();
     const alive = value => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
     let pending = null;
     const forget = () => { if (pending) { pending.data.free(); pending.board.free(); pending = null; } };
-    Interceptor.attach(execute.virtualAddress, {
+    hookAttach(execute.virtualAddress, {
       onEnter(args) {
         const start = execute.isStatic ? 0 : 1;
         forget();
@@ -4100,7 +4103,7 @@ const historyRows = new Map(), historyTargets = new Map();
       }
       log(`titles UI: match intro ${tinted ? `legendary banner tinted (${tinted})` : "has no legendary title"}`);
     }
-    Interceptor.attach(show.virtualAddress, {
+    hookAttach(show.virtualAddress, {
       onLeave() {
         const match = pending; pending = null;
         if (!match) return;
@@ -4336,7 +4339,7 @@ const emojiByName = new Map(), emojiByAscii = new Map();
     const klass = cls(img, "ChatMessageEntry");
     const method = klass.methods.find(m => m.name === "SetData" && m.parameterCount >= 1 && !m.isStatic);
     if (!method || method.parameters[0].type.class.isValueType) throw Error("ChatMessageEntry.SetData reference Message not found");
-    Interceptor.attach(method.virtualAddress, {
+    hookAttach(method.virtualAddress, {
       onEnter(args) { this.row = args[0]; this.message = args[1]; },
       onLeave() { try { renderChatMessage(new Il2Cpp.Object(this.row), new Il2Cpp.Object(this.message)); }
         catch (error) { log(`emoji: message rendering failed: ${error}`); } }
@@ -4347,7 +4350,7 @@ const emojiByName = new Map(), emojiByAscii = new Map();
   section("chat message layout refresh", () => {
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) {
-      Interceptor.attach(render.virtualAddress, { onEnter() { chatRefreshMessageSizes(); } });
+      hookAttach(render.virtualAddress, { onEnter() { chatRefreshMessageSizes(); } });
     } else {
       const tick = () => { chatRefreshMessageSizes(); schedule(100, tick, "chat message sizes"); }; schedule(100, tick, "chat message sizes");
     }
@@ -4472,14 +4475,14 @@ const messagePreviews = new Map();
     const seen = new Set();
     for (const method of methods) {
       const address = method.virtualAddress.toString(); if (seen.has(address)) continue; seen.add(address);
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) { this.row = args[0]; this.message = args[1]; },
         onLeave() { try { renderMessagePreview(new Il2Cpp.Object(this.row), new Il2Cpp.Object(this.message)); }
           catch (error) { log(`emoji preview: rendering failed: ${error}`); } }
       });
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-    if (render && !render.virtualAddress.isNull()) Interceptor.attach(render.virtualAddress, { onEnter() { refreshMessagePreviews(); } });
+    if (render && !render.virtualAddress.isNull()) hookAttach(render.virtualAddress, { onEnter() { refreshMessagePreviews(); } });
     else { const tick = () => { refreshMessagePreviews(); schedule(100, tick, "message previews"); }; schedule(100, tick, "message previews"); }
     log(`emoji preview: hooks installed callbacks=${seen.size}`);
   });
@@ -4764,19 +4767,19 @@ const chatWindows = new Map();
     if (!update) throw Error("FriendsChatWin.Update not found");
     for (const method of klass.methods.filter(m => ["Awake", "Show"].includes(m.name) && !m.isStatic)) {
       if (method.virtualAddress.isNull()) continue;
-      Interceptor.attach(method.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) { this.self = args[0]; },
         onLeave() { try { chatSetup(new Il2Cpp.Object(this.self)); } catch (error) { log(`chat UI: ${error}`); } }
       });
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-    if (render && !render.virtualAddress.isNull()) Interceptor.attach(render.virtualAddress, {
+    if (render && !render.virtualAddress.isNull()) hookAttach(render.virtualAddress, {
       onLeave() { for (const record of chatWindows.values()) {
         try { if (Boolean(call(record.controls.target, "get_activeInHierarchy"))) { chatApplyPosition(record); chatScaleApply(record); } }
         catch (_) {}
       } }
     });
-    Interceptor.attach(update.virtualAddress, {
+    hookAttach(update.virtualAddress, {
       onEnter(args) { this.self = args[0]; },
       onLeave() { try { chatUpdate(new Il2Cpp.Object(this.self)); } catch (_) {} }
     });
@@ -4807,7 +4810,7 @@ const chatWindows = new Map();
     const attached = new Set();
     function attachKey(address, name, stringKey = false) {
       if (!address || address.isNull?.() || attached.has(address.toString())) return;
-      try { Interceptor.attach(address, {
+      try { hookAttach(address, {
         onEnter(args) { this.key = stringKey ? rawStr(args[0]).toLowerCase() : args[0]?.toInt32(); },
         onLeave(result) {
           if (startFrame < 0) return;
@@ -4848,7 +4851,7 @@ const chatWindows = new Map();
       }
     } catch (error) { log(`mobile debug: native input resolution unavailable: ${error}`); }
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
-    Interceptor.attach(update.virtualAddress, {
+    hookAttach(update.virtualAddress, {
       onEnter() {
         try {
           const current = frame(); if (current === lastFrame) return; lastFrame = current;
@@ -5122,7 +5125,7 @@ const chatWindows = new Map();
     try {
       const owner=img.classes.find(c=>c.name==="MainMenuNavManager");
       const init=owner?.methods.find(m=>m.name==="Init" && !m.isStatic && !m.virtualAddress.isNull());
-      if(init) {Interceptor.attach(init.virtualAddress,{onLeave(){startupVersionComplete=true;versionScreenCheck=0;}});startupReadyHooked=true;}
+      if(init) {hookAttach(init.virtualAddress,{onLeave(){startupVersionComplete=true;versionScreenCheck=0;}});startupReadyHooked=true;}
     }catch(error){log(`loading version readiness: ${error}`);}
   }
   function startupVersionVisible(scene,ready) {
@@ -5430,7 +5433,7 @@ const chatWindows = new Map();
       emit: (kind, revision, onShown) => banner.show(kind, revision, onShown)
     });
     let nextPoll = 0, queued = false;
-    Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
         fpsCounter.frames++;
         if (queued || Date.now() < nextPoll) return;
@@ -5463,7 +5466,7 @@ const chatWindows = new Map();
   // (report 20), and the last line before a 'setjmp cookie mismatch' abort.
   section("bounded startup resource diagnostics", () => {
     let taken = false, lastShop=null;
-    Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
         if (taken || Date.now() - resourceTraceStarted < 60000) return;
         taken = true;
@@ -5617,7 +5620,7 @@ const chatWindows = new Map();
         return method.invoke(...values);
       };
     }
-    Interceptor.attach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
+    hookAttach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
       try {
         const now=Date.now();
         if(resourceSettingsOpen() && Number(ucls("UnityEngine.Input").method("get_touchCount",0).invoke())>0) {
@@ -5648,7 +5651,7 @@ const chatWindows = new Map();
     }
     const callback = application.tryMethod("CallLogCallback", 4);
     if (!callback || !callback.isStatic || callback.virtualAddress.isNull()) return;
-    Interceptor.attach(callback.virtualAddress, { onEnter(args) {
+    hookAttach(callback.virtualAddress, { onEnter(args) {
       const kind = args[2].toInt32();
       if (![0,1,2,4].includes(kind)) return;
       try {

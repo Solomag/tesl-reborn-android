@@ -1,6 +1,6 @@
 const { spawnSync } = require('node:child_process');
 for (const name of ['ui-roots', 'native-ui-sprites', 'splash-version', 'deck-search', 'deck-search-lifecycle', 'matching-friends', 'store-images', 'display-diagnostics', 'apk-download', 'updater', 'port-log', 'update-notices', 'resource-diagnostics', 'ota-release', 'loader-glue', 'chat-bounds', 'history', 'chat-scale', 'message-preview', 'release', 'resource-language', 'localized-language-state', 'mobile-debug', 'auth-and-logs', 'settings-data', 'settings-diagnostics', 'bundle-hashes', 'stall-probe', 'title-intro', 'channel-migration', 'graphics']) {
-  const result = spawnSync(process.execPath, [`tests/${name}.cjs`], { stdio: 'inherit' });
+  const result = spawnSync(process.execPath, ['-r', './tests/hook-attach.cjs', `tests/${name}.cjs`], { stdio: 'inherit' });
   if (result.status !== 0) process.exit(result.status || 1);
 }
 if (require('node:fs').existsSync('resources/emojis/people.png')) {
