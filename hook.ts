@@ -3346,6 +3346,29 @@ function uiComponent(go, type) {
       log(`settings button: third tab at step ${Math.round(gap)} (${Math.round(width)}x${Math.round(height)}), row centred`);
     } catch (error) { throw Error(`${step}: ${error}`); }
   }
+  // Report 40: once the Video tab is shown there are four tabs, and Game
+  // data, placed for three, sat on Preferences. Lay it out from what is
+  // visible now: one tab step past the last visible tab, and the row moved so
+  // the visible tabs are centred on the window. Repeating it changes nothing.
+  function layoutGameDataTab(self) {
+    const group = self.field("_tabNavigation").value;
+    const button = findGameDataButton(call(self, "get_transform"));
+    if (isNull(group) || isNull(button)) return null;
+    const toggles = group.field("_toggles").value, shown = [];
+    for (let i = 0; i < toggles.length; i++) {
+      const node = call(call(toggles.get(i), "get_gameObject"), "get_transform");
+      if (call(call(node, "get_gameObject"), "get_activeInHierarchy")) shown.push(node);
+    }
+    if (shown.length < 2) return null;
+    const at = node => { const p = call(node, "get_position"); return { x: Number(p.field("x").value), y: Number(p.field("y").value), z: Number(p.field("z").value) }; };
+    const first = at(shown[0]), last = at(shown[shown.length - 1]);
+    const gap = (last.x - first.x) / (shown.length - 1);
+    call(button, "set_position", unityStruct("UnityEngine.Vector3", { x: last.x + gap, y: last.y, z: last.z }));
+    const row = call(shown[0], "get_parent"), centre = at(call(self, "get_transform")).x;
+    const shift = centre - (first.x + last.x + gap) / 2, rowAt = at(row);
+    if (Math.abs(shift) > 0.001) call(row, "set_position", unityStruct("UnityEngine.Vector3", { x: rowAt.x + shift, y: rowAt.y, z: rowAt.z }));
+    return `${shown.length + 1} tabs, step ${gap.toFixed(3)}`;
+  }
   // Direct child of the window, or inside the tab row once styled.
   function findGameDataButton(root) {
     const direct = call(root, "Find", Il2Cpp.string("RebornGameData"));
@@ -3457,19 +3480,24 @@ function uiComponent(go, type) {
     };
     const setVSync = icall(["UnityEngine.QualitySettings::set_vSyncCount(System.Int32)", "UnityEngine.QualitySettings::set_vSyncCount"], "void", ["int"]);
     const getVSync = icall(["UnityEngine.QualitySettings::get_vSyncCount()", "UnityEngine.QualitySettings::get_vSyncCount"], "int", []);
+    // Report 40: the managed setter reads its value from another register
+    // than the one the hook replaced, so the game's 60 always won. The
+    // engine function takes it as its first argument.
+    const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
     const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
     function applyRate(why) {
       if (!rate) return;
       try {
         if (setVSync) setVSync(0);
-        setRate.invoke(rate);
+        if (engineSetRate) engineSetRate(rate); else setRate.invoke(rate);
         log(`graphics: frame rate ${rate} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
       } catch (error) { log(`graphics: frame rate failed: ${error}`); }
     }
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
-      Interceptor.attach(setRate.virtualAddress, { onEnter(args) { args[0] = ptr(rate); } });
+      const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
+      if (!engineAt.isNull()) Interceptor.attach(engineAt, { onEnter(args) { args[0] = ptr(rate); } });
       schedule(0, () => applyRate("start"), "graphics frame rate");
     }
     // Quality: SettingsWin.UpdateUi hides resolution and windowed mode on
@@ -3539,7 +3567,9 @@ function uiComponent(go, type) {
               const video = window.target.field("_videoButton").value;
               const options = Number(call(call(dropdown, "get_options"), "get_Count"));
               const tab = unityAlive(video) ? (call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown")) : "no video tab";
-              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}`;
+              let tabs = "";
+              try { tabs = layoutGameDataTab(window.target) || "game data tab not placed"; } catch (error) { tabs = `game data tab: ${error}`; }
+              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}, ${tabs}`;
             }
             if (state !== reported) { reported = state; log(`graphics: ${state}`); }
           } catch (error) { log(`graphics: quality check failed: ${error}`); }
