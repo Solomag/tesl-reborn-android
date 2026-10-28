@@ -58,8 +58,10 @@ keeps its revision until stable catches up.
 CI of the main repository uploads the Builder to two permanent releases:
 `builder-test` (test branch, pre-release) and `builder-stable` (`main`). Each
 holds `TESL-Reborn-Builder-Test.exe` (Windows) and `TESL-Reborn-Builder-Test`
-(Linux), `-Stable` on stable, plus the same file as `TESL-Reborn-Builder(.exe)`
-that Builders before the rename look for; the release page shows them as
+(Linux), `-Stable` on stable. Builders before the rename look only for
+`TESL-Reborn-Builder(.exe)`: that asset is the transition build, uploaded once
+and kept for good; an old Builder updates to it, renames itself to the channel
+name and then follows the new file; the release page shows them as
 `[Windows][Test]TESL-Reborn-Builder-Test.exe · build 7`. APKs the Builder makes
 are named the same way: `TESL-Reborn-Test-build46.apk`. The build number is the CI run number. The Builder reads its channel's
 release through the GitHub API: the label gives the number and `digest` the

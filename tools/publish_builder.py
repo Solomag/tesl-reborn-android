@@ -4,9 +4,11 @@
 Run in CI after packaging, in the main repository only. The executable goes to
 the builder-<channel> release, replacing the previous build, with the build
 number in the asset's label ("[Windows][Test]TESL-Reborn-Builder.exe · build 7").
-It goes up twice: named with its channel (TESL-Reborn-Builder-Test.exe) for
-people, and as TESL-Reborn-Builder(.exe), which older Builders look for to
-update themselves. The
+It is named with its channel (TESL-Reborn-Builder-Test.exe). Builders made
+before that look only for TESL-Reborn-Builder(.exe): the first build with the
+rename goes up under that name once more, labelled "transition", and stays
+there for good. An old Builder updates to it, renames itself and from then on
+follows the channel name; later builds leave the transition asset alone. The
 Builder reads that label and the SHA-256 GitHub reports for the asset
 (builder/selfupdate.py); nothing else is uploaded. The release is created on
 first use; test is marked as a pre-release.
@@ -47,12 +49,19 @@ def main():
             raise SystemExit("Could not create release " + tag)
     named = executable.with_name(executable.stem + "-" + version["channel"].capitalize() + executable.suffix)
     shutil.copyfile(executable, named)
-    for path in (named, executable):
-        subprocess.run(["gh", "release", "upload", tag, f"{path}#{label(path, version['build'], version['channel'])}", "--clobber"],
+    subprocess.run(["gh", "release", "upload", tag, f"{named}#{label(named, version['build'], version['channel'])}", "--clobber"],
+                   check=True)
+    assets = json.loads(subprocess.run(["gh", "release", "view", tag, "--json", "assets"], capture_output=True,
+                                       text=True, check=True).stdout).get("assets") or []
+    legacy = next((a for a in assets if a.get("name") == executable.name), None)
+    if not legacy or "transition" not in str(legacy.get("label") or ""):
+        subprocess.run(["gh", "release", "upload", tag,
+                        f"{executable}#{label(executable, version['build'], version['channel'])} · transition", "--clobber"],
                        check=True)
+        print(f"BUILDER: transition {executable.name} build {version['build']} on {tag}")
     for name in LEGACY_ASSETS:
         subprocess.run(["gh", "release", "delete-asset", tag, name, "--yes"], capture_output=True)
-    print(f"BUILDER: {executable.name} build {version['build']} on {tag}")
+    print(f"BUILDER: {named.name} build {version['build']} on {tag}")
 
 
 if __name__ == "__main__":

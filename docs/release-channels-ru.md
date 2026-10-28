@@ -63,8 +63,10 @@ Test на Stable телефон остаётся на своей ревизии,
 CI основного репозитория выкладывает Builder в постоянные релизы:
 `builder-test` (тестовая ветка, пред-релиз) и `builder-stable` (`main`). В
 релизе — `TESL-Reborn-Builder-Test.exe` и `TESL-Reborn-Builder-Test` (Linux),
-на stable `-Stable`, и тот же файл под старым именем `TESL-Reborn-Builder(.exe)`,
-которое ищут Builder до переименования. APK называются так же:
+на stable `-Stable`. Builder до переименования ищут только
+`TESL-Reborn-Builder(.exe)`: под этим именем навсегда лежит переходная сборка,
+выложенная один раз. Старый Builder обновляется до неё, переименовывает себя
+в имя с каналом и дальше берёт новый файл. APK называются так же:
 `TESL-Reborn-Test-build46.apk`.
 Номер сборки (= номер прогона CI) записан в подписи файла:
 «TESL-Reborn-Builder.exe · build 7». Builder читает релиз через API GitHub

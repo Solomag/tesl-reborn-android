@@ -59,6 +59,20 @@ class SelfUpdateTest(unittest.TestCase):
             selfupdate.cleanup(exe)
             self.assertFalse(old.exists())
 
+    def test_install_renames_an_old_builder_to_its_channel_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / selfupdate.asset_name()
+            exe.write_bytes(b"old builder")
+            data = b"new builder"
+            offer = dict(build=12, url="u", bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
+                         name=selfupdate.asset_name("test"))
+            target = selfupdate.install(offer, exe, lambda *a, **k: data)
+            self.assertEqual(target.name, selfupdate.asset_name("test"))
+            self.assertEqual(target.read_bytes(), data)
+            self.assertFalse(exe.exists())
+            selfupdate.cleanup(target)
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), [target.name])
+
     def test_a_corrupt_download_leaves_the_running_builder_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
             exe = Path(tmp) / selfupdate.asset_name()

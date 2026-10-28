@@ -84,21 +84,27 @@ def check(version, fetch=_get):
     build = int(label.group(1))
     if build <= version["build"]:
         return None
-    return {"build": build, "sha256": digest.group(1), "bytes": size, "url": url}
+    return {"build": build, "sha256": digest.group(1), "bytes": size, "url": url,
+            "name": asset_name(version["channel"])}
 
 
 def cleanup(executable=None):
-    """Remove the copy a previous update left behind."""
+    """Remove the copy a previous update left behind, also one under the name
+    the Builder had before an update renamed it."""
     executable = Path(executable or sys.executable)
-    try:
-        executable.with_name(executable.name + ".old").unlink()
-    except OSError:
-        pass
+    for old in {executable.with_name(executable.name + ".old"), *executable.parent.glob("TESL-Reborn-Builder*.old")}:
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
 
 def install(offer, executable=None, fetch=_get):
-    """Swap this executable for the verified new build; returns its path."""
+    """Swap this executable for the verified new build; returns its path.
+    The new build takes the channel name (TESL-Reborn-Builder-Test.exe) when
+    the offer has one, so an older TESL-Reborn-Builder.exe is renamed."""
     executable = Path(executable or sys.executable)
+    target = executable.with_name(offer.get("name") or executable.name)
     data = fetch(offer["url"], LIMIT, timeout=120)
     if len(data) != offer["bytes"] or hashlib.sha256(data).hexdigest() != offer["sha256"]:
         raise ValueError("Downloaded Builder does not match its SHA-256")
@@ -113,11 +119,11 @@ def install(offer, executable=None, fetch=_get):
         pass
     os.replace(executable, old)
     try:
-        os.replace(fresh, executable)
+        os.replace(fresh, target)
     except OSError:
         os.replace(old, executable)
         raise
-    return executable
+    return target
 
 
 def restart_environment(environment=None, bundle=None):
