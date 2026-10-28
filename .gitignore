@@ -49,3 +49,4 @@ build/
 output/
 *.spec
 builder/version.json
+builder-settings.json
