@@ -9247,8 +9247,14 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     } catch (_) {
     }
     const revision = globalThis.TeslRebornUpdater?.current()?.revision;
+    let channel = "";
+    try {
+      const feed = String(JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-updater.json`) || "{}").feedUrl || "");
+      channel = /\/updates\/stable\//.test(feed) ? " (stable)" : /\/updates\/test\//.test(feed) ? " (test)" : "";
+    } catch (_) {
+    }
     return cachedPortCaption = `Reborn ${PLUGIN_VERSION}
-Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
+Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
   }
   function noticeCanvasProperty(canvas, name, value) {
     const method = canvas.tryMethod(name, value === void 0 ? 0 : 1);

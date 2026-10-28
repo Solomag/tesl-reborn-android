@@ -5011,7 +5011,13 @@ const chatWindows = new Map();
       if (Number.isSafeInteger(setup.androidBuild)) build = String(setup.androidBuild);
     } catch (_) {}
     const revision = globalThis.TeslRebornUpdater?.current()?.revision;
-    return cachedPortCaption = `Reborn ${PLUGIN_VERSION}\nAndroid · APK ${build} · patch ${Number.isSafeInteger(revision) ? revision : "embedded"}`;
+    // The update channel this phone follows, from its updater settings.
+    let channel = "";
+    try {
+      const feed = String(JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-updater.json`) || "{}").feedUrl || "");
+      channel = /\/updates\/stable\//.test(feed) ? " (stable)" : /\/updates\/test\//.test(feed) ? " (test)" : "";
+    } catch (_) {}
+    return cachedPortCaption = `Reborn ${PLUGIN_VERSION}\nAndroid · APK ${build} · patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
   }
 
   function noticeCanvasProperty(canvas, name, value?: number) {
