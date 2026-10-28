@@ -7555,7 +7555,7 @@ Il2Cpp.perform(() => {
       return cap ? Math.min(rate || 60, cap) : rate;
     };
     function applyRate(why) {
-      const effective = currentRate() || (why === "cap lifted" ? 60 : 0);
+      const effective = currentRate() || (why === "cap lifted" || why === "resumed" ? 60 : 0);
       if (!effective) return;
       try {
         if (setVSync) setVSync(0);
@@ -7733,6 +7733,7 @@ Il2Cpp.perform(() => {
       }
     };
     globalThis.__teslApplyRate = applyRate;
+    (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => applyRate("resumed"));
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
@@ -8460,6 +8461,11 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       emojiDefinitions = definitions.map((item) => emojiByName.get(item.Name));
       emojiAsset = asset;
       emojiTexture = texture;
+      (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
+        const bytes = Il2Cpp.corlib.class("System.IO.File").method("ReadAllBytes", 1).invoke(Il2Cpp.string(`${path}/people.png`));
+        const again = ucls("UnityEngine.ImageConversion").method("LoadImage").overload("UnityEngine.Texture2D", "System.Byte[]").invoke(texture, bytes);
+        log(`emoji: atlas ${again ? "reloaded" : "reload failed"} after resume`);
+      });
       log(`emoji: initialized ${emojiDefinitions.length} sprites from PC atlas`);
       return true;
     } catch (error) {
@@ -9145,6 +9151,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     if (!record || record.errors > 3) return;
     try {
       if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
+      record.renderPending = true;
       const touches = Number(chatInput().touchCount.invoke());
       if (chatScaleUpdate(record, touches)) return;
       const input = record.input.target;
@@ -9225,13 +9232,15 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) hookAttach(render.virtualAddress, {
+      // Report 23: this runs several times a frame (310/s at 104 FPS). The
+      // window's Update already found it active; apply once after that.
       onLeave() {
         for (const record of chatWindows.values()) {
+          if (!record.renderPending) continue;
+          record.renderPending = false;
           try {
-            if (Boolean(call(record.controls.target, "get_activeInHierarchy"))) {
-              chatApplyPosition(record);
-              chatScaleApply(record);
-            }
+            chatApplyPosition(record);
+            chatScaleApply(record);
           } catch (_) {
           }
         }
@@ -9727,7 +9736,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
   }
   function createUpdateBanner() {
     const showFps = fpsMeterEnabled();
-    let fps = null, fpsText = null, fpsLogAt = 0;
+    let fps = null, fpsText = null, fpsLogAt = 0, lastFrameAt = 0;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
@@ -9926,6 +9935,18 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
             shownVersion = versionScreen.visible;
             log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);
           }
+          const frameAt = Date.now();
+          if (lastFrameAt && frameAt - lastFrameAt > 5e3) {
+            log(`resumed after ${Math.round((frameAt - lastFrameAt) / 1e3)} s`);
+            for (const handler of globalThis.__teslOnResume || []) {
+              try {
+                handler();
+              } catch (error) {
+                log(`resume: ${error}`);
+              }
+            }
+          }
+          lastFrameAt = frameAt;
           const measured = fpsSample(fpsCounter, Date.now());
           if (Date.now() >= fpsLogAt && measured) {
             fpsLogAt = Date.now() + 15e3;

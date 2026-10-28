@@ -3665,7 +3665,7 @@ function uiComponent(go, type) {
     const currentRate = () => { const cap = globalThis.__teslRateCap; return cap ? Math.min(rate || 60, cap) : rate; };
     function applyRate(why) {
       // Without a chosen rate the game's own 60 is restored after a heat cap.
-      const effective = currentRate() || (why === "cap lifted" ? 60 : 0);
+      const effective = currentRate() || (why === "cap lifted" || why === "resumed" ? 60 : 0);
       if (!effective) return;
       try {
         if (setVSync) setVSync(0);
@@ -3816,6 +3816,7 @@ function uiComponent(go, type) {
       }
     };
     globalThis.__teslApplyRate = applyRate;
+    (globalThis.__teslOnResume ??= []).push(() => applyRate("resumed"));
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     if (rate) {
@@ -4416,6 +4417,13 @@ const emojiByName = new Map(), emojiByAscii = new Map();
       asset.field("spriteInfoList").value = list;
       emojiDefinitions = definitions.map(item => emojiByName.get(item.Name));
       emojiAsset = asset; emojiTexture = texture;
+      // Report 23: the GL context is rebuilt after the background and a
+      // texture made at runtime comes back blank; decode it again.
+      (globalThis.__teslOnResume ??= []).push(() => {
+        const bytes = Il2Cpp.corlib.class("System.IO.File").method("ReadAllBytes", 1).invoke(Il2Cpp.string(`${path}/people.png`));
+        const again = ucls("UnityEngine.ImageConversion").method("LoadImage").overload("UnityEngine.Texture2D", "System.Byte[]").invoke(texture, bytes);
+        log(`emoji: atlas ${again ? "reloaded" : "reload failed"} after resume`);
+      });
       log(`emoji: initialized ${emojiDefinitions.length} sprites from PC atlas`);
       return true;
     } catch (error) { emojiByName.clear(); emojiByAscii.clear(); log(`emoji: initialization failed: ${error}`); return false; }
@@ -4960,6 +4968,7 @@ const chatWindows = new Map();
     if (!record || record.errors > 3) return;
     try {
       if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
+      record.renderPending = true;
       const touches = Number(chatInput().touchCount.invoke());
       if (chatScaleUpdate(record, touches)) return;
       const input = record.input.target;
@@ -5028,9 +5037,12 @@ const chatWindows = new Map();
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) hookAttach(render.virtualAddress, {
+      // Report 23: this runs several times a frame (310/s at 104 FPS). The
+      // window's Update already found it active; apply once after that.
       onLeave() { for (const record of chatWindows.values()) {
-        try { if (Boolean(call(record.controls.target, "get_activeInHierarchy"))) { chatApplyPosition(record); chatScaleApply(record); } }
-        catch (_) {}
+        if (!record.renderPending) continue;
+        record.renderPending = false;
+        try { chatApplyPosition(record); chatScaleApply(record); } catch (_) {}
       } }
     });
     hookAttach(update.virtualAddress, {
@@ -5452,7 +5464,7 @@ const chatWindows = new Map();
 
   function createUpdateBanner() {
     const showFps = fpsMeterEnabled();
-    let fps = null, fpsText = null, fpsLogAt = 0;
+    let fps = null, fpsText = null, fpsLogAt = 0, lastFrameAt = 0;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
@@ -5655,6 +5667,17 @@ const chatWindows = new Map();
             shownVersion = versionScreen.visible;
             log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);
           }
+          // Report 23: back from the background Unity had vSync on again
+          // (menu at 106 FPS) and the emoji atlas was blank. No frames run
+          // while paused, so a long gap between them is a return.
+          const frameAt = Date.now();
+          if (lastFrameAt && frameAt - lastFrameAt > 5000) {
+            log(`resumed after ${Math.round((frameAt - lastFrameAt) / 1000)} s`);
+            for (const handler of globalThis.__teslOnResume || []) {
+              try { handler(); } catch (error) { log(`resume: ${error}`); }
+            }
+          }
+          lastFrameAt = frameAt;
           const measured = fpsSample(fpsCounter, Date.now());
           // Report 39: the setting looked like it did nothing; the log now
           // keeps the measured rate, so a report shows what changed.
