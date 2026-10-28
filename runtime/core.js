@@ -3734,6 +3734,18 @@ Il2Cpp.perform(() => {
     if (resourceTrace.length > 128) resourceTrace.shift();
   }
   log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}`);
+  try {
+    let mte = "unknown";
+    try {
+      const prctl = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("prctl"), "int", ["int", "ulong", "ulong", "ulong", "ulong"]);
+      const flags = prctl(56, 0, 0, 0, 0);
+      mte = flags < 0 ? "unsupported" : flags & 2 ? "sync" : flags & 4 ? "async" : "off";
+    } catch (_) {
+    }
+    log(`runtime: Frida ${Frida.version}, ${Script.runtime}, MTE ${mte}, page ${Process.pageSize}`);
+  } catch (error) {
+    log(`runtime: ${error}`);
+  }
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
   const steamReq = nested(img, "AuthBase", "AuthBNETSteamRequest");
@@ -9302,10 +9314,14 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   }
   function portVersionCaption() {
     if (cachedPortCaption) return cachedPortCaption;
-    let build = "legacy";
+    let build = "APK legacy";
     try {
       const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "{}");
-      if (Number.isSafeInteger(setup.androidBuild)) build = String(setup.androidBuild);
+      const builder = setup.builder;
+      if (builder && typeof builder === "object") {
+        const number = Number(builder.build), channel2 = builder.channel === "stable" ? "stable" : "test";
+        build = `${Number.isSafeInteger(number) && number > 0 ? `Builder ${number}` : "local build"} (${channel2})`;
+      } else if (Number.isSafeInteger(setup.androidBuild)) build = `APK ${setup.androidBuild}`;
     } catch (_) {
     }
     const revision = globalThis.TeslRebornUpdater?.current()?.revision;
@@ -9316,7 +9332,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     } catch (_) {
     }
     return cachedPortCaption = `Reborn ${PLUGIN_VERSION}
-Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
+Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
   }
   function noticeCanvasProperty(canvas, name, value) {
     const method = canvas.tryMethod(name, value === void 0 ? 0 : 1);
@@ -9461,6 +9477,7 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
+    let loadingState = null;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
@@ -9643,6 +9660,14 @@ Android \xB7 APK ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision
           const badgeAnchor = locateLoginVersion(call(root.target, "get_transform")) || locateSplashVersion();
           uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
           call(badge, "SetActive", versionScreen.visible);
+          const loaded = !versionScreen.visible || loginAnchorLogged;
+          if (loadingState !== loaded) {
+            loadingState = loaded;
+            try {
+              writeTextFile(`${persistentPath()}/tesl-reborn-loading.json`, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
+            } catch (_) {
+            }
+          }
           if (shownVersion !== versionScreen.visible) {
             shownVersion = versionScreen.visible;
             log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);

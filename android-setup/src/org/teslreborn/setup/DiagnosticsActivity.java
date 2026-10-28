@@ -84,6 +84,12 @@ public final class DiagnosticsActivity extends Activity {
         File output = new File(directory, "report-" + UUID.randomUUID().toString().replace("-", "") + ".zip");
         JSONObject device = new JSONObject().put("androidBuild",50).put("sdk",Build.VERSION.SDK_INT)
             .put("model",Build.MODEL).put("at",System.currentTimeMillis());
+        // Report 9: battery saver or heat slow the whole phone; record both.
+        try {
+          android.os.PowerManager power = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+          device.put("powerSave", power.isPowerSaveMode());
+          if (Build.VERSION.SDK_INT >= 29) device.put("thermalStatus", power.getCurrentThermalStatus());
+        } catch (Exception ignored) {}
         try {
         ActivityManager manager = (ActivityManager)getSystemService(ACTIVITY_SERVICE);
         java.util.List<ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();

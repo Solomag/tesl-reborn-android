@@ -211,6 +211,18 @@ Il2Cpp.perform(() => {
   }
   // END android-ui: resource-events
   log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}`);
+  // Report 9: the same hook code ran 4-13 times slower on a Pixel 8 Pro than
+  // on a Pixel 6 Pro. Record what could explain it: the Frida build and its
+  // JavaScript runtime, and memory tagging (MTE), which the Pixel 8 has.
+  try {
+    let mte = "unknown";
+    try {
+      const prctl = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("prctl"), "int", ["int", "ulong", "ulong", "ulong", "ulong"]);
+      const flags = prctl(56 /* PR_GET_TAGGED_ADDR_CTRL */, 0, 0, 0, 0) as number;
+      mte = flags < 0 ? "unsupported" : (flags & 2) ? "sync" : (flags & 4) ? "async" : "off";
+    } catch (_) {}
+    log(`runtime: Frida ${Frida.version}, ${Script.runtime}, MTE ${mte}, page ${Process.pageSize}`);
+  } catch (error) { log(`runtime: ${error}`); }
   // --- shared: the Steam-style requests the server accepts ---
   const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
@@ -5059,10 +5071,16 @@ const chatWindows = new Map();
   }
   function portVersionCaption() {
     if (cachedPortCaption) return cachedPortCaption;
-    let build = "legacy";
+    // The Builder that made the APK ("Builder 12 (test)"), as the setup
+    // screens show it; older APKs only recorded "APK 50".
+    let build = "APK legacy";
     try {
       const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "{}");
-      if (Number.isSafeInteger(setup.androidBuild)) build = String(setup.androidBuild);
+      const builder = setup.builder;
+      if (builder && typeof builder === "object") {
+        const number = Number(builder.build), channel = builder.channel === "stable" ? "stable" : "test";
+        build = `${Number.isSafeInteger(number) && number > 0 ? `Builder ${number}` : "local build"} (${channel})`;
+      } else if (Number.isSafeInteger(setup.androidBuild)) build = `APK ${setup.androidBuild}`;
     } catch (_) {}
     const revision = globalThis.TeslRebornUpdater?.current()?.revision;
     // The update channel this phone follows, from its updater settings.
@@ -5071,7 +5089,7 @@ const chatWindows = new Map();
       const feed = String(JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-updater.json`) || "{}").feedUrl || "");
       channel = /\/updates\/stable\//.test(feed) ? " (stable)" : /\/updates\/test\//.test(feed) ? " (test)" : "";
     } catch (_) {}
-    return cachedPortCaption = `Reborn ${PLUGIN_VERSION}\nAndroid · APK ${build} · patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
+    return cachedPortCaption = `Reborn ${PLUGIN_VERSION}\nAndroid · ${build} · patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
   }
 
   function noticeCanvasProperty(canvas, name, value?: number) {
@@ -5199,6 +5217,7 @@ const chatWindows = new Map();
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
+    let loadingState = null;
     let message = null, shownAt = 0, lastError = "";
     const unityObject = ucls("UnityEngine.Object");
     // Unity's own null check: a destroyed object compares equal to null
@@ -5385,6 +5404,14 @@ const chatWindows = new Map();
           uiPlace(badge,badgeAnchor.x,badgeAnchor.y,0.5,1,0,0,Math.min(620,Math.max(240,width)),72);
           call(badge,"SetActive",versionScreen.visible);
           // The status file keeps only the last state; the log keeps each change.
+          // Leaving the game during its first load breaks it (GestureBridge
+          // restarts it on return): tell the APK while this process is still
+          // loading, and once the login form or the main menu is reached.
+          const loaded = !versionScreen.visible || loginAnchorLogged;
+          if (loadingState !== loaded) {
+            loadingState = loaded;
+            try { writeTextFile(`${persistentPath()}/tesl-reborn-loading.json`, JSON.stringify({ pid: Process.id, loaded, at: Date.now() })); } catch (_) {}
+          }
           if (shownVersion !== versionScreen.visible) {
             shownVersion = versionScreen.visible;
             log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);

@@ -42,7 +42,8 @@ public final class LaunchActivity extends Activity {
       PackInstaller.writeJson(
           new File(root, "tesl-reborn-setup.json"),
           new JSONObject().put("api", 1).put("debugInput", "android-key-events")
-              .put("androidBuild", setup.optInt("androidBuild", 50)).put("languageTransition", true));
+              .put("androidBuild", setup.optInt("androidBuild", 50)).put("languageTransition", true)
+              .putOpt("builder", setup.optJSONObject("builder")));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       JSONObject choice = PackInstaller.json(new File(root, "tesl-reborn-language.json"));
       String language = choice.getString("language");
@@ -60,6 +61,11 @@ public final class LaunchActivity extends Activity {
         target.setClassName(getPackageName(), setup.getString("gameActivity"));
         target.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         destination = target;
+        // The game was left while still loading and cannot finish it after
+        // coming back (GestureBridge): start it again from scratch.
+        if (getIntent().getBooleanExtra(GestureBridge.RESTART_EXTRA, false)) {
+          restart(root, setup, "Restarting the game…"); return;
+        }
         if (!GameProcess.running(this)) { checkUpdate(root,setup); return; }
         // A game kept in memory never reaches the cold-start check: ask the
         // feed, and offer a restart instead of silently resuming an old core.

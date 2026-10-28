@@ -83,7 +83,8 @@ public class ResourceActivity extends Activity {
       }
       PackInstaller.writeJson(new File(root, "tesl-reborn-setup.json"), new JSONObject()
           .put("api", 1).put("debugInput", "android-key-events")
-          .put("androidBuild", setup.optInt("androidBuild", 50)).put("languageTransition", true));
+          .put("androidBuild", setup.optInt("androidBuild", 50)).put("languageTransition", true)
+              .putOpt("builder", setup.optJSONObject("builder")));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");
       uiCode = getPreferences(0).getString("uiLanguage", "en_us");
@@ -193,7 +194,7 @@ public class ResourceActivity extends Activity {
     // centred column instead of controls spanning a wide landscape screen.
     LinearLayout box = UiStyle.page(this);
     UiStyle.heading(this, box, tr("Game data setup"));
-    UiStyle.version(this, box, setup.optInt("androidBuild", 50));
+    UiStyle.version(this, box, setup);
     UiStyle.body(
         this,
         box,

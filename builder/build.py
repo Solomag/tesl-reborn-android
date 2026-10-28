@@ -428,6 +428,14 @@ def patch_game_touch(decoded, activity):
             0,
             "    invoke-super {p0}, " + parent[1] + "->onResume()V\n    return-void\n",
         ),
+        (
+            "onPause()V",
+            "protected",
+            "{p0 .. p0}",
+            "onPause(Landroid/app/Activity;)V",
+            0,
+            "    invoke-super {p0}, " + parent[1] + "->onPause()V\n    return-void\n",
+        ),
     ]
     for signature, visibility, registers, hook, locals_, fallback in methods:
         if "Lorg/teslreborn/setup/GestureBridge;->" + hook in text:
@@ -836,9 +844,13 @@ def _build(
         (resources / "catalog.json").write_text(
             json.dumps(public, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        from .selfupdate import current as builder_version
+
         setup = dict(
             schema=1,
             androidBuild=50,
+            # The Builder that made this APK, shown in the app and the game.
+            builder={k: v for k, v in builder_version(data_root()).items() if k in ("channel", "build")},
             obb=obb_meta,
             defaultLanguage=default_language,
             hookFeed=hook_feed(),

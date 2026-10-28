@@ -1,6 +1,7 @@
 package org.teslreborn.setup;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
@@ -24,8 +25,43 @@ public final class GestureBridge {
   private static long lastChord;
   private static final WeakHashMap<Activity, Marker> MARKERS = new WeakHashMap<>();
 
+  /** Extra for LaunchActivity: stop the game and start it again. */
+  static final String RESTART_EXTRA = "org.teslreborn.restart";
+  private static boolean leftWhileLoading;
+
+  /**
+   * Leaving the game during its first load breaks the load: it never gets
+   * past the loading screen after coming back. The hook writes
+   * tesl-reborn-loading.json with its process id: loaded false at start, true
+   * once the login form or the main menu is reached. Left while it says false
+   * for this process (within three minutes of the start), the game is restarted on return. Without the file (an
+   * older patch) nothing changes.
+   */
+  public static void onPause(Activity activity) {
+    try {
+      JSONObject state = PackInstaller.json(new File(activity.getExternalFilesDir(null), "tesl-reborn-loading.json"));
+      // A load takes well under three minutes; an older "still loading" is
+      // a hook that stopped updating the file, not a load.
+      leftWhileLoading = state.optInt("pid", -1) == android.os.Process.myPid() && !state.optBoolean("loaded", true)
+          && Math.abs(System.currentTimeMillis() - state.optLong("at", 0)) < 3 * 60 * 1000L;
+    } catch (Exception missing) {
+      leftWhileLoading = false;
+    }
+  }
+
   /** Temporary diagnostic overlay. Drawable overlays never receive/consume touch. */
   public static void onResume(Activity activity) {
+    if (leftWhileLoading) {
+      leftWhileLoading = false;
+      try {
+        Intent restart = new Intent(activity, LaunchActivity.class).putExtra(RESTART_EXTRA, true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        activity.startActivity(restart);
+        return;
+      } catch (Exception error) {
+        status(activity, "restart-error: " + error.getClass().getSimpleName());
+      }
+    }
     requestRefreshRate(activity);
     View view = activity.getWindow().getDecorView();
     view.post(

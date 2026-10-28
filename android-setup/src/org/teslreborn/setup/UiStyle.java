@@ -62,9 +62,21 @@ public final class UiStyle {
     return view;
   }
 
+  /**
+   * The Builder that made this APK, as "Builder 12 (test)"; "local build"
+   * when it was not built by the main repository's CI, "APK 50" for an APK
+   * from a Builder that did not record itself.
+   */
+  static String apkCaption(JSONObject setup) {
+    JSONObject builder = setup.optJSONObject("builder");
+    if (builder == null) return "APK " + setup.optInt("androidBuild", 50);
+    int build = builder.optInt("build", 0);
+    return (build > 0 ? "Builder " + build : "local build") + " (" + builder.optString("channel", "test") + ")";
+  }
+
   /** The installed APK and patch, like the version shown on the game's loading screen. */
-  static TextView version(Activity activity, LinearLayout box, int androidBuild) {
-    String line = "TESL Reborn · APK " + androidBuild;
+  static TextView version(Activity activity, LinearLayout box, JSONObject setup) {
+    String line = "TESL Reborn · " + apkCaption(setup);
     try {
       JSONObject current = PackInstaller.json(new File(activity.getExternalFilesDir(null), "tesl-reborn-update-status.json"))
           .optJSONObject("current");
