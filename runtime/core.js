@@ -7359,7 +7359,7 @@ Il2Cpp.perform(() => {
     }
     let last = 0;
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
-    hookAttach(update.virtualAddress, { onLeave() {
+    if (!hooks) hookAttach(update.virtualAddress, { onLeave() {
       if (Date.now() - last < 1e3) return;
       last = Date.now();
       try {

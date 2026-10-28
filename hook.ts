@@ -3463,9 +3463,12 @@ function uiComponent(go, type) {
     }
     // Query the settings component directly where possible. The fallback walks
     // ancestors of active UI buttons, rather than thousands of scene objects.
+    // Report 50: FindObjectsOfTypeAll here took about 25 ms once a second, a
+    // hitch every second (the hook's costliest work). OnEnable of the window
+    // classes already installs the button, so poll only without those hooks.
     let last = 0;
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
-    hookAttach(update.virtualAddress, { onLeave() {
+    if (!hooks) hookAttach(update.virtualAddress, { onLeave() {
       if (Date.now()-last < 1000) return; last = Date.now();
       try {
         const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
