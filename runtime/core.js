@@ -6397,56 +6397,66 @@ void onLeave (GumInvocationContext * ic) {
         this.self = args[0];
       },
       onLeave() {
-        try {
-          const self = new Il2Cpp.Object(this.self);
-          const banners = self.field("_titleBanners").value;
-          if (isNull(banners)) return;
-          let matchPlayerData = null;
+        const retained = new Il2Cpp.Object(this.self).ref(false);
+        schedule(0, () => {
           try {
-            matchPlayerData = self.field("_matchPlayerData").value;
-          } catch (_) {
+            if (unityAlive(retained.target)) titleBanner(retained.target);
+          } finally {
+            retained.free();
           }
-          if (isNull(matchPlayerData)) return;
-          const titleName = String(matchPlayerData.field("Title").value?.content ?? "");
-          if (!titleName) return;
-          const gm = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
-          if (isNull(gm)) return;
-          const titles = gm.field("Config").value?.field("Titles").value;
-          if (isNull(titles)) return;
-          let found = null;
-          const count = Number(titles.method("get_Count").invoke());
-          for (let i = 0; i < count; i++) {
-            const t = titles.method("get_Item", 1).invoke(i);
-            if (isNull(t)) continue;
-            const name = t.field("ResourceId").value.field("UniqueName").value?.content;
-            if (name === titleName) {
-              found = t;
-              break;
-            }
-          }
-          if (isNull(found)) return;
-          const rarity = enumVal(found.field("Rarity").value);
-          if (rarity !== RARITY_LEGENDARY) return;
-          log(`PlayerInfoPanel: legendary title ${titleName}`);
-          try {
-            const legendaryBanner = banners.get(RARITY_LEGENDARY);
-            if (!isNull(legendaryBanner)) {
-              const go = call(legendaryBanner, "get_gameObject");
-              if (!isNull(go)) go.method("SetActive").invoke(false);
-            }
-          } catch (_) {
-          }
-          const commonBanner = banners.get(0);
-          if (!isNull(commonBanner)) {
-            const go = call(commonBanner, "get_gameObject");
-            if (!isNull(go)) go.method("SetActive").invoke(true);
-            commonBanner.method("set_color").invoke(rgba(1, 0.75, 0, 1));
-          }
-        } catch (e) {
-          log(`player info panel update failed: ${e}`);
-        }
+        }, "legendary title banner");
       }
     });
+    function titleBanner(panel) {
+      try {
+        const self = panel;
+        const banners = self.field("_titleBanners").value;
+        if (isNull(banners)) return;
+        let matchPlayerData = null;
+        try {
+          matchPlayerData = self.field("_matchPlayerData").value;
+        } catch (_) {
+        }
+        if (isNull(matchPlayerData)) return;
+        const titleName = String(matchPlayerData.field("Title").value?.content ?? "");
+        if (!titleName) return;
+        const gm = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
+        if (isNull(gm)) return;
+        const titles = gm.field("Config").value?.field("Titles").value;
+        if (isNull(titles)) return;
+        let found = null;
+        const count = Number(titles.method("get_Count").invoke());
+        for (let i = 0; i < count; i++) {
+          const t = titles.method("get_Item", 1).invoke(i);
+          if (isNull(t)) continue;
+          const name = t.field("ResourceId").value.field("UniqueName").value?.content;
+          if (name === titleName) {
+            found = t;
+            break;
+          }
+        }
+        if (isNull(found)) return;
+        const rarity = enumVal(found.field("Rarity").value);
+        if (rarity !== RARITY_LEGENDARY) return;
+        log(`PlayerInfoPanel: legendary title ${titleName}`);
+        try {
+          const legendaryBanner = banners.get(RARITY_LEGENDARY);
+          if (!isNull(legendaryBanner)) {
+            const go = call(legendaryBanner, "get_gameObject");
+            if (!isNull(go)) go.method("SetActive").invoke(false);
+          }
+        } catch (_) {
+        }
+        const commonBanner = banners.get(0);
+        if (!isNull(commonBanner)) {
+          const go = call(commonBanner, "get_gameObject");
+          if (!isNull(go)) go.method("SetActive").invoke(true);
+          commonBanner.method("set_color").invoke(rgba(1, 0.75, 0, 1));
+        }
+      } catch (e) {
+        log(`player info panel update failed: ${e}`);
+      }
+    }
   });
   function rebornStoreImagePath(value) {
     return typeof value === "string" && /^AppBase\/UI\/Textures\/Store\/img_-?\d+_2$/.test(value);

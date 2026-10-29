@@ -2764,11 +2764,20 @@ void onLeave (GumInvocationContext * ic) {
 
   section("player info panel (legendary title banner)", () => {
     const pip = cls(img, "PlayerInfoPanel");
+    // Report 106 (Pixel 8 Pro): aborted (setjmp cookie mismatch) a second
+    // into a battle, when this panel updates. A dozen managed calls ran inside
+    // the hook, where an exception aborts the game; the work now runs on the
+    // next frame from the scheduler, on a panel checked to be alive.
     hookAttach(pip.method("UpdateUi").virtualAddress, {
       onEnter(args) { this.self = args[0]; },
       onLeave() {
+        const retained = new Il2Cpp.Object(this.self).ref(false);
+        schedule(0, () => { try { if (unityAlive(retained.target)) titleBanner(retained.target); } finally { retained.free(); } }, "legendary title banner");
+      },
+    });
+    function titleBanner(panel) {
         try {
-          const self = new Il2Cpp.Object(this.self);
+          const self = panel;
           const banners = self.field<Il2Cpp.Array<Il2Cpp.Object>>("_titleBanners").value;
           if (isNull(banners)) return;
           let matchPlayerData: Il2Cpp.Object | null = null;
@@ -2805,8 +2814,7 @@ void onLeave (GumInvocationContext * ic) {
             (commonBanner.method("set_color") as any).invoke(rgba(1, 0.75, 0, 1));
           }
         } catch (e) { log(`player info panel update failed: ${e}`); }
-      },
-    });
+    }
   });
 
   // BEGIN android-ui: store-images
