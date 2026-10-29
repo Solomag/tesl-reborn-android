@@ -233,21 +233,40 @@ function hookAttach(target: NativePointerValue, callbacks: any): InvocationListe
 // functions that run every frame (Canvas.SendWillRenderCanvases) but only
 // have work now and then. Returns the switch for the flag.
 const gatedKeep: any[] = [];
-function gatedHook(target: NativePointerValue, side: "enter" | "leave", fn: () => void): (on: boolean) => void {
-  const flag = Memory.alloc(4);
+function gatedHook(target: NativePointerValue, side: "enter" | "leave", fn: () => void, everyMs = 0): (on: boolean) => void {
+  // int armed @0, int every_ms @4, int64 last_ms @8
+  const flag = Memory.alloc(16);
+  flag.add(4).writeS32(everyMs);
   const timed = hookTimer ? hookTimer(currentSection, fn) : fn;
   const work = new NativeCallback(() => { try { timed(); } catch (_) { /* as a listener would */ } }, "void", []);
   try {
     const cm = new CModule(`
 #include <gum/guminterceptor.h>
-extern int armed;
+typedef struct { long s; long ns; } ts_t;
+typedef struct { int armed; int every_ms; long long last_ms; } Gate;
+extern Gate gate;
 extern void work (void);
-void ${side === "enter" ? "onEnter" : "onLeave"} (GumInvocationContext * ic) { if (armed) work (); }
-`, { armed: flag, work });
+extern int clock_gettime (int clock, ts_t * t);
+void ${side === "enter" ? "onEnter" : "onLeave"} (GumInvocationContext * ic) {
+  if (!gate.armed) return;
+  if (gate.every_ms) {
+    ts_t t; clock_gettime (1, &t);
+    long long now = (long long) t.s * 1000LL + t.ns / 1000000;
+    if (now - gate.last_ms < gate.every_ms) return;
+    gate.last_ms = now;
+  }
+  work ();
+}
+`, { gate: flag, work, clock_gettime: Process.getModuleByName("libc.so").getExportByName("clock_gettime") });
     Interceptor.attach(target, cm as any);
     gatedKeep.push(cm, work);
   } catch (_) {
-    const call = () => { if (flag.readS32()) { try { timed(); } catch (_) {} } };
+    let last = 0;
+    const call = () => {
+      if (!flag.readS32()) return;
+      if (everyMs) { const now = Date.now(); if (now - last < everyMs) return; last = now; }
+      try { timed(); } catch (_) {}
+    };
     Interceptor.attach(target, side === "enter" ? { onEnter: call } : { onLeave: call });
     gatedKeep.push(work);
   }
@@ -5019,6 +5038,7 @@ const emojiByName = new Map(), emojiByAscii = new Map();
     }
     chatFitTextBox(record);
   }
+  let armChatSizes = (_on) => {};
   function chatRefreshMessageSizes() {
     for (const [key, record] of chatMessages) {
       try {
@@ -5032,6 +5052,7 @@ const emojiByName = new Map(), emojiByAscii = new Map();
       for (const handle of [record.row, record.text, record.rect, record.layout, record.textRect]) handle.free();
       chatMessages.delete(key);
     }
+    armChatSizes(chatMessages.size > 0);
   }
   function renderChatMessage(row, message) {
     if (!initializeEmojis()) return;
@@ -5070,7 +5091,7 @@ const emojiByName = new Map(), emojiByAscii = new Map();
       }
       record = { row: row.weakRef(false), text: text.ref(false), rect: rowRect.ref(false), layout: layout.ref(false), textRect: rect.ref(false),
         width: -1, height: -1, value: "", warned: false, boxRepairs: 0 };
-      chatMessages.set(key, record);
+      chatMessages.set(key, record); armChatSizes(true);
       if (chatMessages.size <= 2) schedule(500, () => chatLogMessageBounds(record));
     }
     const username = String(message.field("Username").value?.content || "");
@@ -5101,12 +5122,9 @@ const emojiByName = new Map(), emojiByAscii = new Map();
     if (render && !render.virtualAddress.isNull()) {
       // New messages are sized when rendered; the per-message Unity calls of a
       // full pass cost ~2 ms on slower phones, so re-check only every 200 ms.
-      let refreshedAt = 0;
-      hookAttach(render.virtualAddress, { onEnter() {
-        const now = Date.now();
-        if (now - refreshedAt < 200) return;
-        refreshedAt = now; chatRefreshMessageSizes();
-      } });
+      // The gate runs it every 200 ms while chat rows are tracked.
+      armChatSizes = gatedHook(render.virtualAddress, "enter", chatRefreshMessageSizes, 200);
+      armChatSizes(chatMessages.size > 0);
     } else {
       const tick = () => { chatRefreshMessageSizes(); schedule(100, tick, "chat message sizes"); }; schedule(100, tick, "chat message sizes");
     }
@@ -5197,7 +5215,7 @@ const messagePreviews = new Map();
         record = { row: row.weakRef(false), template: template.weakRef(false), label: label.ref(false), rect: uiRect(go).ref(false),
           fallbackText: "", source: null, richText: null, fontSize: null };
         messagePreviewBounds(record); // Always AFTER TMP creation and configuration.
-        messagePreviews.set(key, record);
+        messagePreviews.set(key, record); armPreviews(true);
       } catch (error) {
         if (go) { try { ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go); } catch (_) {} }
         throw error;
@@ -5209,6 +5227,7 @@ const messagePreviews = new Map();
     refreshMessagePreview(record);
     if (messagePreviewReports++ < 4) log("emoji preview: rendered with shared chat sprite atlas");
   }
+  let armPreviews = (_on) => {};
   function refreshMessagePreviews() {
     for (const [key, record] of messagePreviews) {
       try {
@@ -5222,6 +5241,7 @@ const messagePreviews = new Map();
       }
       dropMessagePreview(key, record);
     }
+    armPreviews(messagePreviews.size > 0);
   }
   section("message preview emoji rendering", () => {
     const klass = cls(img, "MessagePreviewEntry");
@@ -5238,7 +5258,7 @@ const messagePreviews = new Map();
       });
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-    if (render && !render.virtualAddress.isNull()) hookAttach(render.virtualAddress, { onEnter() { refreshMessagePreviews(); } });
+    if (render && !render.virtualAddress.isNull()) { armPreviews = gatedHook(render.virtualAddress, "enter", refreshMessagePreviews); armPreviews(messagePreviews.size > 0); }
     else { const tick = () => { refreshMessagePreviews(); schedule(100, tick, "message previews"); }; schedule(100, tick, "message previews"); }
     log(`emoji preview: hooks installed callbacks=${seen.size}`);
   });

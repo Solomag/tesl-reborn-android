@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 141,
-  "version": "android-141-gated-render-hooks",
-  "bytes": 466691,
-  "sha256": "ed169991520ba48b2bcc0c39b970a52b861833601726b354d0492a815685284d",
+  "revision": 142,
+  "version": "android-142-gated-chat-rows",
+  "bytes": 467492,
+  "sha256": "f9d0deb93158e8af165a917f80358854316a65d83282b6319d2569598705fee4",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "d89550a5b89d682d04667763fb9509250188a1a655812b13f4f42cfe70186a9c"
+  "sourceSha256": "a11b078436ead9131d9e4f94fb930a248d2998194cd2c06f7c5169e528f9496d"
 }

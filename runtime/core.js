@@ -3765,8 +3765,9 @@ function hookAttach(target, callbacks) {
   return Interceptor.attach(target, wrapped);
 }
 const gatedKeep = [];
-function gatedHook(target, side, fn) {
-  const flag = Memory.alloc(4);
+function gatedHook(target, side, fn, everyMs = 0) {
+  const flag = Memory.alloc(16);
+  flag.add(4).writeS32(everyMs);
   const timed = hookTimer ? hookTimer(currentSection, fn) : fn;
   const work = new NativeCallback(() => {
     try {
@@ -3777,19 +3778,36 @@ function gatedHook(target, side, fn) {
   try {
     const cm = new CModule(`
 #include <gum/guminterceptor.h>
-extern int armed;
+typedef struct { long s; long ns; } ts_t;
+typedef struct { int armed; int every_ms; long long last_ms; } Gate;
+extern Gate gate;
 extern void work (void);
-void ${side === "enter" ? "onEnter" : "onLeave"} (GumInvocationContext * ic) { if (armed) work (); }
-`, { armed: flag, work });
+extern int clock_gettime (int clock, ts_t * t);
+void ${side === "enter" ? "onEnter" : "onLeave"} (GumInvocationContext * ic) {
+  if (!gate.armed) return;
+  if (gate.every_ms) {
+    ts_t t; clock_gettime (1, &t);
+    long long now = (long long) t.s * 1000LL + t.ns / 1000000;
+    if (now - gate.last_ms < gate.every_ms) return;
+    gate.last_ms = now;
+  }
+  work ();
+}
+`, { gate: flag, work, clock_gettime: Process.getModuleByName("libc.so").getExportByName("clock_gettime") });
     Interceptor.attach(target, cm);
     gatedKeep.push(cm, work);
   } catch (_) {
+    let last = 0;
     const call2 = () => {
-      if (flag.readS32()) {
-        try {
-          timed();
-        } catch (_2) {
-        }
+      if (!flag.readS32()) return;
+      if (everyMs) {
+        const now = Date.now();
+        if (now - last < everyMs) return;
+        last = now;
+      }
+      try {
+        timed();
+      } catch (_2) {
       }
     };
     Interceptor.attach(target, side === "enter" ? { onEnter: call2 } : { onLeave: call2 });
@@ -9208,6 +9226,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     }
     chatFitTextBox(record);
   }
+  let armChatSizes = (_on) => {
+  };
   function chatRefreshMessageSizes() {
     for (const [key, record] of chatMessages) {
       try {
@@ -9224,6 +9244,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       for (const handle of [record.row, record.text, record.rect, record.layout, record.textRect]) handle.free();
       chatMessages.delete(key);
     }
+    armChatSizes(chatMessages.size > 0);
   }
   function renderChatMessage(row, message) {
     if (!initializeEmojis()) return;
@@ -9283,6 +9304,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         boxRepairs: 0
       };
       chatMessages.set(key, record);
+      armChatSizes(true);
       if (chatMessages.size <= 2) schedule(500, () => chatLogMessageBounds(record));
     }
     const username = String(message.field("Username").value?.content || "");
@@ -9321,13 +9343,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   section("chat message layout refresh", () => {
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) {
-      let refreshedAt = 0;
-      hookAttach(render.virtualAddress, { onEnter() {
-        const now = Date.now();
-        if (now - refreshedAt < 200) return;
-        refreshedAt = now;
-        chatRefreshMessageSizes();
-      } });
+      armChatSizes = gatedHook(render.virtualAddress, "enter", chatRefreshMessageSizes, 200);
+      armChatSizes(chatMessages.size > 0);
     } else {
       const tick = () => {
         chatRefreshMessageSizes();
@@ -9450,6 +9467,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         };
         messagePreviewBounds(record);
         messagePreviews.set(key, record);
+        armPreviews(true);
       } catch (error) {
         if (go) {
           try {
@@ -9466,6 +9484,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     refreshMessagePreview(record);
     if (messagePreviewReports++ < 4) log("emoji preview: rendered with shared chat sprite atlas");
   }
+  let armPreviews = (_on) => {
+  };
   function refreshMessagePreviews() {
     for (const [key, record] of messagePreviews) {
       try {
@@ -9482,6 +9502,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       }
       dropMessagePreview(key, record);
     }
+    armPreviews(messagePreviews.size > 0);
   }
   section("message preview emoji rendering", () => {
     const klass = cls(img, "MessagePreviewEntry");
@@ -9507,10 +9528,10 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       });
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-    if (render && !render.virtualAddress.isNull()) hookAttach(render.virtualAddress, { onEnter() {
-      refreshMessagePreviews();
-    } });
-    else {
+    if (render && !render.virtualAddress.isNull()) {
+      armPreviews = gatedHook(render.virtualAddress, "enter", refreshMessagePreviews);
+      armPreviews(messagePreviews.size > 0);
+    } else {
       const tick = () => {
         refreshMessagePreviews();
         schedule(100, tick, "message previews");
