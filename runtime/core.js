@@ -8299,7 +8299,21 @@ void onLeave (GumInvocationContext * ic) {
       log(`graphics: learned frame rates from before patch ${learning} reset`);
       auto = { msaaOff: auto.msaaOff, relearn: true };
     }
-    const learnedRate = (value) => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
+    let oneFastest = false;
+    try {
+      const max = [];
+      for (let cpu = 0; cpu < 16; cpu++) {
+        try {
+          max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
+        } catch (_) {
+        }
+      }
+      const top = Math.max(...max);
+      oneFastest = top > 0 && max.filter((f) => f === top).length === 1;
+    } catch (_) {
+    }
+    if (oneFastest) log("graphics: automatic frame rate caps off (one fastest core)");
+    const learnedRate = (value) => !oneFastest && ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     const modes = {
       menu: { cap: learnedRate(auto.menu?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
       battle: { cap: learnedRate(auto.battle?.rate ?? auto.rate), low: 0, steady: 0, best: 0 }
@@ -8968,6 +8982,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         applyRate("drift");
         return;
       }
+      if (oneFastest) return;
       if (msaaOff) {
         try {
           const samples = antiAliasingOff();

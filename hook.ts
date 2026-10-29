@@ -4367,7 +4367,22 @@ void onLeave (GumInvocationContext * ic) {
       log(`graphics: learned frame rates from before patch ${learning} reset`);
       auto = { msaaOff: auto.msaaOff, relearn: true };
     }
-    const learnedRate = value => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
+    // Reports 113-114 (Pixel 8 Pro): battles ran at 27-33 FPS under caps of
+    // 30-35 the governor had learned again within minutes. On phones whose
+    // fastest clock belongs to one core (Tensor G3) the automatic caps are
+    // off for now: the rate stays at the chosen one (60 by default), to see
+    // what the phone reaches unthrottled.
+    let oneFastest = false;
+    try {
+      const max = [];
+      for (let cpu = 0; cpu < 16; cpu++) {
+        try { max.push(Number(String((File as any).readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0); } catch (_) {}
+      }
+      const top = Math.max(...max);
+      oneFastest = top > 0 && max.filter(f => f === top).length === 1;
+    } catch (_) {}
+    if (oneFastest) log("graphics: automatic frame rate caps off (one fastest core)");
+    const learnedRate = value => !oneFastest && ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     // Patch 117 kept one rate for both.
     const modes = {
       menu: { cap: learnedRate(auto.menu?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
@@ -4913,6 +4928,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
       const state = modes[mode];
       // Report 25: something reset vSync again (97 FPS at a 60 cap); put the rate back.
       if (measured > (currentRate() || 60) * 1.2) { applyRate("drift"); return; }
+      if (oneFastest) return;
       // A quality change turns MSAA back on; a phone that needed it off keeps it off.
       if (msaaOff) {
         try { const samples = antiAliasingOff(); if (samples) log(`graphics: antiAliasing ${samples}x -> off (remembered)`); } catch (_) {}
