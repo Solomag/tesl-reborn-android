@@ -7596,6 +7596,11 @@ void onLeave (GumInvocationContext * ic) {
     const group = self.field("_tabNavigation").value;
     const button = findGameDataButton(call(self, "get_transform"));
     if (isNull(group) || isNull(button)) return null;
+    const buttonObject = call(button, "get_gameObject");
+    if (!Boolean(call(buttonObject, "get_activeSelf"))) {
+      call(buttonObject, "SetActive", true);
+      log("settings data: Game data tab shown again");
+    }
     const toggles = group.field("_toggles").value, shown = [];
     for (let i = 0; i < toggles.length; i++) {
       const node = call(call(toggles.get(i), "get_gameObject"), "get_transform");

@@ -3684,6 +3684,11 @@ function uiComponent(go, type) {
     const group = self.field("_tabNavigation").value;
     const button = findGameDataButton(call(self, "get_transform"));
     if (isNull(group) || isNull(button)) return null;
+    // Report 94: after a battle the button was there but hidden. With the
+    // Video tab hidden again (patch 153) the window's own tab setup switched
+    // it off; it is shown again here.
+    const buttonObject = call(button, "get_gameObject");
+    if (!Boolean(call(buttonObject, "get_activeSelf"))) { call(buttonObject, "SetActive", true); log("settings data: Game data tab shown again"); }
     const toggles = group.field("_toggles").value, shown = [];
     for (let i = 0; i < toggles.length; i++) {
       const node = call(call(toggles.get(i), "get_gameObject"), "get_transform");
