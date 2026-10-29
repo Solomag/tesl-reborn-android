@@ -3945,6 +3945,10 @@ function uiComponent(go, type) {
       // Without a chosen rate the game's own 60 is restored after a heat cap.
       const effective = currentRate() || (["cap lifted", "resumed", "after resolution", "drift"].includes(why) ? 60 : 0);
       if (!effective) return;
+      // Report 90: of the graphics settings only MSAA ever cost frames; it is
+      // turned off whenever the rate is applied (start, quality change,
+      // resolution change), unless chosen in the graphics file.
+      if (!allowMsaa) try { const samples = antiAliasingOff(); if (samples) log(`graphics: antiAliasing ${samples}x -> off (${why})`); } catch (_) {}
       try {
         if (setVSync) setVSync(0);
         if (engineSetRate) engineSetRate(effective); else setRate.invoke(effective);
@@ -3961,7 +3965,11 @@ function uiComponent(go, type) {
     // Battle and menu are learned apart (the drops are in battle): a battle
     // is an active BoardInputController, checked with each 15 s sample.
     const autoFile = `${persistentPath()}/tesl-reborn-graphics-auto.json`;
-    const ladder = [120, 90, 60, 40, 30], ceiling = rate || 60;
+    // Steps of 5 FPS (requested after report 90: 60 -> 40 was a 20 FPS jump
+    // for a phone that held 50), plus the display rates above 60.
+    const ceiling = rate || 60;
+    const ladder = [120, 90, 75];
+    for (let step = 60; step >= 30; step -= 5) ladder.push(step);
     let auto: any = {};
     try { auto = JSON.parse(readTextFile(autoFile) || "{}") || {}; } catch (_) {}
     // Report 27: learned at full resolution, the battle stayed at 30 after
@@ -4507,17 +4515,19 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         // A cap above the measured rate changes nothing: CPH2723 went
         // 120 -> 90 -> 60 -> 40 -> 30 at a steady 25. Go straight to the
         // highest step near what the phone actually reaches.
-        const lower = ladder.find(step => step < effective && step <= Math.max(30, measured * 1.25));
+        // The step nearest below what the phone reaches (a cap above it changes
+        // nothing), at least one step down.
+        const lower = ladder.find(step => step < effective && step <= Math.max(30, measured + 2));
         if (!lower) return;
         state.cap = globalThis.__teslRateCap = lower; saveAuto();
         log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
         applyRate("auto down");
-      } else if (state.steady >= 12 && state.cap) {
+      } else if (state.steady >= 8 && state.cap) {
         state.steady = 0;
         const higher = ladder.filter(step => step > effective && step <= ceiling).pop();
         if (!higher) return;
         state.cap = globalThis.__teslRateCap = higher >= ceiling ? 0 : higher; saveAuto();
-        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 3 min)`);
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 2 min)`);
         applyRate(state.cap ? "auto up" : "cap lifted");
       }
     };

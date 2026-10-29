@@ -7874,6 +7874,11 @@ void onLeave (GumInvocationContext * ic) {
     function applyRate(why) {
       const effective = currentRate() || (["cap lifted", "resumed", "after resolution", "drift"].includes(why) ? 60 : 0);
       if (!effective) return;
+      if (!allowMsaa) try {
+        const samples = antiAliasingOff();
+        if (samples) log(`graphics: antiAliasing ${samples}x -> off (${why})`);
+      } catch (_) {
+      }
       try {
         if (setVSync) setVSync(0);
         if (engineSetRate) engineSetRate(effective);
@@ -7884,7 +7889,9 @@ void onLeave (GumInvocationContext * ic) {
       }
     }
     const autoFile = `${persistentPath()}/tesl-reborn-graphics-auto.json`;
-    const ladder = [120, 90, 60, 40, 30], ceiling = rate || 60;
+    const ceiling = rate || 60;
+    const ladder = [120, 90, 75];
+    for (let step = 60; step >= 30; step -= 5) ladder.push(step);
     let auto = {};
     try {
       auto = JSON.parse(readTextFile(autoFile) || "{}") || {};
@@ -8559,19 +8566,19 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             log(`graphics: antiAliasing drop failed: ${error}`);
           }
         }
-        const lower = ladder.find((step) => step < effective && step <= Math.max(30, measured * 1.25));
+        const lower = ladder.find((step) => step < effective && step <= Math.max(30, measured + 2));
         if (!lower) return;
         state.cap = globalThis.__teslRateCap = lower;
         saveAuto();
         log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
         applyRate("auto down");
-      } else if (state.steady >= 12 && state.cap) {
+      } else if (state.steady >= 8 && state.cap) {
         state.steady = 0;
         const higher = ladder.filter((step) => step > effective && step <= ceiling).pop();
         if (!higher) return;
         state.cap = globalThis.__teslRateCap = higher >= ceiling ? 0 : higher;
         saveAuto();
-        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 3 min)`);
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 2 min)`);
         applyRate(state.cap ? "auto up" : "cap lifted");
       }
     };
