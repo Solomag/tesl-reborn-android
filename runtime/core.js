@@ -7548,6 +7548,15 @@ void onLeave (GumInvocationContext * ic) {
       const go = call(dropdown, "get_gameObject");
       if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false);
     }
+    try {
+      const active = enumVal(self.field("_activeTabIndex").value);
+      const toggles = self.field("_tabNavigation").value.field("_toggles").value;
+      if (active > 0 && active < toggles.length) {
+        const toggle = toggles.get(active);
+        if (unityAlive(toggle) && !Boolean(call(toggle, "get_isOn"))) call(toggle, "set_isOn", true);
+      }
+    } catch (_) {
+    }
     const old = findGameDataButton(call(self, "get_transform"));
     if (!isNull(old)) {
       const go = call(old, "get_gameObject");

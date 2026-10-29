@@ -3636,6 +3636,17 @@ function uiComponent(go, type) {
       } catch (_) {}
     }
     if (unityAlive(dropdown)) { const go = call(dropdown, "get_gameObject"); if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false); }
+    // Report 104: the window opens on Audio but its TabGroup leaves the first
+    // toggle (Video, hidden on mobile until now) lit. The toggle of the tab
+    // actually shown is switched on; the group turns the others off.
+    try {
+      const active = enumVal(self.field("_activeTabIndex").value);
+      const toggles = self.field("_tabNavigation").value.field("_toggles").value;
+      if (active > 0 && active < toggles.length) {
+        const toggle = toggles.get(active);
+        if (unityAlive(toggle) && !Boolean(call(toggle, "get_isOn"))) call(toggle, "set_isOn", true);
+      }
+    } catch (_) {}
     // A separate button from an earlier patch goes.
     const old = findGameDataButton(call(self, "get_transform"));
     if (!isNull(old)) { const go = call(old, "get_gameObject"); call(go, "set_name", Il2Cpp.string("RebornGameDataOld")); call(go, "SetActive", false); ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go); }
