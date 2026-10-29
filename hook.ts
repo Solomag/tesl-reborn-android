@@ -4392,9 +4392,12 @@ function uiComponent(go, type) {
         // prophecy, the known server stall (the card was in hand after the
         // reconnect; an own prophecy in the same battle went fine). Kept on
         // in the test channel to rule it out.
-        const physicsSkip = true;
+        // Report 98 (Pixel 8 Pro) and Sergey's report 85: the game aborted
+        // about a second after the skip switched on at a battle start. It is
+        // an experiment now (tesl-reborn-experiments.json "physicsSkip").
+        const physicsSkip = experiment("physicsSkip");
         const board = img.classes.find(c => c.name === "BoardInputController");
-        if (physicsSkip && board) {
+        if (board) {
           let live = null, timer = null;
           hookAttach(board.method("Awake", 0).virtualAddress, { onEnter(args) {
             try {
@@ -4404,7 +4407,7 @@ function uiComponent(go, type) {
               // Reports 83-84: attaching the camera probe (CModule listeners on
               // Camera::CustomCull/CustomRender) froze the main thread both from
               // this hook and 5 s later from the JS thread. It is not started.
-              globalThis.__teslPhysicsInBattle(true);
+              if (physicsSkip) globalThis.__teslPhysicsInBattle(true);
               if (!timer) timer = setInterval(() => {
                 let gone = true;
                 try { gone = !live || live.target.field("m_CachedPtr").value.isNull(); } catch (_) {}
@@ -4412,7 +4415,7 @@ function uiComponent(go, type) {
                 clearInterval(timer); timer = null;
                 if (live) { live.free(); live = null; }
                 globalThis.__teslInBattle = false;
-                globalThis.__teslPhysicsInBattle(false);
+                if (physicsSkip) globalThis.__teslPhysicsInBattle(false);
               }, 500);
             } catch (error) { log(`engine: battle physics switch failed: ${error}`); }
           } });

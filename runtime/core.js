@@ -8384,16 +8384,16 @@ void onLeave (GumInvocationContext * ic) {
           skipping = battle;
           log(`engine: physics ${battle ? "syncs transforms only (battle)" : "steps normally"}`);
         };
-        const physicsSkip = true;
+        const physicsSkip = experiment("physicsSkip");
         const board = img.classes.find((c) => c.name === "BoardInputController");
-        if (physicsSkip && board) {
+        if (board) {
           let live = null, timer = null;
           hookAttach(board.method("Awake", 0).virtualAddress, { onEnter(args) {
             try {
               if (live) live.free();
               live = new Il2Cpp.Object(args[0]).ref(false);
               globalThis.__teslInBattle = true;
-              globalThis.__teslPhysicsInBattle(true);
+              if (physicsSkip) globalThis.__teslPhysicsInBattle(true);
               if (!timer) timer = setInterval(() => {
                 let gone = true;
                 try {
@@ -8408,7 +8408,7 @@ void onLeave (GumInvocationContext * ic) {
                   live = null;
                 }
                 globalThis.__teslInBattle = false;
-                globalThis.__teslPhysicsInBattle(false);
+                if (physicsSkip) globalThis.__teslPhysicsInBattle(false);
               }, 500);
             } catch (error) {
               log(`engine: battle physics switch failed: ${error}`);
