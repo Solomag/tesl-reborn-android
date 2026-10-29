@@ -903,6 +903,66 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     }
     return experiments[name] === true;
   }
+  try { if (experiment("safeInvoke")) installSafeInvoke(); } catch (error) { log(`safe invoke unavailable: ${error}`); }
+
+  // Reports 97-106: "setjmp cookie mismatch" aborts. Every managed call
+  // the hook makes went straight to the method's code through a Frida
+  // NativeFunction; when the game failed inside it (a destroyed object, a
+  // null) the signal was caught by Frida's setjmp/longjmp guard, which
+  // aborts the process when the jump crosses Unity's own handlers. Calls now
+  // go through il2cpp_runtime_invoke, IL2CPP's own entry, which catches the
+  // game's exception and hands it back: the hook gets a JS error its
+  // try/catch handles. Value-type receivers, by-ref and unusual arguments keep
+  // the direct call. An experiment first ("safeInvoke").
+  function installSafeInvoke() {
+    const exports = Il2Cpp.module;
+    const runtimeInvoke = new NativeFunction(exports.getExportByName("il2cpp_runtime_invoke"), "pointer",
+      ["pointer", "pointer", "pointer", "pointer"], { exceptions: "propagate" } as any);
+    const unbox = new NativeFunction(exports.getExportByName("il2cpp_object_unbox"), "pointer", ["pointer"]);
+    const proto: any = (Il2Cpp as any).Method.prototype, direct = proto.invokeRaw;
+    const VOID = (Il2Cpp as any).Type.Enum.VOID;
+    let calls = 0, caught = 0, fallbacks = 0;
+    proto.invokeRaw = function (instance, ...parameters) {
+      let args, keep = [];
+      try {
+        const params = this.parameters;
+        if (params.length !== parameters.length || this.class.isValueType) { fallbacks++; return direct.call(this, instance, ...parameters); }
+        args = Memory.alloc(Math.max(1, params.length) * Process.pointerSize);
+        for (let i = 0; i < params.length; i++) {
+          const type = params[i].type, value = parameters[i];
+          if (type.isByReference) { fallbacks++; return direct.call(this, instance, ...parameters); }
+          let slot;
+          if (type.class.isValueType) {
+            const size = Math.max(8, type.class.valueTypeSize);
+            slot = Memory.alloc(size); keep.push(slot);
+            if (value instanceof (Il2Cpp as any).ValueType) Memory.copy(slot, value.handle, type.class.valueTypeSize);
+            else if (type.class.isEnum && (typeof value === "number" || typeof value === "boolean")) slot.writeS32(Number(value));
+            else if (typeof value === "number" || typeof value === "boolean" || value instanceof Int64 || value instanceof UInt64 || value instanceof NativePointer) (Il2Cpp as any).write(slot, typeof value === "boolean" ? value : value, type);
+            else { fallbacks++; return direct.call(this, instance, ...parameters); }
+          } else slot = value?.handle ?? (value instanceof NativePointer ? value : NULL);
+          args.add(i * Process.pointerSize).writePointer(slot);
+        }
+      } catch (_) { fallbacks++; return direct.call(this, instance, ...parameters); }
+      calls++;
+      const exception = Memory.alloc(Process.pointerSize);
+      exception.writePointer(NULL);
+      const self = instance?.handle ?? (instance instanceof NativePointer ? instance : NULL);
+      const result = runtimeInvoke(this.handle, self, args, exception);
+      const thrown = exception.readPointer();
+      if (!thrown.isNull()) {
+        caught++;
+        let kind = "exception";
+        try { kind = new Il2Cpp.Object(thrown).class.name; } catch (_) {}
+        throw new Error(`${kind} in ${this.class.name}.${this.name} (caught by IL2CPP)`);
+      }
+      const type = this.returnType;
+      if (type.enumValue === VOID) return undefined;
+      if (type.class.isValueType) return result.isNull() ? undefined : (Il2Cpp as any).read(unbox(result), type);
+      return (Il2Cpp as any).fromFridaValue(result, type);
+    };
+    setInterval(() => { if (caught) log(`safe invoke: ${caught} game exceptions caught in ${calls} calls (${fallbacks} direct)`); caught = 0; }, 60000);
+    log("safe invoke: managed calls go through il2cpp_runtime_invoke");
+  }
 
   function readTextFile(path: string): string {
     try {

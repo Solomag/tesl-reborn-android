@@ -4468,6 +4468,83 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     }
     return experiments[name] === true;
   }
+  try {
+    if (experiment("safeInvoke")) installSafeInvoke();
+  } catch (error) {
+    log(`safe invoke unavailable: ${error}`);
+  }
+  function installSafeInvoke() {
+    const exports = Il2Cpp.module;
+    const runtimeInvoke = new NativeFunction(
+      exports.getExportByName("il2cpp_runtime_invoke"),
+      "pointer",
+      ["pointer", "pointer", "pointer", "pointer"],
+      { exceptions: "propagate" }
+    );
+    const unbox = new NativeFunction(exports.getExportByName("il2cpp_object_unbox"), "pointer", ["pointer"]);
+    const proto = Il2Cpp.Method.prototype, direct = proto.invokeRaw;
+    const VOID = Il2Cpp.Type.Enum.VOID;
+    let calls = 0, caught = 0, fallbacks = 0;
+    proto.invokeRaw = function(instance, ...parameters) {
+      let args, keep = [];
+      try {
+        const params = this.parameters;
+        if (params.length !== parameters.length || this.class.isValueType) {
+          fallbacks++;
+          return direct.call(this, instance, ...parameters);
+        }
+        args = Memory.alloc(Math.max(1, params.length) * Process.pointerSize);
+        for (let i = 0; i < params.length; i++) {
+          const type2 = params[i].type, value = parameters[i];
+          if (type2.isByReference) {
+            fallbacks++;
+            return direct.call(this, instance, ...parameters);
+          }
+          let slot;
+          if (type2.class.isValueType) {
+            const size = Math.max(8, type2.class.valueTypeSize);
+            slot = Memory.alloc(size);
+            keep.push(slot);
+            if (value instanceof Il2Cpp.ValueType) Memory.copy(slot, value.handle, type2.class.valueTypeSize);
+            else if (type2.class.isEnum && (typeof value === "number" || typeof value === "boolean")) slot.writeS32(Number(value));
+            else if (typeof value === "number" || typeof value === "boolean" || value instanceof Int64 || value instanceof UInt64 || value instanceof NativePointer) Il2Cpp.write(slot, typeof value === "boolean" ? value : value, type2);
+            else {
+              fallbacks++;
+              return direct.call(this, instance, ...parameters);
+            }
+          } else slot = value?.handle ?? (value instanceof NativePointer ? value : NULL);
+          args.add(i * Process.pointerSize).writePointer(slot);
+        }
+      } catch (_) {
+        fallbacks++;
+        return direct.call(this, instance, ...parameters);
+      }
+      calls++;
+      const exception = Memory.alloc(Process.pointerSize);
+      exception.writePointer(NULL);
+      const self = instance?.handle ?? (instance instanceof NativePointer ? instance : NULL);
+      const result = runtimeInvoke(this.handle, self, args, exception);
+      const thrown = exception.readPointer();
+      if (!thrown.isNull()) {
+        caught++;
+        let kind = "exception";
+        try {
+          kind = new Il2Cpp.Object(thrown).class.name;
+        } catch (_) {
+        }
+        throw new Error(`${kind} in ${this.class.name}.${this.name} (caught by IL2CPP)`);
+      }
+      const type = this.returnType;
+      if (type.enumValue === VOID) return void 0;
+      if (type.class.isValueType) return result.isNull() ? void 0 : Il2Cpp.read(unbox(result), type);
+      return Il2Cpp.fromFridaValue(result, type);
+    };
+    setInterval(() => {
+      if (caught) log(`safe invoke: ${caught} game exceptions caught in ${calls} calls (${fallbacks} direct)`);
+      caught = 0;
+    }, 6e4);
+    log("safe invoke: managed calls go through il2cpp_runtime_invoke");
+  }
   function readTextFile(path) {
     try {
       const file = Il2Cpp.corlib.class("System.IO.File");
