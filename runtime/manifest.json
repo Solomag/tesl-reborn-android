@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 181,
-  "version": "android-181-drag-camera-experiment",
-  "bytes": 505291,
-  "sha256": "0d36114a9f5fa5bac6fbfc0caa1aeb3583c880c413aae2b3bf47326f71052162",
+  "revision": 182,
+  "version": "android-182-no-enumerate-threads",
+  "bytes": 506216,
+  "sha256": "ba017794299090cf4091237c87df5090a450ac7c68bf6eeb14dae5f60e6d4227",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "1e8157e8d31e35fc46ba3bc4c2e3d1adf39ea2207d8b555d4038ff40e3cbdc48"
+  "sourceSha256": "76d8dbaa52f6f8e0db16dd4db9e8eb70a720fdeed4704ea5e177d7161e2dafdf"
 }

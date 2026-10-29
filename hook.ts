@@ -146,6 +146,30 @@ let currentSection = "startup";
 // Report 10: the Pixel 8 Pro ran the hook 4-13x slower with MTE off. Every 15 s
 // say where the process may run, which core this thread is on, the core clocks
 // and the hottest sensors, to tell small cores, low clocks and heat apart.
+// Report 116 (Samsung S24+): the game stood for 174 s right as the thread
+// report ran. Frida's Process.enumerateThreads() queries every thread; the
+// game's thread ids are now listed from /proc/self/task with readdir.
+const listThreadIds = (() => {
+  try {
+    const libc = Process.getModuleByName("libc.so");
+    const opendir = new NativeFunction(libc.getExportByName("opendir"), "pointer", ["pointer"]);
+    const readdir = new NativeFunction(libc.getExportByName("readdir"), "pointer", ["pointer"]);
+    const closedir = new NativeFunction(libc.getExportByName("closedir"), "int", ["pointer"]);
+    const path = Memory.allocUtf8String("/proc/self/task");
+    return (): number[] => {
+      const ids = [], dir = opendir(path);
+      if (dir.isNull()) return ids;
+      try {
+        // struct dirent (bionic, 64-bit): d_ino 8, d_off 8, d_reclen 2, d_type 1, d_name @19
+        for (let entry = readdir(dir); !entry.isNull(); entry = readdir(dir)) {
+          const id = Number(entry.add(19).readCString());
+          if (id > 0) ids.push(id);
+        }
+      } finally { closedir(dir); }
+      return ids;
+    };
+  } catch (_) { return (): number[] => []; }
+})();
 const threadTicks = new Map<number, number>();
 let gpuModel = "";
 let waitThreads: any[] | null = null;
@@ -200,7 +224,7 @@ const cpuReport = (() => {
           // thread (epoll). Unity's main thread is the busiest of the
           // threads named UnityMain (CPU time from the last threads: line).
           let main = null, most = -1;
-          for (const thread of Process.enumerateThreads()) {
+          for (const thread of listThreadIds().map(id => ({ id }))) {
             const name = read(`/proc/self/task/${thread.id}/comm`);
             if (name === "UnityMain") {
               const stat = read(`/proc/self/task/${thread.id}/stat`), close = stat.lastIndexOf(")");
@@ -232,7 +256,7 @@ const cpuReport = (() => {
       // main thread, the graphics driver thread or something else.
       try {
         const now = Date.now(), totals = new Map();
-        for (const thread of Process.enumerateThreads()) {
+        for (const thread of listThreadIds().map(id => ({ id }))) {
           const stat = read(`/proc/self/task/${thread.id}/stat`);
           const close = stat.lastIndexOf(")");
           if (close < 0) continue;
@@ -265,6 +289,9 @@ const hookTimer = (() => {
       const entry = spent.get(name) || { us: 0, calls: 0 };
       entry.us += us; entry.calls++; spent.set(name, entry);
       if (Date.now() < reportAt) return;
+      // Report 116: the report ran three times within 30 ms (its own work
+      // fired hooks before reportAt moved on). The next time is set first.
+      reportAt = Date.now() + 15000;
       const seconds = (Date.now() - since) / 1000;
       const top = Array.from(spent.entries()).sort((a, b) => b[1].us - a[1].us).slice(0, 8)
         .map(([key, value]) => `${key} ${(value.us / seconds / 1000).toFixed(1)} ms/s ${Math.round(value.calls / seconds)}/s`);
@@ -1313,7 +1340,7 @@ void onLeave (GumInvocationContext * ic) {
         const updateTarget = new NativeFunction(android.getExportByName("APerformanceHint_updateTargetWorkDuration"), "int", ["pointer", "int64"]);
         const report = android.getExportByName("APerformanceHint_reportActualWorkDuration");
         const tids = [];
-        for (const thread of Process.enumerateThreads()) {
+        for (const thread of listThreadIds().map(id => ({ id }))) {
           let name = "";
           try { name = String((File as any).readAllText(`/proc/self/task/${thread.id}/comm`)).trim(); } catch (_) {}
           if (/^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(name)) tids.push(thread.id);

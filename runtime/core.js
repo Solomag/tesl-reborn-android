@@ -3650,6 +3650,30 @@ function loadOverrides() {
   return o;
 }
 let currentSection = "startup";
+const listThreadIds = (() => {
+  try {
+    const libc = Process.getModuleByName("libc.so");
+    const opendir = new NativeFunction(libc.getExportByName("opendir"), "pointer", ["pointer"]);
+    const readdir = new NativeFunction(libc.getExportByName("readdir"), "pointer", ["pointer"]);
+    const closedir = new NativeFunction(libc.getExportByName("closedir"), "int", ["pointer"]);
+    const path = Memory.allocUtf8String("/proc/self/task");
+    return () => {
+      const ids = [], dir = opendir(path);
+      if (dir.isNull()) return ids;
+      try {
+        for (let entry = readdir(dir); !entry.isNull(); entry = readdir(dir)) {
+          const id = Number(entry.add(19).readCString());
+          if (id > 0) ids.push(id);
+        }
+      } finally {
+        closedir(dir);
+      }
+      return ids;
+    };
+  } catch (_) {
+    return () => [];
+  }
+})();
 const threadTicks = /* @__PURE__ */ new Map();
 let gpuModel = "";
 let waitThreads = null;
@@ -3698,7 +3722,7 @@ const cpuReport = (() => {
         if (!waitThreads) {
           waitThreads = [];
           let main = null, most = -1;
-          for (const thread of Process.enumerateThreads()) {
+          for (const thread of listThreadIds().map((id) => ({ id }))) {
             const name = read(`/proc/self/task/${thread.id}/comm`);
             if (name === "UnityMain") {
               const stat = read(`/proc/self/task/${thread.id}/stat`), close = stat.lastIndexOf(")");
@@ -3730,7 +3754,7 @@ const cpuReport = (() => {
       }
       try {
         const now = Date.now(), totals = /* @__PURE__ */ new Map();
-        for (const thread of Process.enumerateThreads()) {
+        for (const thread of listThreadIds().map((id) => ({ id }))) {
           const stat = read(`/proc/self/task/${thread.id}/stat`);
           const close = stat.lastIndexOf(")");
           if (close < 0) continue;
@@ -3770,6 +3794,7 @@ const hookTimer = (() => {
       entry.calls++;
       spent.set(name, entry);
       if (Date.now() < reportAt) return;
+      reportAt = Date.now() + 15e3;
       const seconds = (Date.now() - since) / 1e3;
       const top = Array.from(spent.entries()).sort((a, b) => b[1].us - a[1].us).slice(0, 8).map(([key, value]) => `${key} ${(value.us / seconds / 1e3).toFixed(1)} ms/s ${Math.round(value.calls / seconds)}/s`);
       let total = 0;
@@ -4866,7 +4891,7 @@ void onLeave (GumInvocationContext * ic) {
         const updateTarget = new NativeFunction(android.getExportByName("APerformanceHint_updateTargetWorkDuration"), "int", ["pointer", "int64"]);
         const report = android.getExportByName("APerformanceHint_reportActualWorkDuration");
         const tids = [];
-        for (const thread of Process.enumerateThreads()) {
+        for (const thread of listThreadIds().map((id) => ({ id }))) {
           let name = "";
           try {
             name = String(File.readAllText(`/proc/self/task/${thread.id}/comm`)).trim();
