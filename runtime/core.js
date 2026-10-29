@@ -3803,6 +3803,11 @@ const hookTimer = (() => {
       });
       log(`hook cost: ${(total / seconds / 1e3).toFixed(1)} ms/s; ${top.join("; ")}`);
       try {
+        const tasks = globalThis.__teslTaskTime?.();
+        if (tasks) log(`task time (15 s): ${tasks}`);
+      } catch (_) {
+      }
+      try {
         cpuReport?.();
       } catch (_) {
       }
@@ -4986,6 +4991,12 @@ void onLeave (GumInvocationContext * ic) {
   frameLeaves = frameBus;
   globalThis.__teslFrameBus = frameBus;
   const pending = [];
+  const taskTime = /* @__PURE__ */ new Map();
+  globalThis.__teslTaskTime = () => {
+    const top = Array.from(taskTime.entries()).sort((a, b) => b[1].ms - a[1].ms).slice(0, 6).map(([tag, e]) => `${tag} ${e.ms} ms/${e.runs}`);
+    taskTime.clear();
+    return top.join("; ");
+  };
   let nextDue = Infinity;
   function schedule(delayMs, fn, tag) {
     const at = delayMs >= 100 ? Math.ceil((Date.now() + delayMs) / 50) * 50 : Date.now() + delayMs;
@@ -5016,6 +5027,11 @@ void onLeave (GumInvocationContext * ic) {
             log(`scheduled task failed: ${e}`);
           }
           const took = Date.now() - started;
+          const tag = task.tag || "untagged";
+          const entry = taskTime.get(tag) || { ms: 0, runs: 0 };
+          entry.ms += took;
+          entry.runs++;
+          taskTime.set(tag, entry);
           const probe = globalThis.__teslRebornStallProbe;
           if (probe) probe.tasks++;
           if (took >= 100) log(`scheduled task slow ${took}ms (${task.tag || "untagged"})`);
@@ -8894,8 +8910,7 @@ void onLeave (GumInvocationContext * ic) {
         fastest = max.filter((f) => f === top).length;
       } catch (_) {
       }
-      if (fastest === 1) log(`engine: job wake count kept (${cores} cores, one fastest)`);
-      else if (bytes === "882240b980c200911f01186b0131981a") {
+      if (bytes === "882240b980c200911f01186b0131981a") {
         Memory.patchCode(at, 4, (code) => {
           code.writeU32(1384120392);
         });

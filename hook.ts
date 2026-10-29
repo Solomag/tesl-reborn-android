@@ -297,6 +297,7 @@ const hookTimer = (() => {
         .map(([key, value]) => `${key} ${(value.us / seconds / 1000).toFixed(1)} ms/s ${Math.round(value.calls / seconds)}/s`);
       let total = 0; spent.forEach(value => { total += value.us; });
       log(`hook cost: ${(total / seconds / 1000).toFixed(1)} ms/s; ${top.join("; ")}`);
+      try { const tasks = (globalThis as any).__teslTaskTime?.(); if (tasks) log(`task time (15 s): ${tasks}`); } catch (_) {}
       try { cpuReport?.(); } catch (_) {}
       spent.clear(); since = Date.now(); reportAt = since + 15000;
     };
@@ -1401,6 +1402,13 @@ void onLeave (GumInvocationContext * ic) {
   frameLeaves = frameBus; (globalThis as any).__teslFrameBus = frameBus;
   // END android-ui: frame-bus
   const pending: { at: number; fn: () => void; tag?: string }[] = [];
+  const taskTime = new Map<string, { ms: number; runs: number }>();
+  (globalThis as any).__teslTaskTime = () => {
+    const top = Array.from(taskTime.entries()).sort((a, b) => b[1].ms - a[1].ms).slice(0, 6)
+      .map(([tag, e]) => `${tag} ${e.ms} ms/${e.runs}`);
+    taskTime.clear();
+    return top.join("; ");
+  };
   // Recurring ticks keep the queue non-empty: every frame only the earliest
   // due time is compared, the queue is scanned when something is due.
   let nextDue = Infinity;
@@ -1434,6 +1442,12 @@ void onLeave (GumInvocationContext * ic) {
           // hitch the player feels. Name it instead of folding it into a
           // faceless stall report, and count it for the stall probe.
           const took = Date.now() - started;
+          // Pixel 8 Pro profile: 6% of the main thread was a FindObjectsOfType
+          // run from a scheduled task. Time per task tag, reported with the
+          // hook cost line.
+          const tag = task.tag || "untagged";
+          const entry = taskTime.get(tag) || { ms: 0, runs: 0 };
+          entry.ms += took; entry.runs++; taskTime.set(tag, entry);
           const probe = (globalThis as any).__teslRebornStallProbe;
           if (probe) probe.tasks++;
           if (took >= 100) log(`scheduled task slow ${took}ms (${task.tag || "untagged"})`);
@@ -4880,8 +4894,10 @@ void onLeave (GumInvocationContext * ic) {
         }
         const top = Math.max(...max); cores = max.filter(f => f > 0).length; fastest = max.filter(f => f === top).length;
       } catch (_) {}
-      if (fastest === 1) log(`engine: job wake count kept (${cores} cores, one fastest)`);
-      else if (bytes === "882240b980c200911f01186b0131981a") {
+      // Report from the Pixel 8 Pro's simpleperf: with the engine's own wake
+      // count Semaphore::Signal was 32% of Unity's main thread (eight
+      // workers). The cap applies on every phone again.
+      if (bytes === "882240b980c200911f01186b0131981a") {
         Memory.patchCode(at, 4, code => { code.writeU32(0x52800048); });
         log("engine: job groups wake at most 2 workers");
       } else log("engine: job wake count kept (another libunity build)");
