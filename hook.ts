@@ -4050,6 +4050,28 @@ function uiComponent(go, type) {
       if (line && line !== engineCutsReported) { engineCutsReported = line; log(`engine: ${line}`); }
     }
     schedule(5000, engineCuts, "engine cuts");
+    // simpleperf with Unity's symbols matched into this libunity: PhysX
+    // stepping was 12.5% of the main thread plus most of the 16% spent
+    // waiting for jobs, and 20% of the workers. The game drives no bodies
+    // (CardMomentum keeps its own velocity) and has no trigger or collision
+    // callbacks; it only raycasts, and raycasts need the colliders where the
+    // transforms are. Each step only syncs the transforms now. The offsets
+    // are for this build of libunity, checked by their first bytes.
+    try {
+      const unity = Process.getModuleByName("libunity.so");
+      const simulate = unity.base.add(0x28a6e0), sync = unity.base.add(0x28b1f4);
+      const same = (at, hex) => Array.from(new Uint8Array(at.readByteArray(16))).map(b => b.toString(16).padStart(2, "0")).join("") === hex;
+      if (same(simulate, "e923b96dfc6f01a9fa6702a9f85f03a9") && same(sync, "fa67bba9f85f01a9f65702a9f44f03a9")) {
+        const syncTransforms = new NativeFunction(sync, "void", ["pointer"]);
+        let steps = 0;
+        Interceptor.replace(simulate, new NativeCallback(function (manager) {
+          steps++;
+          syncTransforms(manager);
+        }, "void", ["pointer", "float"]));
+        log("engine: physics stepping replaced by transform sync");
+        schedule(60000, () => log(`engine: ${steps} physics steps synced only`), "engine physics report");
+      } else log("engine: physics stepping kept (another libunity build)");
+    } catch (error) { log(`engine: physics replace failed: ${error}`); }
     schedule(3000, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
