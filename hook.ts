@@ -4566,6 +4566,25 @@ void onLeave (GumInvocationContext * ic) {
       log(`render: lights ${count("UnityEngine.Light")} (shadowed ${count("UnityEngine.Light", l => enumVal(call(l, "get_shadows")) !== 0)}),` +
         ` particle systems ${count("UnityEngine.ParticleSystem")}, mesh renderers ${count("UnityEngine.MeshRenderer")},` +
         ` skinned ${count("UnityEngine.SkinnedMeshRenderer")}, projectors ${count("UnityEngine.Projector")}`);
+      // Cameras: Camera_Targeting draws layer 18 and Camera_Drag layer 19
+      // (set by prefabs, never by name in the code). Active renderers per
+      // camera layer, and how many of them were drawn last frame, say
+      // whether those two cameras cull and render an empty layer most of the
+      // time.
+      try {
+        const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls("UnityEngine.Renderer").type.object);
+        const layers = new Map();
+        for (let i = 0; i < all.length; i++) {
+          const renderer = all.get(i), go = call(renderer, "get_gameObject");
+          if (!Boolean(call(renderer, "get_enabled")) || !Boolean(call(go, "get_activeInHierarchy"))) continue;
+          const layer = Number(call(go, "get_layer"));
+          const entry = layers.get(layer) || { active: 0, visible: 0 };
+          entry.active++; if (Boolean(call(renderer, "get_isVisible"))) entry.visible++;
+          layers.set(layer, entry);
+        }
+        const row = Array.from(layers.entries()).sort((a, b) => a[0] - b[0]).map(([layer, e]) => `${layer}:${e.active}/${e.visible}`).join(" ");
+        log(`render: renderers by layer (active/drawn) ${row}; Targeting=18 Drag=19 Ortho=16 UI=5`);
+      } catch (error) { log(`render: layer count failed: ${error}`); }
       // Report 25: 294 particle systems in a battle. How many run and draw?
       log(`render: particles playing ${count("UnityEngine.ParticleSystem", p => Boolean(call(p, "get_isPlaying")))},` +
         ` alive ${count("UnityEngine.ParticleSystem", p => Number(call(p, "get_particleCount")) > 0)},` +
@@ -4917,7 +4936,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         state.low = 0; state.steady = 0;
         globalThis.__teslRateCap = state.cap;
         log(`graphics: ${mode}, frame rate ${state.cap || ceiling}`);
-        if (mode === "battle") schedule(8000, () => { try { renderSnapshot(); } catch (error) { log(`render: snapshot failed: ${error}`); } }, "graphics render snapshot");
+        if (mode === "battle") for (const at of [8000, 60000, 120000]) schedule(at, () => { try { if (inBattle()) renderSnapshot(); } catch (error) { log(`render: snapshot failed: ${error}`); } }, "graphics render snapshot");
         // Reports 85 and 101: games crashed 3-30 s after this attached its 175
         // listeners at a battle start, as attaching the camera probe froze one.
         // Its numbers are in; it runs only as an experiment now.

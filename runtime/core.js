@@ -8572,6 +8572,23 @@ void onLeave (GumInvocationContext * ic) {
         }
       };
       log(`render: lights ${count("UnityEngine.Light")} (shadowed ${count("UnityEngine.Light", (l) => enumVal(call(l, "get_shadows")) !== 0)}), particle systems ${count("UnityEngine.ParticleSystem")}, mesh renderers ${count("UnityEngine.MeshRenderer")}, skinned ${count("UnityEngine.SkinnedMeshRenderer")}, projectors ${count("UnityEngine.Projector")}`);
+      try {
+        const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls("UnityEngine.Renderer").type.object);
+        const layers = /* @__PURE__ */ new Map();
+        for (let i = 0; i < all.length; i++) {
+          const renderer = all.get(i), go = call(renderer, "get_gameObject");
+          if (!Boolean(call(renderer, "get_enabled")) || !Boolean(call(go, "get_activeInHierarchy"))) continue;
+          const layer = Number(call(go, "get_layer"));
+          const entry = layers.get(layer) || { active: 0, visible: 0 };
+          entry.active++;
+          if (Boolean(call(renderer, "get_isVisible"))) entry.visible++;
+          layers.set(layer, entry);
+        }
+        const row = Array.from(layers.entries()).sort((a, b) => a[0] - b[0]).map(([layer, e]) => `${layer}:${e.active}/${e.visible}`).join(" ");
+        log(`render: renderers by layer (active/drawn) ${row}; Targeting=18 Drag=19 Ortho=16 UI=5`);
+      } catch (error) {
+        log(`render: layer count failed: ${error}`);
+      }
       log(`render: particles playing ${count("UnityEngine.ParticleSystem", (p) => Boolean(call(p, "get_isPlaying")))}, alive ${count("UnityEngine.ParticleSystem", (p) => Number(call(p, "get_particleCount")) > 0)}, visible renderers ${count("UnityEngine.ParticleSystemRenderer", (r) => Boolean(call(r, "get_isVisible")))}`);
     }
     let profiled = false;
@@ -8960,9 +8977,9 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         state2.steady = 0;
         globalThis.__teslRateCap = state2.cap;
         log(`graphics: ${mode}, frame rate ${state2.cap || ceiling}`);
-        if (mode === "battle") schedule(8e3, () => {
+        if (mode === "battle") for (const at of [8e3, 6e4, 12e4]) schedule(at, () => {
           try {
-            renderSnapshot();
+            if (inBattle()) renderSnapshot();
           } catch (error) {
             log(`render: snapshot failed: ${error}`);
           }

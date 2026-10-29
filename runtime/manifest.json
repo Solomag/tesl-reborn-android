@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 179,
-  "version": "android-179-debug-window-blocks",
-  "bytes": 501669,
-  "sha256": "7447ab83e3bc636262db37c5c3513b772c2df49a19652010c101c8110ca52e06",
+  "revision": 180,
+  "version": "android-180-camera-layers",
+  "bytes": 502770,
+  "sha256": "d19f3398184f03c48f2169e3296796cdd59f1f53cd2a5d38a54c10c7162a4cb7",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "0761716dc75db931877d71434394bb845d9678dc032029e3fb073bc592c86873"
+  "sourceSha256": "1a7d5bc50432abbf47c8729e72a067777d6ef65a3521799a692c5a3be6de959f"
 }
