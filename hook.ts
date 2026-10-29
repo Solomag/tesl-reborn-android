@@ -4062,14 +4062,41 @@ function uiComponent(go, type) {
       const simulate = unity.base.add(0x28a6e0), sync = unity.base.add(0x28b1f4);
       const same = (at, hex) => Array.from(new Uint8Array(at.readByteArray(16))).map(b => b.toString(16).padStart(2, "0")).join("") === hex;
       if (same(simulate, "e923b96dfc6f01a9fa6702a9f85f03a9") && same(sync, "fa67bba9f85f01a9f65702a9f44f03a9")) {
-        const syncTransforms = new NativeFunction(sync, "void", ["pointer"]);
-        let steps = 0;
-        Interceptor.replace(simulate, new NativeCallback(function (manager) {
-          steps++;
-          syncTransforms(manager);
-        }, "void", ["pointer", "float"]));
-        log("engine: physics stepping replaced by transform sync");
-        schedule(60000, () => log(`engine: ${steps} physics steps synced only`), "engine physics report");
+        // Report 77: a JS replacement crashed the menu ("setjmp checksum
+        // mismatch") when an exception crossed it, and the menu has real
+        // bodies. In battle only, the first instruction becomes a tail
+        // branch to SyncTransforms (same first argument); no JS frame.
+        const original = simulate.readU32();
+        const branch = (0x14000000 | ((sync.sub(simulate).toInt32() >> 2) & 0x3ffffff)) >>> 0;
+        let skipping = false;
+        globalThis.__teslPhysicsInBattle = (battle) => {
+          if (battle === skipping) return;
+          Memory.patchCode(simulate, 4, code => { code.writeU32(battle ? branch : original); });
+          skipping = battle;
+          log(`engine: physics ${battle ? "syncs transforms only (battle)" : "steps normally"}`);
+        };
+        // The battle is a live BoardInputController: on from its Awake, off
+        // as soon as Unity has destroyed it (its native pointer is cleared),
+        // checked twice a second so the rewards screen gets real physics.
+        const board = img.classes.find(c => c.name === "BoardInputController");
+        if (board) {
+          let live = null, timer = null;
+          hookAttach(board.method("Awake", 0).virtualAddress, { onEnter(args) {
+            try {
+              if (live) live.free();
+              live = new Il2Cpp.Object(args[0]).ref(false);
+              globalThis.__teslPhysicsInBattle(true);
+              if (!timer) timer = setInterval(() => {
+                let gone = true;
+                try { gone = !live || live.target.field("m_CachedPtr").value.isNull(); } catch (_) {}
+                if (!gone) return;
+                clearInterval(timer); timer = null;
+                if (live) { live.free(); live = null; }
+                globalThis.__teslPhysicsInBattle(false);
+              }, 500);
+            } catch (error) { log(`engine: battle physics switch failed: ${error}`); }
+          } });
+        }
       } else log("engine: physics stepping kept (another libunity build)");
     } catch (error) { log(`engine: physics replace failed: ${error}`); }
     schedule(3000, camerasWithoutMsaa, "graphics camera msaa");
