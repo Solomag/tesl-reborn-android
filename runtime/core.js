@@ -7812,11 +7812,20 @@ Il2Cpp.perform(() => {
       for (const [type, name] of [
         ["UnityEngine.UI.CanvasUpdateRegistry", "PerformUpdate"],
         ["TMPro.TMP_UpdateManager", "DoRebuilds"],
-        ["UnityEngine.Canvas", "SendWillRenderCanvases"]
+        ["UnityEngine.Canvas", "SendWillRenderCanvases"],
+        ["UnityEngine.UI.Graphic", "SetVerticesDirty"],
+        ["UnityEngine.UI.Graphic", "SetMaterialDirty"],
+        ["UnityEngine.UI.Graphic", "SetLayoutDirty"],
+        ["TMPro.TMP_Text", "SetVerticesDirty"],
+        ["TMPro.TextMeshPro", "SetVerticesDirty"],
+        ["TMPro.TextMeshProUGUI", "SetVerticesDirty"],
+        ["TMPro.TextMeshPro", "Rebuild"],
+        ["TMPro.TextMeshProUGUI", "Rebuild"],
+        ["UnityEngine.UI.Graphic", "Rebuild"]
       ]) {
         try {
           const k = ucls(type);
-          add(k.tryMethod(name, 0) || k.methods.find((m) => m.name === name), `${k.name}.${name}`);
+          add(k.methods.find((m) => m.name === name && m.parameterCount <= 1), `${k.name}.${name}`);
         } catch (_) {
         }
       }
@@ -7867,9 +7876,55 @@ Il2Cpp.perform(() => {
       }, "main thread profile");
     }
     let profileKeep = null;
+    const setFixedStep = icall(["UnityEngine.Time::set_fixedDeltaTime(System.Single)", "UnityEngine.Time::set_fixedDeltaTime"], "void", ["float"]);
+    const getFixedStep = icall(["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"], "float", []);
+    const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
+    const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
+    let animatorType = null, engineCutsReported = "";
+    function engineCuts() {
+      const notes = [];
+      try {
+        if (setFixedStep && getFixedStep) {
+          const step = getFixedStep();
+          if (step < 1 / 30 - 5e-4) {
+            setFixedStep(1 / 30);
+            notes.push(`physics step ${(step * 1e3).toFixed(1)} -> 33.3 ms`);
+          }
+        }
+      } catch (error) {
+        notes.push(`physics step failed: ${error}`);
+      }
+      try {
+        if (animatorMode && setAnimatorMode) {
+          if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
+          const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);
+          let changed = 0;
+          for (let i = 0; i < all.length; i++) {
+            const item = all.get(i);
+            if (animatorMode(item.handle) === 0) {
+              setAnimatorMode(item.handle, 1);
+              changed++;
+            }
+          }
+          if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
+        }
+      } catch (error) {
+        notes.push(`animator culling failed: ${error}`);
+      }
+      const line = notes.join(", ");
+      if (line && line !== engineCutsReported) {
+        engineCutsReported = line;
+        log(`engine: ${line}`);
+      }
+    }
+    schedule(5e3, engineCuts, "engine cuts");
     schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
+      try {
+        engineCuts();
+      } catch (_) {
+      }
       if (loading) return;
       mainThreadReport();
       let next = mode;

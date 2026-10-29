@@ -3877,9 +3877,14 @@ function uiComponent(go, type) {
         } catch (_) { /* A class whose methods cannot be listed is left out. */ }
       }
       at("engine methods");
+      // Report 29: CardVisualElementData.Update ran 8745 times a second. How
+      // often is UI marked dirty (each one costs a native mesh/canvas rebuild)?
       for (const [type, name] of [["UnityEngine.UI.CanvasUpdateRegistry", "PerformUpdate"], ["TMPro.TMP_UpdateManager", "DoRebuilds"],
-          ["UnityEngine.Canvas", "SendWillRenderCanvases"]]) {
-        try { const k = ucls(type); add(k.tryMethod(name, 0) || k.methods.find(m => m.name === name), `${k.name}.${name}`); } catch (_) {}
+          ["UnityEngine.Canvas", "SendWillRenderCanvases"], ["UnityEngine.UI.Graphic", "SetVerticesDirty"],
+          ["UnityEngine.UI.Graphic", "SetMaterialDirty"], ["UnityEngine.UI.Graphic", "SetLayoutDirty"],
+          ["TMPro.TMP_Text", "SetVerticesDirty"], ["TMPro.TextMeshPro", "SetVerticesDirty"], ["TMPro.TextMeshProUGUI", "SetVerticesDirty"],
+          ["TMPro.TextMeshPro", "Rebuild"], ["TMPro.TextMeshProUGUI", "Rebuild"], ["UnityEngine.UI.Graphic", "Rebuild"]]) {
+        try { const k = ucls(type); add(k.methods.find(m => m.name === name && m.parameterCount <= 1), `${k.name}.${name}`); } catch (_) {}
       }
       at("native timer");
       const count = targets.length;
@@ -3919,9 +3924,47 @@ function uiComponent(go, type) {
       }, "main thread profile");
     }
     let profileKeep = null;
+    // Report 29: the game's own scripts were ~4% of the main thread; the
+    // rest is engine work the scripts ask for. Two cuts that change nothing
+    // on screen: physics at 30 steps a second instead of 50 (the battle has
+    // no physics play; Card3D.FixedUpdate only tracks a drag speed and
+    // GameNetworkManager.FixedUpdate pumps the network), and animators that
+    // stop evaluating while none of their renderers is visible.
+    const setFixedStep = icall(["UnityEngine.Time::set_fixedDeltaTime(System.Single)", "UnityEngine.Time::set_fixedDeltaTime"], "void", ["float"]);
+    const getFixedStep = icall(["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"], "float", []);
+    const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
+    const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
+    let animatorType = null, engineCutsReported = "";
+    function engineCuts() {
+      const notes = [];
+      try {
+        if (setFixedStep && getFixedStep) {
+          const step = getFixedStep();
+          if (step < 1 / 30 - 0.0005) { setFixedStep(1 / 30); notes.push(`physics step ${(step * 1000).toFixed(1)} -> 33.3 ms`); }
+        }
+      } catch (error) { notes.push(`physics step failed: ${error}`); }
+      try {
+        if (animatorMode && setAnimatorMode) {
+          if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
+          const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);
+          let changed = 0;
+          for (let i = 0; i < all.length; i++) {
+            const item = all.get(i);
+            // 0 AlwaysAnimate -> 1 CullUpdateTransforms: state machines and
+            // events keep running, only off-screen bone/transform writes stop.
+            if (animatorMode(item.handle) === 0) { setAnimatorMode(item.handle, 1); changed++; }
+          }
+          if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
+        }
+      } catch (error) { notes.push(`animator culling failed: ${error}`); }
+      const line = notes.join(", ");
+      if (line && line !== engineCutsReported) { engineCutsReported = line; log(`engine: ${line}`); }
+    }
+    schedule(5000, engineCuts, "engine cuts");
     schedule(3000, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
+      try { engineCuts(); } catch (_) {}
       if (loading) return;
       mainThreadReport();
       let next = mode;
