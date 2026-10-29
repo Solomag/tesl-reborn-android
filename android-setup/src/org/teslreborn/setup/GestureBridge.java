@@ -62,6 +62,7 @@ public final class GestureBridge {
         status(activity, "restart-error: " + error.getClass().getSimpleName());
       }
     }
+    fillDisplayCutout(activity);
     requestRefreshRate(activity);
     View view = activity.getWindow().getDecorView();
     view.post(
@@ -99,6 +100,25 @@ public final class GestureBridge {
             status(activity, "marker-error: " + error.getClass().getSimpleName());
           }
         });
+  }
+
+  /**
+   * A Pixel 6 Pro in landscape showed a black strip on the left: the window
+   * kept out of the camera cutout (2975 of 3120 px). The board art reaches the
+   * screen edges, so the game is drawn under the cutout as well.
+   */
+  static void fillDisplayCutout(Activity activity) {
+    if (android.os.Build.VERSION.SDK_INT < 28) return;
+    try {
+      android.view.WindowManager.LayoutParams params = activity.getWindow().getAttributes();
+      if (params.layoutInDisplayCutoutMode
+          == android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES) return;
+      params.layoutInDisplayCutoutMode =
+          android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+      activity.getWindow().setAttributes(params);
+    } catch (Exception ignored) {
+      // The window keeps Android's default.
+    }
   }
 
   /**
