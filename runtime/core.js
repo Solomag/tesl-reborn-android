@@ -8094,6 +8094,17 @@ void onLeave (GumInvocationContext * ic) {
   });
   section("graphics: frame rate and quality", () => {
     const file = `${persistentPath()}/tesl-reborn-graphics.json`;
+    try {
+      const saved = JSON.parse(readTextFile(file) || "{}") || {};
+      if (saved.frameRateReset !== 173) {
+        const had = saved.frameRate;
+        delete saved.frameRate;
+        saved.frameRateReset = 173;
+        writeTextFile(file, JSON.stringify(saved));
+        if (had !== void 0) log(`graphics: chosen frame rate ${had} reset to the default (once, patch 173)`);
+      }
+    } catch (_) {
+    }
     const rate = graphicsFrameRate(readTextFile(file));
     globalThis.__teslTargetRate = rate || 60;
     let chosenQuality = 3;
@@ -8210,7 +8221,7 @@ void onLeave (GumInvocationContext * ic) {
       log(`graphics: render scale ${auto.renderScale || 100}% -> ${renderScale}%, learned frame rates reset`);
       auto = { msaaOff: auto.msaaOff };
     }
-    const learning = 131;
+    const learning = 173;
     if (auto.at && auto.learning !== learning) {
       log(`graphics: learned frame rates from before patch ${learning} reset`);
       auto = { msaaOff: auto.msaaOff, relearn: true };

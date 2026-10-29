@@ -4157,6 +4157,18 @@ void onLeave (GumInvocationContext * ic) {
   });
   section("graphics: frame rate and quality", () => {
     const file = `${persistentPath()}/tesl-reborn-graphics.json`;
+    // Report 110: the Pixel 8 Pro had 120 chosen (the display ran at 120 Hz)
+    // and a battle cap of 30 learned on the old, slow patches. Once per phone
+    // the chosen frame rate goes back to the default; it can be set again.
+    try {
+      const saved = JSON.parse(readTextFile(file) || "{}") || {};
+      if (saved.frameRateReset !== 173) {
+        const had = saved.frameRate;
+        delete saved.frameRate; saved.frameRateReset = 173;
+        writeTextFile(file, JSON.stringify(saved));
+        if (had !== undefined) log(`graphics: chosen frame rate ${had} reset to the default (once, patch 173)`);
+      }
+    } catch (_) {}
     const rate = graphicsFrameRate(readTextFile(file));
     globalThis.__teslTargetRate = rate || 60;
     // Without an expert choice: the highest quality, with MSAA off (below).
@@ -4270,7 +4282,9 @@ void onLeave (GumInvocationContext * ic) {
     }
     // Report 74: rates learned before patch 131 include our own object scan,
     // which grew through each battle; they are learned again once.
-    const learning = 131;
+    // 173: learned again once more; caps learned before the safe calls, the
+    // frame bus and MSAA off were too low (report 110: 30 on a Pixel 8 Pro).
+    const learning = 173;
     if (auto.at && auto.learning !== learning) {
       log(`graphics: learned frame rates from before patch ${learning} reset`);
       auto = { msaaOff: auto.msaaOff, relearn: true };
