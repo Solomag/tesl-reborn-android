@@ -8286,10 +8286,12 @@ void onLeave (GumInvocationContext * ic) {
               if (live) live.free();
               live = new Il2Cpp.Object(args[0]).ref(false);
               globalThis.__teslInBattle = true;
-              try {
-                globalThis.__teslCameraProbe?.();
-              } catch (_) {
-              }
+              setTimeout(() => {
+                try {
+                  if (globalThis.__teslInBattle) globalThis.__teslCameraProbe?.();
+                } catch (_) {
+                }
+              }, 5e3);
               globalThis.__teslPhysicsInBattle(true);
               if (!timer) timer = setInterval(() => {
                 let gone = true;
