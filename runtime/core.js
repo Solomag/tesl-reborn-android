@@ -7575,6 +7575,11 @@ Il2Cpp.perform(() => {
       auto = JSON.parse(readTextFile(autoFile) || "{}") || {};
     } catch (_) {
     }
+    const renderScale = graphicsRenderScale(readTextFile(file)) || 100;
+    if (auto.at && (auto.renderScale || 100) !== renderScale) {
+      log(`graphics: render scale ${auto.renderScale || 100}% -> ${renderScale}%, learned frame rates reset`);
+      auto = { msaaOff: auto.msaaOff };
+    }
     const learnedRate = (value) => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     const modes = {
       menu: { cap: learnedRate(auto.menu?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
@@ -7592,6 +7597,7 @@ Il2Cpp.perform(() => {
           menu: { rate: modes.menu.cap || ceiling },
           battle: { rate: modes.battle.cap || ceiling },
           msaaOff,
+          renderScale,
           at: (/* @__PURE__ */ new Date()).toISOString()
         }));
       } catch (_) {
@@ -7802,7 +7808,7 @@ Il2Cpp.perform(() => {
         state.steady = 0;
       } else {
         state.low = 0;
-        state.steady = measured >= effective * 0.85 ? state.steady + 1 : 0;
+        state.steady = measured >= effective * 0.8 ? state.steady + 1 : Math.max(0, state.steady - 2);
       }
       if (state.low >= 2) {
         state.low = 0;
@@ -7825,13 +7831,13 @@ Il2Cpp.perform(() => {
         saveAuto();
         log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
         applyRate("auto down");
-      } else if (state.steady >= 20 && state.cap) {
+      } else if (state.steady >= 12 && state.cap) {
         state.steady = 0;
         const higher = ladder.filter((step) => step > effective && step <= ceiling).pop();
         if (!higher) return;
         state.cap = globalThis.__teslRateCap = higher >= ceiling ? 0 : higher;
         saveAuto();
-        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 5 min)`);
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 3 min)`);
         applyRate(state.cap ? "auto up" : "cap lifted");
       }
     };
@@ -7852,8 +7858,8 @@ Il2Cpp.perform(() => {
       let next = 0;
       Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
         onEnter() {
-          const limit = currentRate();
-          if (!limit || limit >= 60) {
+          const limit = currentRate() || 60;
+          if (limit >= 120) {
             next = 0;
             return;
           }

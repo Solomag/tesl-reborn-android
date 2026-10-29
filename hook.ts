@@ -3682,7 +3682,7 @@ function uiComponent(go, type) {
     // and swings 60 -> 22; a CPH2723 set to 90 never passed 36 and then sat
     // at 25. Every 15 s the measured rate is compared with the rate in force:
     // 30 s below 3/4 of it (or of the best reached) turns MSAA off first,
-    // then steps the rate down. 5 minutes at the rate steps it back up, to
+    // then steps the rate down. 3 minutes near the rate steps it back up, to
     // the chosen one at most. What was learned is kept per phone, so the next
     // start begins at a rate the phone holds instead of overheating first.
     // Battle and menu are learned apart (the drops are in battle): a battle
@@ -3691,6 +3691,13 @@ function uiComponent(go, type) {
     const ladder = [120, 90, 60, 40, 30], ceiling = rate || 60;
     let auto: any = {};
     try { auto = JSON.parse(readTextFile(autoFile) || "{}") || {}; } catch (_) {}
+    // Report 27: learned at full resolution, the battle stayed at 30 after
+    // the render scale went to 75%. Another scale starts learning again.
+    const renderScale = graphicsRenderScale(readTextFile(file)) || 100;
+    if (auto.at && (auto.renderScale || 100) !== renderScale) {
+      log(`graphics: render scale ${auto.renderScale || 100}% -> ${renderScale}%, learned frame rates reset`);
+      auto = { msaaOff: auto.msaaOff };
+    }
     const learnedRate = value => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     // Patch 117 kept one rate for both.
     const modes = {
@@ -3707,7 +3714,7 @@ function uiComponent(go, type) {
     const saveAuto = () => {
       try {
         writeTextFile(autoFile, JSON.stringify({ menu: { rate: modes.menu.cap || ceiling }, battle: { rate: modes.battle.cap || ceiling },
-          msaaOff, at: new Date().toISOString() }));
+          msaaOff, renderScale, at: new Date().toISOString() }));
       } catch (_) {}
     };
     function antiAliasingOff() {
@@ -3852,7 +3859,9 @@ function uiComponent(go, type) {
       state.best = Math.max(state.best, Math.min(measured, effective));
       const reference = Math.min(effective, state.best);
       if (measured < reference * 0.75) { state.low++; state.steady = 0; }
-      else { state.low = 0; state.steady = measured >= effective * 0.85 ? state.steady + 1 : 0; }
+      // Report 27: 24-28 at a cap of 30 reset the count on every dip and the
+      // rate never went back up; a dip now only takes two samples off.
+      else { state.low = 0; state.steady = measured >= effective * 0.8 ? state.steady + 1 : Math.max(0, state.steady - 2); }
       if (state.low >= 2) {
         state.low = 0;
         if (!msaaOff) {
@@ -3870,12 +3879,12 @@ function uiComponent(go, type) {
         state.cap = globalThis.__teslRateCap = lower; saveAuto();
         log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
         applyRate("auto down");
-      } else if (state.steady >= 20 && state.cap) {
+      } else if (state.steady >= 12 && state.cap) {
         state.steady = 0;
         const higher = ladder.filter(step => step > effective && step <= ceiling).pop();
         if (!higher) return;
         state.cap = globalThis.__teslRateCap = higher >= ceiling ? 0 : higher; saveAuto();
-        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 5 min)`);
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 3 min)`);
         applyRate(state.cap ? "auto up" : "cap lifted");
       }
     };
@@ -3903,8 +3912,10 @@ function uiComponent(go, type) {
       // as ~100 ms/s of hook cost (report 17).
       Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
         onEnter() {
-          const limit = currentRate();
-          if (!limit || limit >= 60) { next = 0; return; }
+          // Report 27: after a new surface Unity ignored the menu's 60 on a
+          // 120 Hz screen (96-111 FPS), so 60 is paced here as well.
+          const limit = currentRate() || 60;
+          if (limit >= 120) { next = 0; return; }
           const frame = 1000 / limit, now = Date.now();
           if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1000));
           next = Math.max(next + frame, Date.now());
