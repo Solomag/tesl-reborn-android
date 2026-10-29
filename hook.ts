@@ -4080,8 +4080,12 @@ function uiComponent(go, type) {
         // The battle is a live BoardInputController: on from its Awake, off
         // as soon as Unity has destroyed it (its native pointer is cleared),
         // checked twice a second so the rewards screen gets real physics.
+        // Report 80: a battle hung on patch 136 right after a game error,
+        // possibly while taking a prophecy card; kinematic colliders only
+        // move to their targets when PhysX steps. Off until that is ruled out.
+        const physicsSkip = false;
         const board = img.classes.find(c => c.name === "BoardInputController");
-        if (board) {
+        if (physicsSkip && board) {
           let live = null, timer = null;
           hookAttach(board.method("Awake", 0).virtualAddress, { onEnter(args) {
             try {

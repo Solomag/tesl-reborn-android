@@ -8057,8 +8057,9 @@ Il2Cpp.perform(() => {
           skipping = battle;
           log(`engine: physics ${battle ? "syncs transforms only (battle)" : "steps normally"}`);
         };
+        const physicsSkip = false;
         const board = img.classes.find((c) => c.name === "BoardInputController");
-        if (board) {
+        if (physicsSkip && board) {
           let live = null, timer = null;
           hookAttach(board.method("Awake", 0).virtualAddress, { onEnter(args) {
             try {
