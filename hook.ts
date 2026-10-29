@@ -1328,6 +1328,31 @@ void onLeave (GumInvocationContext * ic) {
 `, { clock_gettime: libc.getExportByName("clock_gettime"), usleep: libc.getExportByName("usleep"), wake, touch_count: touchCount.isNull() ? noTouch : touchCount, state });
       Interceptor.attach(update, cm as any);
       log("frame bus: native");
+      // Pixel 8 Pro off-CPU profile: Unity's main thread left its core
+      // ~30,000 times a second, mostly inside Semaphore::Signal as it woke a
+      // job worker; the woken worker took the core and the main thread waited
+      // (12 us median, half of all wall time). Workers at a lower priority
+      // (nice +10) wait for a free core instead. Phones with one fastest
+      // core first, where this was measured.
+      try {
+        let oneFastest = false;
+        const max = [];
+        for (let cpu = 0; cpu < 16; cpu++) {
+          try { max.push(Number(String((File as any).readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0); } catch (_) {}
+        }
+        const top = Math.max(...max); oneFastest = top > 0 && max.filter(f => f === top).length === 1;
+        if (oneFastest || experiment("workerNice")) {
+          const setpriority = new NativeFunction(libc.getExportByName("setpriority"), "int", ["int", "int", "int"]);
+          let changed = 0, failed = 0;
+          for (const id of listThreadIds()) {
+            let name = "";
+            try { name = String((File as any).readAllText(`/proc/self/task/${id}/comm`)).trim(); } catch (_) {}
+            if (!/^Worker Thread/.test(name)) continue;
+            if (setpriority(0, id, 10) === 0) changed++; else failed++;
+          }
+          log(`frame bus: ${changed} job workers at nice 10${failed ? `, ${failed} refused` : ""}`);
+        }
+      } catch (error) { log(`frame bus: worker priority unchanged: ${error}`); }
       // Reports 110-111 (Pixel 8 Pro): in battle the GPU sat at 150-302 of
       // ~890 MHz, the mid cores at 0.40 GHz and every game thread under half
       // busy, at 17-28 FPS. Pixels raise clocks for games that send

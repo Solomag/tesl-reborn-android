@@ -4890,6 +4890,35 @@ void onLeave (GumInvocationContext * ic) {
       Interceptor.attach(update, cm);
       log("frame bus: native");
       try {
+        let oneFastest = false;
+        const max = [];
+        for (let cpu = 0; cpu < 16; cpu++) {
+          try {
+            max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
+          } catch (_) {
+          }
+        }
+        const top = Math.max(...max);
+        oneFastest = top > 0 && max.filter((f) => f === top).length === 1;
+        if (oneFastest || experiment("workerNice")) {
+          const setpriority = new NativeFunction(libc.getExportByName("setpriority"), "int", ["int", "int", "int"]);
+          let changed = 0, failed = 0;
+          for (const id of listThreadIds()) {
+            let name = "";
+            try {
+              name = String(File.readAllText(`/proc/self/task/${id}/comm`)).trim();
+            } catch (_) {
+            }
+            if (!/^Worker Thread/.test(name)) continue;
+            if (setpriority(0, id, 10) === 0) changed++;
+            else failed++;
+          }
+          log(`frame bus: ${changed} job workers at nice 10${failed ? `, ${failed} refused` : ""}`);
+        }
+      } catch (error) {
+        log(`frame bus: worker priority unchanged: ${error}`);
+      }
+      try {
         const android = Process.getModuleByName("libandroid.so");
         const getManager = new NativeFunction(android.getExportByName("APerformanceHint_getManager"), "pointer", []);
         const createSession = new NativeFunction(android.getExportByName("APerformanceHint_createSession"), "pointer", ["pointer", "pointer", "size_t", "int64"]);
