@@ -3605,6 +3605,52 @@ function uiComponent(go, type) {
     }catch(error){log(`settings button trace: ${error}`);}
   }
   const gameDataLabels = {en_us:"Game data",de_de:"Spieldaten",es_es:"Datos del juego",es_mx:"Datos del juego",fr_fr:"Données du jeu",it_it:"Dati di gioco",pl_pl:"Dane gry",pt_br:"Dados do jogo",ru_ru:"Данные игры",tr_tr:"Oyun verileri"};
+  // LocalizationManager.GetText answers the Video tab's key with "Game data",
+  // natively: it runs for every localized text. The key (UTF-16) and the
+  // managed answer are set from JS once the key is known (saved per phone).
+  section("settings: Video tab text", () => {
+    const getText = cls(img, "LocalizationManager").method("GetText", 1);
+    const state = Memory.alloc(8 + 8 + 2 * 64); // answer ptr @0, key length @8, key chars @16
+    const cm = new CModule(`
+#include <gum/guminterceptor.h>
+typedef unsigned short u16;
+typedef struct { void * answer; int length; int pad; u16 chars[64]; } State;
+extern State state;
+void onEnter (GumInvocationContext * ic) {
+  void * key = gum_invocation_context_get_nth_argument (ic, 1);
+  int match = 0;
+  if (key && state.answer && state.length > 0 && *(int *) ((char *) key + 0x10) == state.length) {
+    u16 * chars = (u16 *) ((char *) key + 0x14);
+    match = 1;
+    for (int i = 0; i < state.length; i++) if (chars[i] != state.chars[i]) { match = 0; break; }
+  }
+  GUM_IC_GET_INVOCATION_DATA (ic, int)[0] = match;
+}
+void onLeave (GumInvocationContext * ic) {
+  if (GUM_IC_GET_INVOCATION_DATA (ic, int)[0]) gum_invocation_context_replace_return_value (ic, state.answer);
+}
+`, { state });
+    let answer = null;
+    const file = `${persistentPath()}/tesl-reborn-ui-keys.json`;
+    const use = (key) => {
+      if (!key || key.length > 64) return;
+      if (!answer) answer = Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data").ref(true);
+      state.writePointer(answer.target.handle); state.add(8).writeS32(key.length);
+      for (let i = 0; i < key.length; i++) state.add(16 + i * 2).writeU16(key.charCodeAt(i));
+    };
+    let known = "";
+    try { known = JSON.parse(readTextFile(file) || "{}")?.videoTab || ""; } catch (_) {}
+    if (known) use(known);
+    globalThis.__teslVideoTabKey = (key) => {
+      if (key === known) return;
+      known = key; use(key);
+      try { writeTextFile(file, JSON.stringify({ videoTab: key })); } catch (_) {}
+      log(`settings data: Video tab key ${key} answered with Game data`);
+    };
+    Interceptor.attach(getText.virtualAddress, cm as any);
+    (globalThis as any).__teslVideoTabKeep = cm;
+    log(`settings data: Video tab text override ${known ? "for " + known : "waits for the key"}`);
+  });
   // The quality choice was removed after report 90, but hiding the Video tab
   // (153) lost the separate Game data button after battles (reports 94-97).
   // The Video tab itself becomes Game data: the window keeps its own four-tab
@@ -3622,13 +3668,16 @@ function uiComponent(go, type) {
         for (let i = 0; i < labels.length; i++) {
           const label = labels.get(i);
           // Report 102: the label read "Video" until another tab was picked;
-          // the game's localization component wrote it back. It is switched
-          // off on this label.
+          // its localization component sets it from a key. That key is
+          // learned here and answered with "Game data" by LocalizationManager.
+          // GetText itself (below), so later windows draw it from the start.
           try {
             const parts = call(label, "get_gameObject").method("GetComponents").overload("System.Type").invoke(ucls("UnityEngine.Behaviour").type.object);
             for (let j = 0; j < parts.length; j++) {
               const part = parts.get(j);
-              if (/locali[sz]/i.test(String(part.class?.name || "")) && Boolean(call(part, "get_enabled"))) call(part, "set_enabled", false);
+              if (!/^Localize/.test(String(part.class?.name || ""))) continue;
+              const key = String(part.field("_key").value?.content || "");
+              if (key) globalThis.__teslVideoTabKey?.(key);
             }
           } catch (_) {}
           call(label, "set_text", text);
