@@ -6960,8 +6960,18 @@ void onLeave (GumInvocationContext * ic) {
   }
   function styleLikeGameInput(ours, label, hint) {
     const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.InputField").type.object);
+    const order = [];
     for (let i = 0; i < values.length; i++) {
       const game = values.get(i);
+      let name = "";
+      try {
+        name = String(call(call(game, "get_gameObject"), "get_name")?.content || "");
+      } catch (_) {
+      }
+      order.push({ game, rank: /DeckName/i.test(name) ? 0 : /^Input/i.test(name) ? 1 : 2 });
+    }
+    order.sort((a, b) => a.rank - b.rank);
+    for (const { game } of order) {
       if (!unityAlive(game) || game.handle.equals(ours.handle)) continue;
       const text = call(game, "get_textComponent");
       if (!unityAlive(text) || isNull(call(text, "get_font"))) continue;
