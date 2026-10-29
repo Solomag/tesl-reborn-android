@@ -147,6 +147,7 @@ let currentSection = "startup";
 // say where the process may run, which core this thread is on, the core clocks
 // and the hottest sensors, to tell small cores, low clocks and heat apart.
 const threadTicks = new Map<number, number>();
+let gpuModel = "";
 let threadTicksAt = 0;
 const cpuReport = (() => {
   try {
@@ -169,6 +170,22 @@ const cpuReport = (() => {
       heat.sort((a, b) => b.c - a.c);
       log(`cpu: allowed ${allowed}, this thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; ` +
         `heat ${heat.slice(0, 3).map(h => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
+      // Reports 106-110: on the Pixel 8 Pro the main thread waits in battle
+      // (40% busy at 20-30 FPS); is the GPU the limit? The kernel's GPU
+      // load and clock, where the app may read them (Mali, Adreno).
+      try {
+        const parts = [];
+        const mali = "/sys/class/misc/mali0/device/";
+        const utilization = read(mali + "utilization"), cur = read(mali + "cur_freq"), max = read(mali + "max_freq");
+        if (utilization) parts.push(`load ${utilization}%`);
+        if (cur) parts.push(`clock ${Math.round(Number(cur) / 1000)}/${Math.round(Number(max) / 1000) || "?"} MHz`);
+        const adreno = read("/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage") || read("/sys/kernel/gpu/gpu_busy");
+        if (adreno) parts.push(`load ${adreno.replace(/\s+/g, " ")}`);
+        const adrenoClock = read("/sys/class/kgsl/kgsl-3d0/gpuclk") || read("/sys/kernel/gpu/gpu_clock");
+        if (adrenoClock) parts.push(`clock ${Math.round(Number(adrenoClock) / (Number(adrenoClock) > 1e6 ? 1e6 : 1))} MHz`);
+        if (!gpuModel) gpuModel = read(mali + "gpuinfo") || read("/sys/class/kgsl/kgsl-3d0/gpu_model") || "-";
+        log(`gpu: ${parts.join(", ") || "load and clock unreadable"}${gpuModel !== "-" ? `; ${gpuModel}` : ""}`);
+      } catch (_) {}
       // Report 31 (Pixel 8 Pro): 10-14 FPS with the main thread on a fast
       // core and the others idle. How busy each game thread is (CPU time
       // since the last line, % of one core) says whether a frame waits on the

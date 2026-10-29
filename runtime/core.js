@@ -3651,6 +3651,7 @@ function loadOverrides() {
 }
 let currentSection = "startup";
 const threadTicks = /* @__PURE__ */ new Map();
+let gpuModel = "";
 let threadTicksAt = 0;
 const cpuReport = (() => {
   try {
@@ -3678,6 +3679,20 @@ const cpuReport = (() => {
       }
       heat.sort((a, b) => b.c - a.c);
       log(`cpu: allowed ${allowed}, this thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; heat ${heat.slice(0, 3).map((h) => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
+      try {
+        const parts = [];
+        const mali = "/sys/class/misc/mali0/device/";
+        const utilization = read(mali + "utilization"), cur = read(mali + "cur_freq"), max = read(mali + "max_freq");
+        if (utilization) parts.push(`load ${utilization}%`);
+        if (cur) parts.push(`clock ${Math.round(Number(cur) / 1e3)}/${Math.round(Number(max) / 1e3) || "?"} MHz`);
+        const adreno = read("/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage") || read("/sys/kernel/gpu/gpu_busy");
+        if (adreno) parts.push(`load ${adreno.replace(/\s+/g, " ")}`);
+        const adrenoClock = read("/sys/class/kgsl/kgsl-3d0/gpuclk") || read("/sys/kernel/gpu/gpu_clock");
+        if (adrenoClock) parts.push(`clock ${Math.round(Number(adrenoClock) / (Number(adrenoClock) > 1e6 ? 1e6 : 1))} MHz`);
+        if (!gpuModel) gpuModel = read(mali + "gpuinfo") || read("/sys/class/kgsl/kgsl-3d0/gpu_model") || "-";
+        log(`gpu: ${parts.join(", ") || "load and clock unreadable"}${gpuModel !== "-" ? `; ${gpuModel}` : ""}`);
+      } catch (_) {
+      }
       try {
         const now = Date.now(), totals = /* @__PURE__ */ new Map();
         for (const thread of Process.enumerateThreads()) {
