@@ -3617,6 +3617,9 @@ function uiComponent(go, type) {
     const at = resolve(Memory.allocUtf8String(name));
     if (at.isNull()) { log("graphics: render resolution unavailable (no engine SetResolution)"); return; }
     const state = { width: 0, height: 0 };
+    // Settings asks for the full screen on every open (SettingsController);
+    // already drawn at the scaled size, that request changes nothing.
+    globalThis.__teslScaledSize = (width, height) => scaledResolution(state, width, height, percent);
     hookAttach(at, {
       onEnter(args) {
         const width = args[0].toInt32(), height = args[1].toInt32();
@@ -3624,6 +3627,8 @@ function uiComponent(go, type) {
         if (size.width === width) return;
         args[0] = ptr(size.width); args[1] = ptr(size.height);
         log(`graphics: render resolution ${width}x${height} -> ${size.width}x${size.height} (${percent}%)`);
+        // Report 25: a new surface comes back with vSync on (menu at 97 FPS).
+        schedule(300, () => globalThis.__teslApplyRate?.("after resolution"), "graphics rate after resolution");
       }
     });
     // The game set its resolution before the hook ran: apply the scale now.
@@ -3665,7 +3670,7 @@ function uiComponent(go, type) {
     const currentRate = () => { const cap = globalThis.__teslRateCap; return cap ? Math.min(rate || 60, cap) : rate; };
     function applyRate(why) {
       // Without a chosen rate the game's own 60 is restored after a heat cap.
-      const effective = currentRate() || (why === "cap lifted" || why === "resumed" ? 60 : 0);
+      const effective = currentRate() || (["cap lifted", "resumed", "after resolution", "drift"].includes(why) ? 60 : 0);
       if (!effective) return;
       try {
         if (setVSync) setVSync(0);
@@ -3814,6 +3819,10 @@ function uiComponent(go, type) {
       log(`render: lights ${count("UnityEngine.Light")} (shadowed ${count("UnityEngine.Light", l => enumVal(call(l, "get_shadows")) !== 0)}),` +
         ` particle systems ${count("UnityEngine.ParticleSystem")}, mesh renderers ${count("UnityEngine.MeshRenderer")},` +
         ` skinned ${count("UnityEngine.SkinnedMeshRenderer")}, projectors ${count("UnityEngine.Projector")}`);
+      // Report 25: 294 particle systems in a battle. How many run and draw?
+      log(`render: particles playing ${count("UnityEngine.ParticleSystem", p => Boolean(call(p, "get_isPlaying")))},` +
+        ` alive ${count("UnityEngine.ParticleSystem", p => Number(call(p, "get_particleCount")) > 0)},` +
+        ` visible renderers ${count("UnityEngine.ParticleSystemRenderer", r => Boolean(call(r, "get_isVisible")))}`);
     }
     schedule(3000, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
@@ -3833,6 +3842,8 @@ function uiComponent(go, type) {
         return;
       }
       const state = modes[mode];
+      // Report 25: something reset vSync again (97 FPS at a 60 cap); put the rate back.
+      if (measured > (currentRate() || 60) * 1.2) { applyRate("drift"); return; }
       // A quality change turns MSAA back on; a phone that needed it off keeps it off.
       if (msaaOff) {
         try { const samples = antiAliasingOff(); if (samples) log(`graphics: antiAliasing ${samples}x -> off (remembered)`); } catch (_) {}
@@ -3969,7 +3980,16 @@ function uiComponent(go, type) {
               const options = Number(call(call(dropdown, "get_options"), "get_Count"));
               const tab = unityAlive(video) ? (call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown")) : "no video tab";
               let tabs = "";
-              try { tabs = layoutGameDataTab(window.target) || "game data tab not placed"; } catch (error) { tabs = `game data tab: ${error}`; }
+              try {
+                tabs = layoutGameDataTab(window.target);
+                // Report 25: reopened in the menu after a battle the window
+                // had no Game data tab; it is visible now, so add it here.
+                if (!tabs) {
+                  closingSettings.delete(settingsWindowKey(window.target));
+                  installSettingsDataButton(window.target);
+                  tabs = layoutGameDataTab(window.target) || "game data tab not placed";
+                }
+              } catch (error) { tabs = `game data tab: ${error}`; }
               state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}, ${tabs}`;
             }
             if (state !== reported) { reported = state; log(`graphics: ${state}`); }
@@ -5949,7 +5969,7 @@ const chatWindows = new Map();
     };
   }
   section("Settings display diagnostics",()=>{
-    let watchUntil=0,root=null;
+    let watchUntil=0,root=null,nextCapture=0;
     let pendingReport=null,flushQueued=false,lastFlush=0,lastDimensions="";
     function flushDisplay() {
       flushQueued=false;if(!pendingReport)return;
@@ -5992,7 +6012,8 @@ const chatWindows = new Map();
       method.implementation=function(...values) {
         const settings=Boolean(root) && Date.now()<watchUntil || resourceSettingsOpen();
         let skip=false;
-        try {const screen=chatScreen();skip=redundantSettingsResolution(values,{
+        try {const screen=chatScreen(),size=settings&&globalThis.__teslScaledSize?.(values[0],values[1]);
+          skip=redundantSettingsResolution(size?[size.width,size.height,...values.slice(2)]:values,{
           width:screen.width,height:screen.height,fullscreen:null
         },settings);}catch(_){}
         watchUntil=Date.now()+2000;
@@ -6009,7 +6030,8 @@ const chatWindows = new Map();
           watchUntil=now+2000;
           if(!root)root=resourceSettingsWindow.target.ref(false);
         }
-        if(now<watchUntil)capture();
+        // Report 25: every frame cost 46-76 ms/s; four samples a second keep the trace.
+        if(now<watchUntil){if(now>=nextCapture){nextCapture=now+250;capture();}}
         else if(root){root.free();root=null;}
       }catch(_){}
     }});

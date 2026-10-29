@@ -7505,6 +7505,7 @@ Il2Cpp.perform(() => {
       return;
     }
     const state = { width: 0, height: 0 };
+    globalThis.__teslScaledSize = (width, height) => scaledResolution(state, width, height, percent);
     hookAttach(at, {
       onEnter(args) {
         const width = args[0].toInt32(), height = args[1].toInt32();
@@ -7513,6 +7514,7 @@ Il2Cpp.perform(() => {
         args[0] = ptr(size.width);
         args[1] = ptr(size.height);
         log(`graphics: render resolution ${width}x${height} -> ${size.width}x${size.height} (${percent}%)`);
+        schedule(300, () => globalThis.__teslApplyRate?.("after resolution"), "graphics rate after resolution");
       }
     });
     const setResolution = new NativeFunction(at, "void", ["int", "int", "bool", "int"]);
@@ -7555,7 +7557,7 @@ Il2Cpp.perform(() => {
       return cap ? Math.min(rate || 60, cap) : rate;
     };
     function applyRate(why) {
-      const effective = currentRate() || (why === "cap lifted" || why === "resumed" ? 60 : 0);
+      const effective = currentRate() || (["cap lifted", "resumed", "after resolution", "drift"].includes(why) ? 60 : 0);
       if (!effective) return;
       try {
         if (setVSync) setVSync(0);
@@ -7751,6 +7753,7 @@ Il2Cpp.perform(() => {
         }
       };
       log(`render: lights ${count("UnityEngine.Light")} (shadowed ${count("UnityEngine.Light", (l) => enumVal(call(l, "get_shadows")) !== 0)}), particle systems ${count("UnityEngine.ParticleSystem")}, mesh renderers ${count("UnityEngine.MeshRenderer")}, skinned ${count("UnityEngine.SkinnedMeshRenderer")}, projectors ${count("UnityEngine.Projector")}`);
+      log(`render: particles playing ${count("UnityEngine.ParticleSystem", (p) => Boolean(call(p, "get_isPlaying")))}, alive ${count("UnityEngine.ParticleSystem", (p) => Number(call(p, "get_particleCount")) > 0)}, visible renderers ${count("UnityEngine.ParticleSystemRenderer", (r) => Boolean(call(r, "get_isVisible")))}`);
     }
     schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
@@ -7780,6 +7783,10 @@ Il2Cpp.perform(() => {
         return;
       }
       const state = modes[mode];
+      if (measured > (currentRate() || 60) * 1.2) {
+        applyRate("drift");
+        return;
+      }
       if (msaaOff) {
         try {
           const samples = antiAliasingOff();
@@ -7932,7 +7939,12 @@ Il2Cpp.perform(() => {
               const tab = unityAlive(video) ? call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown") : "no video tab";
               let tabs = "";
               try {
-                tabs = layoutGameDataTab(window.target) || "game data tab not placed";
+                tabs = layoutGameDataTab(window.target);
+                if (!tabs) {
+                  closingSettings.delete(settingsWindowKey(window.target));
+                  installSettingsDataButton(window.target);
+                  tabs = layoutGameDataTab(window.target) || "game data tab not placed";
+                }
               } catch (error) {
                 tabs = `game data tab: ${error}`;
               }
@@ -10314,7 +10326,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     };
   }
   section("Settings display diagnostics", () => {
-    let watchUntil = 0, root = null;
+    let watchUntil = 0, root = null, nextCapture = 0;
     let pendingReport = null, flushQueued = false, lastFlush = 0, lastDimensions = "";
     function flushDisplay() {
       flushQueued = false;
@@ -10366,8 +10378,8 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
         const settings = Boolean(root) && Date.now() < watchUntil || resourceSettingsOpen();
         let skip = false;
         try {
-          const screen = chatScreen();
-          skip = redundantSettingsResolution(values, {
+          const screen = chatScreen(), size = settings && globalThis.__teslScaledSize?.(values[0], values[1]);
+          skip = redundantSettingsResolution(size ? [size.width, size.height, ...values.slice(2)] : values, {
             width: screen.width,
             height: screen.height,
             fullscreen: null
@@ -10393,8 +10405,12 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           watchUntil = now + 2e3;
           if (!root) root = resourceSettingsWindow.target.ref(false);
         }
-        if (now < watchUntil) capture();
-        else if (root) {
+        if (now < watchUntil) {
+          if (now >= nextCapture) {
+            nextCapture = now + 250;
+            capture();
+          }
+        } else if (root) {
           root.free();
           root = null;
         }
