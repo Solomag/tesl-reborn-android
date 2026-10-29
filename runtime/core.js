@@ -3697,11 +3697,20 @@ const cpuReport = (() => {
       try {
         if (!waitThreads) {
           waitThreads = [];
+          let main = null, most = -1;
           for (const thread of Process.enumerateThreads()) {
             const name = read(`/proc/self/task/${thread.id}/comm`);
-            if (thread.id === Process.id) waitThreads.unshift({ id: thread.id, name: "main" });
-            else if (name === "UnityGfxDeviceW") waitThreads.push({ id: thread.id, name: `gfx${waitThreads.length}` });
+            if (name === "UnityMain") {
+              const stat = read(`/proc/self/task/${thread.id}/stat`), close = stat.lastIndexOf(")");
+              const fields = close < 0 ? [] : stat.slice(close + 2).split(" ");
+              const ticks = Number(fields[11]) + Number(fields[12]);
+              if (ticks > most) {
+                most = ticks;
+                main = thread.id;
+              }
+            } else if (name === "UnityGfxDeviceW") waitThreads.push({ id: thread.id, name: `gfx${waitThreads.length + 1}` });
           }
+          if (main !== null) waitThreads.unshift({ id: main, name: "main" });
         }
         const names = { 98: "futex", 29: "ioctl", 101: "nanosleep", 115: "nanosleep", 73: "ppoll", 22: "epoll", 63: "read", 64: "write" };
         const counts = waitThreads.map(() => /* @__PURE__ */ new Map());
