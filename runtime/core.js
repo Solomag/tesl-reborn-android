@@ -7674,8 +7674,58 @@ Il2Cpp.perform(() => {
       const managed = quality2.tryMethod("set_antiAliasing", 1);
       if (managed) managed.invoke(0);
       else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
-      else if (writeField(antiAliasingNames, 0) !== 0) throw Error("no antiAliasing setter");
+      else if (!levelAntiAliasingOff(quality2)) throw Error("no antiAliasing setter");
       return samples;
+    }
+    function levelAntiAliasingOff(quality2) {
+      let at = null;
+      for (const name of antiAliasingNames) {
+        const p = resolve(Memory.allocUtf8String(name));
+        if (!p.isNull()) {
+          at = p;
+          break;
+        }
+      }
+      if (!at) return false;
+      const code = [];
+      for (let i = 0; i < 16; i++) {
+        const ins = Instruction.parse(at);
+        code.push(`${ins.mnemonic} ${ins.opStr}`);
+        if (ins.mnemonic === "ret") break;
+        at = ins.next;
+      }
+      const text = code.join("; ");
+      const num = (re) => {
+        const m = text.match(re);
+        return m ? Number(m[1]) : null;
+      };
+      const owner = (text.match(/bl #(0x[0-9a-f]+)/) || [])[1];
+      const current = num(/ldrsw x8, \[x0, #(0x[0-9a-f]+|\d+)\]/), levels = num(/ldr x9, \[x0, #(0x[0-9a-f]+|\d+)\]/);
+      const stride = num(/mov w10, #(0x[0-9a-f]+|\d+)/), field = num(/ldr w0, \[x8, #(0x[0-9a-f]+|\d+)\]/);
+      if (!owner || [current, levels, stride, field].includes(null)) {
+        log(`engine: antiAliasing layout unknown: ${text}`);
+        return false;
+      }
+      const manager2 = new NativeFunction(ptr(owner), "pointer", [])();
+      const index = manager2.add(current).readS32(), entry = manager2.add(levels).readPointer().add(index * stride + field);
+      const before = Number(quality2.method("get_antiAliasing", 0).invoke());
+      if (entry.readS32() !== before) {
+        log(`engine: antiAliasing entry holds ${entry.readS32()}, getter ${before}; not written`);
+        return false;
+      }
+      entry.writeS32(0);
+      try {
+        quality2.method("SetQualityLevel", 2).invoke(index, true);
+      } catch (error) {
+        log(`engine: quality reapply failed: ${error}`);
+      }
+      try {
+        if (setVSync) setVSync(0);
+      } catch (_) {
+      }
+      const after = Number(quality2.method("get_antiAliasing", 0).invoke());
+      log(`engine: level ${index} antiAliasing ${before} -> ${after} (entry)`);
+      return after === 0;
     }
     let mainCpu = null, mainSamples = 0, mainReported = "";
     function mainThreadReport() {
