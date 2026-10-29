@@ -3758,7 +3758,7 @@ function uiComponent(go, type) {
     const learning = 131;
     if (auto.at && auto.learning !== learning) {
       log(`graphics: learned frame rates from before patch ${learning} reset`);
-      auto = { msaaOff: auto.msaaOff };
+      auto = { msaaOff: auto.msaaOff, relearn: true };
     }
     const learnedRate = value => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     // Patch 117 kept one rate for both.
@@ -3779,6 +3779,8 @@ function uiComponent(go, type) {
           msaaOff, renderScale, learning, at: new Date().toISOString() }));
       } catch (_) {}
     };
+    // Report 79: the reset was not saved until a rate changed, so it ran on every start.
+    if (auto.relearn) saveAuto();
     function antiAliasingOff() {
       const quality = ucls("UnityEngine.QualitySettings"), samples = Number(quality.method("get_antiAliasing", 0).invoke());
       if (samples <= 0) return 0;

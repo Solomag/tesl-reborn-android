@@ -7648,7 +7648,7 @@ Il2Cpp.perform(() => {
     const learning = 131;
     if (auto.at && auto.learning !== learning) {
       log(`graphics: learned frame rates from before patch ${learning} reset`);
-      auto = { msaaOff: auto.msaaOff };
+      auto = { msaaOff: auto.msaaOff, relearn: true };
     }
     const learnedRate = (value) => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     const modes = {
@@ -7674,6 +7674,7 @@ Il2Cpp.perform(() => {
       } catch (_) {
       }
     };
+    if (auto.relearn) saveAuto();
     function antiAliasingOff() {
       const quality2 = ucls("UnityEngine.QualitySettings"), samples = Number(quality2.method("get_antiAliasing", 0).invoke());
       if (samples <= 0) return 0;
