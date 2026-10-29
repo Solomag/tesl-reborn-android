@@ -3848,6 +3848,18 @@ function uiComponent(go, type) {
     function profileMainThread() {
       if (profiled) return;
       profiled = true;
+      let step = "methods";
+      try { profileSteps(name => { step = name; }); }
+      catch (error) { log(`profile: failed at ${step}: ${error}`); }
+    }
+    // Report 28: "TypeError: not a function" without a place; each step is named now.
+    function profileSteps(at) {
+      const batch = fn => {
+        const begin = (Interceptor as any).beginTransaction, end = (Interceptor as any).endTransaction;
+        if (typeof begin !== "function" || typeof end !== "function") return fn();
+        begin.call(Interceptor);
+        try { return fn(); } finally { end.call(Interceptor); }
+      };
       const targets = [];
       const seen = new Set();
       const add = (method, label) => {
@@ -3858,14 +3870,18 @@ function uiComponent(go, type) {
       };
       for (const klass of img.classes) {
         if (klass.name === "ServicesManager") continue; // the frame limiter waits in it
-        for (const method of klass.methods)
-          if (method.parameterCount === 0 && ["Update", "LateUpdate", "FixedUpdate"].includes(method.name))
-            add(method, `${klass.name}.${method.name}`);
+        try {
+          for (const method of klass.methods)
+            if (method.parameterCount === 0 && ["Update", "LateUpdate", "FixedUpdate"].includes(method.name))
+              add(method, `${klass.name}.${method.name}`);
+        } catch (_) { /* A class whose methods cannot be listed is left out. */ }
       }
+      at("engine methods");
       for (const [type, name] of [["UnityEngine.UI.CanvasUpdateRegistry", "PerformUpdate"], ["TMPro.TMP_UpdateManager", "DoRebuilds"],
           ["UnityEngine.Canvas", "SendWillRenderCanvases"]]) {
         try { const k = ucls(type); add(k.tryMethod(name, 0) || k.methods.find(m => m.name === name), `${k.name}.${name}`); } catch (_) {}
       }
+      at("native timer");
       const count = targets.length;
       const totals = Memory.alloc(count * 8), calls = Memory.alloc(count * 4);
       const cm = new CModule(`
@@ -3881,18 +3897,18 @@ function uiComponent(go, type) {
           totals[i] += now() - *GUM_IC_GET_INVOCATION_DATA(ic, long long);
           calls[i]++;
         }`, { clock_gettime: Process.getModuleByName("libc.so").getExportByName("clock_gettime"), totals, calls });
+      at("attach");
       const listeners = [];
-      Interceptor.beginTransaction();
-      try {
-        targets.forEach((target, i) => {
-          try { listeners.push(Interceptor.attach(target.at, { onEnter: cm.onEnter, onLeave: cm.onLeave } as any, ptr(i))); } catch (_) {}
-        });
-      } finally { Interceptor.endTransaction(); }
+      let attachError = null;
+      batch(() => targets.forEach((target, i) => {
+        try { listeners.push(Interceptor.attach(target.at, { onEnter: cm.onEnter, onLeave: cm.onLeave } as any, ptr(i))); }
+        catch (error) { attachError = attachError || error; }
+      }));
+      if (!listeners.length) throw Error(`no method could be timed: ${attachError}`);
       const started = Date.now();
       log(`profile: timing ${listeners.length} of ${count} main-thread methods for 45 s`);
       schedule(45000, () => {
-        Interceptor.beginTransaction();
-        try { for (const listener of listeners) listener.detach(); } finally { Interceptor.endTransaction(); }
+        batch(() => { for (const listener of listeners) listener.detach(); });
         const seconds = (Date.now() - started) / 1000;
         const rows = targets.map((target, i) => ({ label: target.label, ms: totals.add(i * 8).readS64().toNumber() / 1e6 / seconds,
           calls: calls.add(i * 4).readS32() / seconds })).filter(row => row.ms > 0.05).sort((a, b) => b.ms - a.ms);

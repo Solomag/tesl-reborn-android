@@ -7770,6 +7770,26 @@ Il2Cpp.perform(() => {
     function profileMainThread() {
       if (profiled) return;
       profiled = true;
+      let step = "methods";
+      try {
+        profileSteps((name) => {
+          step = name;
+        });
+      } catch (error) {
+        log(`profile: failed at ${step}: ${error}`);
+      }
+    }
+    function profileSteps(at) {
+      const batch = (fn) => {
+        const begin = Interceptor.beginTransaction, end = Interceptor.endTransaction;
+        if (typeof begin !== "function" || typeof end !== "function") return fn();
+        begin.call(Interceptor);
+        try {
+          return fn();
+        } finally {
+          end.call(Interceptor);
+        }
+      };
       const targets = [];
       const seen = /* @__PURE__ */ new Set();
       const add = (method, label) => {
@@ -7781,10 +7801,14 @@ Il2Cpp.perform(() => {
       };
       for (const klass of img.classes) {
         if (klass.name === "ServicesManager") continue;
-        for (const method of klass.methods)
-          if (method.parameterCount === 0 && ["Update", "LateUpdate", "FixedUpdate"].includes(method.name))
-            add(method, `${klass.name}.${method.name}`);
+        try {
+          for (const method of klass.methods)
+            if (method.parameterCount === 0 && ["Update", "LateUpdate", "FixedUpdate"].includes(method.name))
+              add(method, `${klass.name}.${method.name}`);
+        } catch (_) {
+        }
       }
+      at("engine methods");
       for (const [type, name] of [
         ["UnityEngine.UI.CanvasUpdateRegistry", "PerformUpdate"],
         ["TMPro.TMP_UpdateManager", "DoRebuilds"],
@@ -7796,6 +7820,7 @@ Il2Cpp.perform(() => {
         } catch (_) {
         }
       }
+      at("native timer");
       const count = targets.length;
       const totals = Memory.alloc(count * 8), calls = Memory.alloc(count * 4);
       const cm = new CModule(`
@@ -7811,27 +7836,23 @@ Il2Cpp.perform(() => {
           totals[i] += now() - *GUM_IC_GET_INVOCATION_DATA(ic, long long);
           calls[i]++;
         }`, { clock_gettime: Process.getModuleByName("libc.so").getExportByName("clock_gettime"), totals, calls });
+      at("attach");
       const listeners = [];
-      Interceptor.beginTransaction();
-      try {
-        targets.forEach((target, i) => {
-          try {
-            listeners.push(Interceptor.attach(target.at, { onEnter: cm.onEnter, onLeave: cm.onLeave }, ptr(i)));
-          } catch (_) {
-          }
-        });
-      } finally {
-        Interceptor.endTransaction();
-      }
+      let attachError = null;
+      batch(() => targets.forEach((target, i) => {
+        try {
+          listeners.push(Interceptor.attach(target.at, { onEnter: cm.onEnter, onLeave: cm.onLeave }, ptr(i)));
+        } catch (error) {
+          attachError = attachError || error;
+        }
+      }));
+      if (!listeners.length) throw Error(`no method could be timed: ${attachError}`);
       const started = Date.now();
       log(`profile: timing ${listeners.length} of ${count} main-thread methods for 45 s`);
       schedule(45e3, () => {
-        Interceptor.beginTransaction();
-        try {
+        batch(() => {
           for (const listener of listeners) listener.detach();
-        } finally {
-          Interceptor.endTransaction();
-        }
+        });
         const seconds = (Date.now() - started) / 1e3;
         const rows = targets.map((target, i) => ({
           label: target.label,
