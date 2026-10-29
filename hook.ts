@@ -148,6 +148,7 @@ let currentSection = "startup";
 // and the hottest sensors, to tell small cores, low clocks and heat apart.
 const threadTicks = new Map<number, number>();
 let gpuModel = "";
+let waitThreads: any[] | null = null;
 let threadTicksAt = 0;
 const cpuReport = (() => {
   try {
@@ -185,6 +186,38 @@ const cpuReport = (() => {
         if (adrenoClock) parts.push(`clock ${Math.round(Number(adrenoClock) / (Number(adrenoClock) > 1e6 ? 1e6 : 1))} MHz`);
         if (!gpuModel) gpuModel = read(mali + "gpuinfo") || read("/sys/class/kgsl/kgsl-3d0/gpu_model") || "-";
         log(`gpu: ${parts.join(", ") || "load and clock unreadable"}${gpuModel !== "-" ? `; ${gpuModel}` : ""}`);
+      } catch (_) {}
+      // Report 112 (Pixel 8 Pro): hints accepted, the GPU still at 150 MHz,
+      // every thread under half busy: what do the main and graphics threads
+      // wait on? Twenty samples 25 ms apart of each one's current system
+      // call (/proc/self/task/N/syscall: "running", or the call number:
+      // futex = another thread, ioctl = a driver such as the GPU's,
+      // nanosleep = a deliberate wait, ppoll/epoll = events).
+      try {
+        if (!waitThreads) {
+          waitThreads = [];
+          // Several threads are named UnityMain; the main one has the
+          // process id. There can be two graphics workers.
+          for (const thread of Process.enumerateThreads()) {
+            const name = read(`/proc/self/task/${thread.id}/comm`);
+            if (thread.id === Process.id) waitThreads.unshift({ id: thread.id, name: "main" });
+            else if (name === "UnityGfxDeviceW") waitThreads.push({ id: thread.id, name: `gfx${waitThreads.length}` });
+          }
+        }
+        const names = { 98: "futex", 29: "ioctl", 101: "nanosleep", 115: "nanosleep", 73: "ppoll", 22: "epoll", 63: "read", 64: "write" };
+        const counts = waitThreads.map(() => new Map());
+        let samples = 0;
+        const timer = setInterval(() => {
+          waitThreads.forEach((thread, i) => {
+            const raw = read(`/proc/self/task/${thread.id}/syscall`);
+            const first = raw.split(" ")[0];
+            const key = !raw ? "?" : first === "running" ? "running" : first === "-1" ? "blocked" : (names[Number(first)] || `#${first}`);
+            counts[i].set(key, (counts[i].get(key) || 0) + 1);
+          });
+          if (++samples < 20) return;
+          clearInterval(timer);
+          log(`waits: ${waitThreads.map((thread, i) => `${thread.name} ${Array.from(counts[i].entries()).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n * 5}%`).join(" ")}`).join("; ")}`);
+        }, 25);
       } catch (_) {}
       // Report 31 (Pixel 8 Pro): 10-14 FPS with the main thread on a fast
       // core and the others idle. How busy each game thread is (CPU time
