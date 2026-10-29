@@ -8286,6 +8286,10 @@ void onLeave (GumInvocationContext * ic) {
               if (live) live.free();
               live = new Il2Cpp.Object(args[0]).ref(false);
               globalThis.__teslInBattle = true;
+              try {
+                globalThis.__teslCameraProbe?.();
+              } catch (_) {
+              }
               globalThis.__teslPhysicsInBattle(true);
               if (!timer) timer = setInterval(() => {
                 let gone = true;
@@ -8323,6 +8327,84 @@ void onLeave (GumInvocationContext * ic) {
       } else log("engine: job wake count kept (another libunity build)");
     } catch (error) {
       log(`engine: job wake patch failed: ${error}`);
+    }
+    try {
+      const unity = Process.getModuleByName("libunity.so");
+      const cull = unity.base.add(2076280), render = unity.base.add(2091484);
+      const hex = (at) => Array.from(new Uint8Array(at.readByteArray(8))).map((b) => b.toString(16).padStart(2, "0")).join("");
+      if (hex(cull) === "fc6fbba9f85f01a9" && hex(render) === "e923b96dfc6f01a9") {
+        const table = Memory.alloc(8 * 32), libc = Process.getModuleByName("libc.so");
+        const source = `
+#include <gum/guminterceptor.h>
+typedef struct { long s; long ns; } ts_t;
+typedef struct { void * camera; unsigned long long cull_us; unsigned long long render_us; unsigned culls; unsigned renders; } Slot;
+extern Slot table[8];
+extern int clock_gettime (int clock, ts_t * t);
+static unsigned long long now_us (void) { ts_t t; clock_gettime (1, &t); return (unsigned long long) t.s * 1000000ULL + t.ns / 1000; }
+static Slot * slot (void * camera) {
+  for (int i = 0; i < 8; i++) { if (table[i].camera == camera) return &table[i]; if (!table[i].camera) { table[i].camera = camera; return &table[i]; } }
+  return 0;
+}
+static void * cull_camera, * render_camera; static unsigned long long cull_start, render_start;
+void cull_enter (GumInvocationContext * ic) { cull_camera = gum_invocation_context_get_nth_argument (ic, 0); cull_start = now_us (); }
+void cull_leave (GumInvocationContext * ic) { Slot * s = slot (cull_camera); if (s) { s->cull_us += now_us () - cull_start; s->culls++; } }
+void render_enter (GumInvocationContext * ic) { render_camera = gum_invocation_context_get_nth_argument (ic, 0); render_start = now_us (); }
+void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera); if (s) { s->render_us += now_us () - render_start; s->renders++; } }
+`;
+        const cm = new CModule(source, { table, clock_gettime: libc.getExportByName("clock_gettime") });
+        let listeners = [];
+        const names = () => {
+          const map = /* @__PURE__ */ new Map();
+          try {
+            const all = ucls("UnityEngine.Camera").method("get_allCameras", 0).invoke();
+            for (let i = 0; i < all.length; i++) {
+              const camera = all.get(i);
+              map.set(camera.field("m_CachedPtr").value.toString(), String(call(call(camera, "get_gameObject"), "get_name")?.content || "?"));
+            }
+          } catch (_) {
+          }
+          return map;
+        };
+        let reports = 0, since = 0, timer = null;
+        const report = () => {
+          const seconds = (Date.now() - since) / 1e3, map = names(), rows = [];
+          for (let i = 0; i < 8; i++) {
+            const at = table.add(i * 32), camera = at.readPointer();
+            if (camera.isNull()) continue;
+            const cullMs = at.add(8).readU64().toNumber() / 1e3 / seconds, renderMs = at.add(16).readU64().toNumber() / 1e3 / seconds;
+            rows.push(`${map.get(camera.toString()) || camera} cull ${cullMs.toFixed(1)} render ${renderMs.toFixed(1)} ms/s (${Math.round(at.add(24).readU32() / seconds)}/s)`);
+          }
+          log(`cameras: ${rows.join("; ")}`);
+          table.writeByteArray(new Array(8 * 32).fill(0));
+          since = Date.now();
+          if (++reports >= 4) {
+            clearInterval(timer);
+            timer = null;
+            for (const l of listeners) l.detach();
+            listeners = [];
+          }
+        };
+        globalThis.__teslCameraProbe = () => {
+          if (timer) return;
+          reports = 0;
+          table.writeByteArray(new Array(8 * 32).fill(0));
+          since = Date.now();
+          listeners = [
+            Interceptor.attach(cull, { onEnter: cm.cull_enter, onLeave: cm.cull_leave }),
+            Interceptor.attach(render, { onEnter: cm.render_enter, onLeave: cm.render_leave })
+          ];
+          timer = setInterval(() => {
+            try {
+              report();
+            } catch (error) {
+              log(`cameras: ${error}`);
+            }
+          }, 15e3);
+        };
+        globalThis.__teslCameraProbeKeep = cm;
+      }
+    } catch (error) {
+      log(`cameras: probe unavailable: ${error}`);
     }
     schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {

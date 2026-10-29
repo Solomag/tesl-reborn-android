@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 143,
-  "version": "android-143-battle-flag-job-wakes",
-  "bytes": 468316,
-  "sha256": "901bf11b7f6285b5f588d25673e3fa607e50c326e33fca72b1f23e6c172df4e4",
+  "revision": 144,
+  "version": "android-144-camera-probe",
+  "bytes": 472522,
+  "sha256": "2dee3aa50a6b7c5ab14da64aa2179ab785cafe8c5eb4f24956880d5d0288062f",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "597974a8ad8da1032859729062cba9f3a8ddeecf797bda3aeddf46f8a2be84ac"
+  "sourceSha256": "8d74de064d9ad31e9a2ebeb9d6a5904f2172448d15c487b4d0907b645190e5ff"
 }
