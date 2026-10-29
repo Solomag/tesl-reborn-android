@@ -3729,7 +3729,9 @@ void onLeave (GumInvocationContext * ic) {
     const file = `${persistentPath()}/tesl-reborn-ui-keys.json`;
     const use = (key) => {
       if (!key || key.length > 64) return;
-      if (!answer) answer = Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data").ref(true);
+      // Report 109: Il2Cpp.String has no ref(); the string is pinned as an
+      // object (a GC handle keeps it alive for the native answer).
+      if (!answer) answer = new Il2Cpp.Object(Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data").handle).ref(true);
       state.writePointer(answer.target.handle); state.add(8).writeS32(key.length);
       for (let i = 0; i < key.length; i++) state.add(16 + i * 2).writeU16(key.charCodeAt(i));
     };
