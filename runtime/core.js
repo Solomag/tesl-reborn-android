@@ -8046,7 +8046,7 @@ void onLeave (GumInvocationContext * ic) {
       log(`engine: level ${index} antiAliasing ${before} -> ${after} (entry)`);
       return after === 0;
     }
-    let mainCpu = null, mainSamples = 0, mainReported = "";
+    let mainCpu = null, mainSamples = 0, mainReported = "", mainWidened = false;
     function mainThreadReport() {
       if (mainSamples++ % 4) return;
       try {
@@ -8055,6 +8055,33 @@ void onLeave (GumInvocationContext * ic) {
         try {
           allowed = (String(File.readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || "?";
         } catch (_) {
+        }
+        if (/^\d+$/.test(allowed) && !mainWidened) {
+          mainWidened = true;
+          try {
+            const max = [];
+            for (let cpu = 0; cpu < 16; cpu++) {
+              try {
+                max[cpu] = Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0;
+              } catch (_) {
+                max[cpu] = 0;
+              }
+            }
+            const top = Math.max(...max), cores = max.map((f, cpu) => f >= top * 0.8 ? cpu : -1).filter((cpu) => cpu >= 0);
+            if (cores.length > 1) {
+              const mask = Memory.alloc(128);
+              for (const cpu of cores) mask.add(cpu >> 3).writeU8(mask.add(cpu >> 3).readU8() | 1 << (cpu & 7));
+              const setAffinity = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_setaffinity"), "int", ["int", "size_t", "pointer"]);
+              const result = setAffinity(0, 128, mask);
+              log(`graphics: main thread allowed ${allowed} -> ${cores.join(",")} (${result === 0 ? "set" : "refused " + result})`);
+              try {
+                allowed = (String(File.readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || allowed;
+              } catch (_) {
+              }
+            }
+          } catch (error) {
+            log(`graphics: main thread affinity unchanged: ${error}`);
+          }
         }
         const line = `main thread on ${mainCpu()}, allowed ${allowed}`;
         if (line !== mainReported || mainSamples % 20 === 1) {
@@ -8574,7 +8601,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             log(`render: snapshot failed: ${error}`);
           }
         }, "graphics render snapshot");
-        if (mode === "battle") schedule(1e4, () => {
+        if (mode === "battle" && experiment("mainThreadProfile")) schedule(1e4, () => {
           try {
             profileMainThread();
           } catch (error) {

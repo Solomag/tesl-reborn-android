@@ -4103,13 +4103,35 @@ function uiComponent(go, type) {
     // Report (1)(2): CPH2723 held 25 FPS in battle at any quality, cool, with
     // the process allowed cores 0-5 only. The cpu: line is written from
     // another thread; say where the game's own (main) thread runs, each minute.
-    let mainCpu = null, mainSamples = 0, mainReported = "";
+    let mainCpu = null, mainSamples = 0, mainReported = "", mainWidened = false;
     function mainThreadReport() {
       if (mainSamples++ % 4) return;
       try {
         if (mainCpu === null) mainCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
         let allowed = "?";
         try { allowed = (String((File as any).readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || "?"; } catch (_) {}
+        // Report 100 (Pixel 8 Pro): Unity pinned the main thread to its one
+        // big core (allowed 8); hot, that core fell to 1.16 GHz and battles to
+        // 10-17 FPS with no core to move to. A single allowed core is widened
+        // to every core of at least 80% of the fastest one's maximum clock.
+        if (/^\d+$/.test(allowed) && !mainWidened) {
+          mainWidened = true;
+          try {
+            const max = [];
+            for (let cpu = 0; cpu < 16; cpu++) {
+              try { max[cpu] = Number(String((File as any).readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0; } catch (_) { max[cpu] = 0; }
+            }
+            const top = Math.max(...max), cores = max.map((f, cpu) => f >= top * 0.8 ? cpu : -1).filter(cpu => cpu >= 0);
+            if (cores.length > 1) {
+              const mask = Memory.alloc(128);
+              for (const cpu of cores) mask.add(cpu >> 3).writeU8(mask.add(cpu >> 3).readU8() | (1 << (cpu & 7)));
+              const setAffinity = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_setaffinity"), "int", ["int", "size_t", "pointer"]);
+              const result = setAffinity(0, 128, mask);
+              log(`graphics: main thread allowed ${allowed} -> ${cores.join(",")} (${result === 0 ? "set" : "refused " + result})`);
+              try { allowed = (String((File as any).readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || allowed; } catch (_) {}
+            }
+          } catch (error) { log(`graphics: main thread affinity unchanged: ${error}`); }
+        }
         const line = `main thread on ${mainCpu()}, allowed ${allowed}`;
         if (line !== mainReported || mainSamples % 20 === 1) { mainReported = line; log(`graphics: ${mode}, ${line}`); }
       } catch (error) { if (mainReported !== "failed") { mainReported = "failed"; log(`graphics: main thread cpu unavailable: ${error}`); } }
@@ -4541,7 +4563,10 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         globalThis.__teslRateCap = state.cap;
         log(`graphics: ${mode}, frame rate ${state.cap || ceiling}`);
         if (mode === "battle") schedule(8000, () => { try { renderSnapshot(); } catch (error) { log(`render: snapshot failed: ${error}`); } }, "graphics render snapshot");
-        if (mode === "battle") schedule(10000, () => { try { profileMainThread(); } catch (error) { log(`profile: failed: ${error}`); } }, "main thread profile start");
+        // Reports 85 and 101: games crashed 3-30 s after this attached its 175
+        // listeners at a battle start, as attaching the camera probe froze one.
+        // Its numbers are in; it runs only as an experiment now.
+        if (mode === "battle" && experiment("mainThreadProfile")) schedule(10000, () => { try { profileMainThread(); } catch (error) { log(`profile: failed: ${error}`); } }, "main thread profile start");
         applyRate(state.cap ? `${mode} rate` : "cap lifted");
         return;
       }
