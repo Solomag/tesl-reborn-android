@@ -7663,6 +7663,95 @@ Il2Cpp.perform(() => {
         log(`graphics: ${state}`);
       }
     }
+    function renderSnapshot() {
+      const show = (value) => {
+        if (value === void 0) return "?";
+        if (typeof value === "number" || typeof value === "boolean") return String(value);
+        if (isNull(value)) return "null";
+        try {
+          if (value.class?.isEnum) return String(enumVal(value));
+        } catch (_) {
+        }
+        return String(value.content ?? value);
+      };
+      const read = (target, name) => {
+        try {
+          const m = target.tryMethod(name, 0);
+          return m ? show(m.invoke()) : "-";
+        } catch (_) {
+          return "!";
+        }
+      };
+      const quality2 = ucls("UnityEngine.QualitySettings");
+      const settings = [
+        "GetQualityLevel",
+        "get_shadows",
+        "get_shadowResolution",
+        "get_shadowDistance",
+        "get_shadowCascades",
+        "get_pixelLightCount",
+        "get_antiAliasing",
+        "get_anisotropicFiltering",
+        "get_softParticles",
+        "get_lodBias",
+        "get_masterTextureLimit",
+        "get_realtimeReflectionProbes",
+        "get_billboardsFaceCameraPosition"
+      ].map((name) => `${name.replace(/^get_/, "")}=${read(quality2, name)}`).join(" ");
+      log(`render: quality ${settings}`);
+      const screen = ucls("UnityEngine.Screen");
+      log(`render: screen ${read(screen, "get_width")}x${read(screen, "get_height")}`);
+      const ppClass = img.classes.find((c) => c.name === "PostProcessingBehaviour");
+      const models = [
+        "fog",
+        "antialiasing",
+        "ambientOcclusion",
+        "screenSpaceReflection",
+        "depthOfField",
+        "motionBlur",
+        "eyeAdaptation",
+        "bloom",
+        "colorGrading",
+        "userLut",
+        "chromaticAberration",
+        "grain",
+        "vignette",
+        "dithering"
+      ];
+      const cameras = ucls("UnityEngine.Camera").method("get_allCameras", 0).invoke();
+      for (let i = 0; i < cameras.length; i++) {
+        const camera = cameras.get(i), go = call(camera, "get_gameObject");
+        const target = camera.method("get_targetTexture", 0).invoke();
+        let line = `render: camera "${call(go, "get_name").content}" depth=${read(camera, "get_depth")} clear=${read(camera, "get_clearFlags")} mask=${read(camera, "get_cullingMask")} path=${read(camera, "get_actualRenderingPath")} hdr=${read(camera, "get_allowHDR")} px=${read(camera, "get_pixelWidth")}x${read(camera, "get_pixelHeight")} target=${isNull(target) ? "screen" : `${read(target, "get_width")}x${read(target, "get_height")}`}`;
+        if (ppClass) {
+          const behaviour = go.method("GetComponent").overload("System.Type").invoke(ppClass.type.object);
+          if (!isNull(behaviour)) {
+            const profile = behaviour.field("profile").value;
+            const on = isNull(profile) ? [] : models.filter((name) => {
+              try {
+                return Boolean(call(profile.field(name).value, "get_enabled"));
+              } catch (_) {
+                return false;
+              }
+            });
+            line += ` post=${read(behaviour, "get_enabled")} [${on.join(",")}]`;
+          }
+        }
+        log(line);
+      }
+      const count = (type, test = null) => {
+        try {
+          const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls(type).type.object);
+          if (!test) return all.length;
+          let n = 0;
+          for (let i = 0; i < all.length; i++) if (test(all.get(i))) n++;
+          return n;
+        } catch (_) {
+          return "?";
+        }
+      };
+      log(`render: lights ${count("UnityEngine.Light")} (shadowed ${count("UnityEngine.Light", (l) => enumVal(call(l, "get_shadows")) !== 0)}), particle systems ${count("UnityEngine.ParticleSystem")}, mesh renderers ${count("UnityEngine.MeshRenderer")}, skinned ${count("UnityEngine.SkinnedMeshRenderer")}, projectors ${count("UnityEngine.Projector")}`);
+    }
     schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
@@ -7680,6 +7769,13 @@ Il2Cpp.perform(() => {
         state2.steady = 0;
         globalThis.__teslRateCap = state2.cap;
         log(`graphics: ${mode}, frame rate ${state2.cap || ceiling}`);
+        if (mode === "battle") schedule(8e3, () => {
+          try {
+            renderSnapshot();
+          } catch (error) {
+            log(`render: snapshot failed: ${error}`);
+          }
+        }, "graphics render snapshot");
         applyRate(state2.cap ? `${mode} rate` : "cap lifted");
         return;
       }
