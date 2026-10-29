@@ -3729,6 +3729,7 @@ const hookTimer = (() => {
   }
 })();
 const sharedLeaves = /* @__PURE__ */ new Map();
+let frameLeaves = null;
 function sharedLeave(target, onLeave) {
   const key = ptr(target).toString();
   let list = sharedLeaves.get(key);
@@ -3751,6 +3752,10 @@ function sharedLeave(target, onLeave) {
   } };
 }
 function hookAttach(target, callbacks) {
+  if (typeof callbacks === "object" && callbacks !== null && callbacks.touchOnly && callbacks.onEnter && !callbacks.onLeave && frameLeaves && ptr(target).equals(frameLeaves.update))
+    return frameLeaves.onTouch(callbacks.onEnter);
+  if (typeof callbacks === "object" && callbacks !== null && callbacks.onLeave && !callbacks.onEnter && frameLeaves && ptr(target).equals(frameLeaves.update))
+    return frameLeaves.onLeave(callbacks.onLeave);
   if (typeof callbacks === "object" && callbacks !== null && callbacks.onLeave && !callbacks.onEnter)
     return sharedLeave(target, hookTimer ? hookTimer(currentSection, callbacks.onLeave) : callbacks.onLeave);
   if (!hookTimer || typeof callbacks !== "object" || callbacks === null) return Interceptor.attach(target, callbacks);
@@ -4552,12 +4557,157 @@ Il2Cpp.perform(() => {
   let matchEntryData = [];
   let statsFinishedLoading = false;
   let statsLoadingSince = 0;
+  const frameBus = (() => {
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress;
+    const state = Memory.alloc(64);
+    state.writeDouble(Infinity);
+    state.add(8).writeDouble(0);
+    const due = [], touch = [], leave = [];
+    const run = (list) => {
+      for (let i = 0; i < list.length; i++) {
+        try {
+          list[i]();
+        } catch (_) {
+        }
+      }
+    };
+    const dispatch = (flags) => {
+      if (flags & 1) run(due);
+      if (flags & 2) run(touch);
+      if (flags & 4) {
+        state.add(8).writeDouble(Date.now() + 100);
+        run(leave);
+      }
+    };
+    const wake = new NativeCallback(dispatch, "void", ["int"]);
+    let touchCount = NULL;
+    try {
+      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+      for (const name of ["UnityEngine.Input::get_touchCount()", "UnityEngine.Input::get_touchCount"]) {
+        const at = resolve(Memory.allocUtf8String(name));
+        if (!at.isNull()) {
+          touchCount = at;
+          break;
+        }
+      }
+    } catch (_) {
+    }
+    const noTouch = new NativeCallback(() => 0, "int", []);
+    state.add(52).writeS32(touchCount.isNull() ? 0 : 1);
+    const libc = Process.getModuleByName("libc.so");
+    let cm = null;
+    try {
+      cm = new CModule(`
+#include <gum/guminterceptor.h>
+typedef struct { long s; long ns; } ts_t;
+typedef struct { double next_due; double next_leave; long long frame_us; unsigned frames; unsigned max_gap;
+  long long last_us; long long next_frame_us; int prev_touch; int has_touch; int touch_listeners; } State;
+extern int clock_gettime (int clock, ts_t * t);
+extern int usleep (unsigned us);
+extern void wake (int flags);
+extern int touch_count (void);
+extern State state;
+static long long now_us (void) { ts_t t; clock_gettime (0, &t); return (long long) t.s * 1000000LL + t.ns / 1000; }
+void onEnter (GumInvocationContext * ic) {
+  long long t = now_us ();
+  if (state.last_us) { long long g = (t - state.last_us) / 1000; if (g > state.max_gap) state.max_gap = (unsigned) g; }
+  state.last_us = t;
+  if (state.frame_us > 0) {
+    if (state.next_frame_us > t && state.next_frame_us - t <= state.frame_us) usleep ((unsigned) (state.next_frame_us - t));
+    long long n = now_us (), next = state.next_frame_us + state.frame_us;
+    state.next_frame_us = next > n ? next : n;
+  } else state.next_frame_us = 0;
+  state.frames++;
+  int flags = 0;
+  if ((double) (t / 1000) >= state.next_due) flags |= 1;
+  if (state.touch_listeners) {
+    if (state.has_touch) { int c = touch_count (); if (c > 0 || state.prev_touch) flags |= 2; state.prev_touch = c > 0; }
+    else flags |= 2;
+  }
+  if (flags) wake (flags);
+}
+void onLeave (GumInvocationContext * ic) {
+  if ((double) (now_us () / 1000) >= state.next_leave) wake (4);
+}
+`, { clock_gettime: libc.getExportByName("clock_gettime"), usleep: libc.getExportByName("usleep"), wake, touch_count: touchCount.isNull() ? noTouch : touchCount, state });
+      Interceptor.attach(update, cm);
+      log("frame bus: native");
+    } catch (error) {
+      log(`frame bus: native unavailable, JS fallback: ${error}`);
+      const usleep = new NativeFunction(libc.getExportByName("usleep"), "int", ["uint"]);
+      const touches = touchCount.isNull() ? null : new NativeFunction(touchCount, "int", []);
+      let last = 0, nextFrame = 0, prevTouch = false;
+      Interceptor.attach(update, {
+        onEnter() {
+          const t = Date.now();
+          if (last && t - last > state.add(28).readU32()) state.add(28).writeU32(t - last);
+          last = t;
+          const frameMs = state.add(16).readS64().toNumber() / 1e3;
+          if (frameMs > 0) {
+            if (nextFrame > t && nextFrame - t <= frameMs) usleep(Math.round((nextFrame - t) * 1e3));
+            nextFrame = Math.max(nextFrame + frameMs, Date.now());
+          } else nextFrame = 0;
+          state.add(24).writeU32(state.add(24).readU32() + 1 >>> 0);
+          let flags = 0;
+          if (t >= state.readDouble()) flags |= 1;
+          if (touch.length) {
+            const c = touches ? touches() : 1;
+            if (c > 0 || prevTouch) flags |= 2;
+            prevTouch = c > 0;
+          }
+          if (flags) dispatch(flags);
+        },
+        onLeave() {
+          if (Date.now() >= state.add(8).readDouble()) dispatch(4);
+        }
+      });
+    }
+    globalThis.__teslFrameBusKeep = [cm, wake, noTouch];
+    const timed = (fn) => hookTimer ? hookTimer(currentSection, fn) : fn;
+    return {
+      update,
+      onDue(fn) {
+        due.push(timed(fn));
+      },
+      setDue(at) {
+        state.writeDouble(at);
+      },
+      onTouch(fn) {
+        touch.push(timed(fn));
+        state.add(56).writeS32(touch.length);
+        return { detach() {
+        } };
+      },
+      onLeave(fn) {
+        const call2 = timed(fn);
+        leave.push(call2);
+        return { detach() {
+          const i = leave.indexOf(call2);
+          if (i >= 0) leave.splice(i, 1);
+        } };
+      },
+      frames: () => state.add(24).readU32(),
+      takeMaxGap() {
+        const gap = state.add(28).readU32();
+        state.add(28).writeU32(0);
+        return gap;
+      },
+      setFrameUs(us) {
+        state.add(16).writeS64(Math.round(us));
+      }
+    };
+  })();
+  frameLeaves = frameBus;
+  globalThis.__teslFrameBus = frameBus;
   const pending = [];
   let nextDue = Infinity;
   function schedule(delayMs, fn, tag) {
     const at = delayMs >= 100 ? Math.ceil((Date.now() + delayMs) / 50) * 50 : Date.now() + delayMs;
     pending.push({ at, fn, tag });
-    if (at < nextDue) nextDue = at;
+    if (at < nextDue) {
+      nextDue = at;
+      frameBus.setDue(nextDue);
+    }
   }
   function runPending() {
     const now = Date.now();
@@ -4568,6 +4718,7 @@ Il2Cpp.perform(() => {
       if (pending[i].at <= now) due.push(pending.splice(i, 1)[0]);
       else if (pending[i].at < nextDue) nextDue = pending[i].at;
     }
+    frameBus.setDue(nextDue);
     if (!due.length) return;
     try {
       Il2Cpp.mainThread.schedule(() => {
@@ -4589,30 +4740,18 @@ Il2Cpp.perform(() => {
     }
   }
   section("main thread scheduler", () => {
-    const services = cls(img, "SparkleServices.ServicesManager");
-    const update = services.methods.find((m) => m.name === "Update");
-    if (!update) throw new Error("ServicesManager.Update not found");
-    hookAttach(update.virtualAddress, { onEnter() {
-      runPending();
-    } });
+    frameBus.onDue(runPending);
   });
   section("main loop stall probe", () => {
-    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
     const probe = globalThis.__teslRebornStallProbe = { loads: 0, tasks: 0 };
-    let last = Date.now(), quietUntil = 0;
-    hookAttach(update.virtualAddress, {
-      onEnter() {
-        const now = Date.now(), gap = now - last;
-        last = now;
-        const loads = probe.loads, tasks = probe.tasks;
-        probe.loads = 0;
-        probe.tasks = 0;
-        if (gap >= 200 && gap < 6e4 && now >= quietUntil) {
-          quietUntil = now + 1e3;
-          log(`main loop stalled ${gap}ms` + (loads || tasks ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
-        }
-      }
-    });
+    setInterval(() => {
+      const gap = globalThis.__teslFrameBus.takeMaxGap();
+      const loads = probe.loads, tasks = probe.tasks;
+      probe.loads = 0;
+      probe.tasks = 0;
+      if (gap >= 200 && gap < 6e4)
+        log(`main loop stalled ${gap}ms` + (loads || tasks ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
+    }, 1e3);
   });
   let lastDeckStatsFetch = 0;
   function winRate(wins, losses) {
@@ -5255,6 +5394,7 @@ Il2Cpp.perform(() => {
     }
     try {
       hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+        touchOnly: true,
         onEnter() {
           noteLanguageInput(false);
         }
@@ -8218,20 +8358,12 @@ Il2Cpp.perform(() => {
       log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
     }
     {
-      const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
-      let next = 0;
-      Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-        onEnter() {
-          const limit = currentRate() || 60;
-          if (limit >= 120) {
-            next = 0;
-            return;
-          }
-          const frame = 1e3 / limit, now = Date.now();
-          if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1e3));
-          next = Math.max(next + frame, Date.now());
-        }
-      });
+      const pace = () => {
+        const limit = currentRate() || 60;
+        frameBus.setFrameUs(limit >= 120 ? 0 : 1e6 / limit);
+      };
+      pace();
+      setInterval(pace, 250);
       if (rate && rate < 60) log(`graphics: frame limiter at ${rate} FPS`);
     }
     const manager = cls(img, "SettingsManager");
@@ -9825,6 +9957,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     }
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
     hookAttach(update.virtualAddress, {
+      // Called by the frame bus only while the screen is touched (and the frame after).
+      touchOnly: true,
       onEnter() {
         try {
           const current = frame();
@@ -10191,7 +10325,17 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     }
     return versionScreenState = { visible: startupVersionVisible(scene, startupVersionComplete), scene };
   }
-  const fpsCounter = { frames: 0, since: Date.now(), value: 0 };
+  const fpsCounter = {
+    base: 0,
+    since: Date.now(),
+    value: 0,
+    get frames() {
+      return (globalThis.__teslFrameBus?.frames() ?? 0) - this.base;
+    },
+    set frames(value) {
+      this.base = (globalThis.__teslFrameBus?.frames() ?? 0) - value;
+    }
+  };
   function fpsMeterEnabled() {
     try {
       const graphics = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`) || "null");
@@ -10503,7 +10647,6 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     let nextPoll = 0, queued = false;
     hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
-        fpsCounter.frames++;
         if (queued || Date.now() < nextPoll) return;
         queued = true;
         nextPoll = Date.now() + 250;

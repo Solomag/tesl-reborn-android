@@ -200,6 +200,7 @@ const hookTimer = (() => {
 // sections ran an onLeave on ServicesManager.Update every frame. Leave-only
 // hooks on one function now share a single listener that calls them in turn.
 const sharedLeaves = new Map<string, Function[]>();
+let frameLeaves: any = null;
 function sharedLeave(target: NativePointerValue, onLeave: Function): InvocationListener {
   const key = ptr(target as any).toString();
   let list = sharedLeaves.get(key);
@@ -215,6 +216,10 @@ function sharedLeave(target: NativePointerValue, onLeave: Function): InvocationL
 }
 
 function hookAttach(target: NativePointerValue, callbacks: any): InvocationListener {
+  if (typeof callbacks === "object" && callbacks !== null && callbacks.touchOnly && callbacks.onEnter && !callbacks.onLeave && frameLeaves && ptr(target as any).equals(frameLeaves.update))
+    return frameLeaves.onTouch(callbacks.onEnter);
+  if (typeof callbacks === "object" && callbacks !== null && callbacks.onLeave && !callbacks.onEnter && frameLeaves && ptr(target as any).equals(frameLeaves.update))
+    return frameLeaves.onLeave(callbacks.onLeave);
   if (typeof callbacks === "object" && callbacks !== null && callbacks.onLeave && !callbacks.onEnter)
     return sharedLeave(target, hookTimer ? hookTimer(currentSection, callbacks.onLeave) : callbacks.onLeave);
   if (!hookTimer || typeof callbacks !== "object" || callbacks === null) return Interceptor.attach(target, callbacks);
@@ -1004,6 +1009,114 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // handed to Unity's synchronisation context: calling managed code straight
   // from inside a hook would nest the interceptor callbacks, and Frida cannot
   // run those (the request would then not be rewritten).
+  // BEGIN android-ui: frame-bus
+  // ServicesManager.Update runs once a frame. Its per-frame work is native
+  // (CModule): frame pacing, the frame count and the longest gap between
+  // frames. JS is entered only when something is due: a scheduled task,
+  // a touch on the screen (and the frame after it ends), or the leave
+  // callbacks, ten times a second. Before, a dozen JS callbacks ran on
+  // every frame whether they had work or not.
+  const frameBus = (() => {
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress;
+    // double nextDue @0, double nextLeave @8, int64 frameUs @16, u32 frames @24,
+    // u32 maxGap @28, int64 lastUs @32, int64 nextFrameUs @40, int prevTouch @48,
+    // int hasTouch @52, int touchListeners @56
+    const state = Memory.alloc(64);
+    state.writeDouble(Infinity); state.add(8).writeDouble(0);
+    const due = [], touch = [], leave = [];
+    const run = (list) => { for (let i = 0; i < list.length; i++) { try { list[i](); } catch (_) { /* one failing callback does not stop the others */ } } };
+    const dispatch = (flags: number) => {
+      if (flags & 1) run(due);
+      if (flags & 2) run(touch);
+      if (flags & 4) { state.add(8).writeDouble(Date.now() + 100); run(leave); }
+    };
+    const wake = new NativeCallback(dispatch, "void", ["int"]);
+    let touchCount = NULL;
+    try {
+      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+      for (const name of ["UnityEngine.Input::get_touchCount()", "UnityEngine.Input::get_touchCount"]) {
+        const at = resolve(Memory.allocUtf8String(name)); if (!at.isNull()) { touchCount = at; break; }
+      }
+    } catch (_) {}
+    const noTouch = new NativeCallback(() => 0, "int", []);
+    state.add(52).writeS32(touchCount.isNull() ? 0 : 1);
+    const libc = Process.getModuleByName("libc.so");
+    let cm = null;
+    try { cm = new CModule(`
+#include <gum/guminterceptor.h>
+typedef struct { long s; long ns; } ts_t;
+typedef struct { double next_due; double next_leave; long long frame_us; unsigned frames; unsigned max_gap;
+  long long last_us; long long next_frame_us; int prev_touch; int has_touch; int touch_listeners; } State;
+extern int clock_gettime (int clock, ts_t * t);
+extern int usleep (unsigned us);
+extern void wake (int flags);
+extern int touch_count (void);
+extern State state;
+static long long now_us (void) { ts_t t; clock_gettime (0, &t); return (long long) t.s * 1000000LL + t.ns / 1000; }
+void onEnter (GumInvocationContext * ic) {
+  long long t = now_us ();
+  if (state.last_us) { long long g = (t - state.last_us) / 1000; if (g > state.max_gap) state.max_gap = (unsigned) g; }
+  state.last_us = t;
+  if (state.frame_us > 0) {
+    if (state.next_frame_us > t && state.next_frame_us - t <= state.frame_us) usleep ((unsigned) (state.next_frame_us - t));
+    long long n = now_us (), next = state.next_frame_us + state.frame_us;
+    state.next_frame_us = next > n ? next : n;
+  } else state.next_frame_us = 0;
+  state.frames++;
+  int flags = 0;
+  if ((double) (t / 1000) >= state.next_due) flags |= 1;
+  if (state.touch_listeners) {
+    if (state.has_touch) { int c = touch_count (); if (c > 0 || state.prev_touch) flags |= 2; state.prev_touch = c > 0; }
+    else flags |= 2;
+  }
+  if (flags) wake (flags);
+}
+void onLeave (GumInvocationContext * ic) {
+  if ((double) (now_us () / 1000) >= state.next_leave) wake (4);
+}
+`, { clock_gettime: libc.getExportByName("clock_gettime"), usleep: libc.getExportByName("usleep"), wake, touch_count: touchCount.isNull() ? noTouch : touchCount, state });
+      Interceptor.attach(update, cm as any);
+      log("frame bus: native");
+    } catch (error) {
+      // The same work in JS, as before the bus: one listener instead of a dozen.
+      log(`frame bus: native unavailable, JS fallback: ${error}`);
+      const usleep = new NativeFunction(libc.getExportByName("usleep"), "int", ["uint"]);
+      const touches = touchCount.isNull() ? null : new NativeFunction(touchCount, "int", []);
+      let last = 0, nextFrame = 0, prevTouch = false;
+      Interceptor.attach(update, {
+        onEnter() {
+          const t = Date.now();
+          if (last && t - last > state.add(28).readU32()) state.add(28).writeU32(t - last);
+          last = t;
+          const frameMs = state.add(16).readS64().toNumber() / 1000;
+          if (frameMs > 0) {
+            if (nextFrame > t && nextFrame - t <= frameMs) usleep(Math.round((nextFrame - t) * 1000));
+            nextFrame = Math.max(nextFrame + frameMs, Date.now());
+          } else nextFrame = 0;
+          state.add(24).writeU32((state.add(24).readU32() + 1) >>> 0);
+          let flags = 0;
+          if (t >= state.readDouble()) flags |= 1;
+          if (touch.length) { const c = touches ? touches() : 1; if (c > 0 || prevTouch) flags |= 2; prevTouch = c > 0; }
+          if (flags) dispatch(flags);
+        },
+        onLeave() { if (Date.now() >= state.add(8).readDouble()) dispatch(4); },
+      });
+    }
+    (globalThis as any).__teslFrameBusKeep = [cm, wake, noTouch];
+    const timed = (fn) => hookTimer ? hookTimer(currentSection, fn) : fn;
+    return {
+      update,
+      onDue(fn) { due.push(timed(fn)); },
+      setDue(at: number) { state.writeDouble(at); },
+      onTouch(fn) { touch.push(timed(fn)); state.add(56).writeS32(touch.length); return { detach() {} }; },
+      onLeave(fn) { const call = timed(fn); leave.push(call); return { detach() { const i = leave.indexOf(call); if (i >= 0) leave.splice(i, 1); } }; },
+      frames: () => state.add(24).readU32(),
+      takeMaxGap() { const gap = state.add(28).readU32(); state.add(28).writeU32(0); return gap; },
+      setFrameUs(us: number) { state.add(16).writeS64(Math.round(us)); },
+    };
+  })();
+  frameLeaves = frameBus; (globalThis as any).__teslFrameBus = frameBus;
+  // END android-ui: frame-bus
   const pending: { at: number; fn: () => void; tag?: string }[] = [];
   // Recurring ticks keep the queue non-empty: every frame only the earliest
   // due time is compared, the queue is scanned when something is due.
@@ -1014,7 +1127,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // second. Longer delays land on a 50 ms grid and share one dispatch.
     const at = delayMs >= 100 ? Math.ceil((Date.now() + delayMs) / 50) * 50 : Date.now() + delayMs;
     pending.push({ at, fn, tag });
-    if (at < nextDue) nextDue = at;
+    if (at < nextDue) { nextDue = at; frameBus.setDue(nextDue); }
   }
   function runPending() {
     const now = Date.now();
@@ -1025,6 +1138,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       if (pending[i].at <= now) due.push(pending.splice(i, 1)[0]);
       else if (pending[i].at < nextDue) nextDue = pending[i].at;
     }
+    frameBus.setDue(nextDue);
     if (!due.length) return;
     // One dispatch for all due tasks: each Il2Cpp.mainThread.schedule is a
     // managed call of its own.
@@ -1045,10 +1159,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     } catch (e) { log(`could not schedule a task: ${e}`); }
   }
   section("main thread scheduler", () => {
-    const services = cls(img, "SparkleServices.ServicesManager");
-    const update = services.methods.find(m => m.name === "Update");
-    if (!update) throw new Error("ServicesManager.Update not found");
-    hookAttach(update.virtualAddress, { onEnter() { runPending(); } });
+    frameBus.onDue(runPending);
   });
 
   // A gap between two service updates means the main thread was busy or
@@ -1062,21 +1173,16 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // nested overloads deliver it twice).
   // BEGIN android-ui: stall-probe
   section("main loop stall probe", () => {
-    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    // The frame bus measures the longest gap natively; it is read once a
+    // second, with what the hooks counted in that second.
     const probe = (globalThis as any).__teslRebornStallProbe = { loads: 0, tasks: 0 };
-    let last = Date.now(), quietUntil = 0;
-    hookAttach(update.virtualAddress, {
-      onEnter() {
-        const now = Date.now(), gap = now - last;
-        last = now;
-        const loads = probe.loads, tasks = probe.tasks;
-        probe.loads = 0; probe.tasks = 0;
-        if (gap >= 200 && gap < 60000 && now >= quietUntil) {
-          quietUntil = now + 1000;
-          log(`main loop stalled ${gap}ms` + ((loads || tasks) ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
-        }
-      },
-    });
+    setInterval(() => {
+      const gap = (globalThis as any).__teslFrameBus.takeMaxGap();
+      const loads = probe.loads, tasks = probe.tasks;
+      probe.loads = 0; probe.tasks = 0;
+      if (gap >= 200 && gap < 60000)
+        log(`main loop stalled ${gap}ms` + ((loads || tasks) ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
+    }, 1000);
   });
   // END android-ui: stall-probe
 
@@ -1697,7 +1803,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     // the UI callback has returned. Remember actual input, not just stack depth.
     try {
       hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-        onEnter() { noteLanguageInput(false); }
+        touchOnly: true, onEnter() { noteLanguageInput(false); }
       });
     } catch (error) { log(`resources: settings input trace unavailable: ${error}`); }
     // Account/bootstrap code also calls SetLanguage. Only an actual settings
@@ -4206,21 +4312,11 @@ function uiComponent(go, type) {
     // The limiter is always installed: the heat cap (report 14) needs it as
     // well, and Unity alone does not hold a rate below the display's.
     {
-      const usleep = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("usleep"), "int", ["uint"]);
-      let next = 0;
-      // Not hookAttach: the wait is idle time, and timing it showed the cap
-      // as ~100 ms/s of hook cost (report 17).
-      Interceptor.attach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-        onEnter() {
-          // Report 27: after a new surface Unity ignored the menu's 60 on a
-          // 120 Hz screen (96-111 FPS), so 60 is paced here as well.
-          const limit = currentRate() || 60;
-          if (limit >= 120) { next = 0; return; }
-          const frame = 1000 / limit, now = Date.now();
-          if (next > now && next - now <= frame) usleep(Math.round((next - now) * 1000));
-          next = Math.max(next + frame, Date.now());
-        }
-      });
+      // Report 27: after a new surface Unity ignored the menu's 60 on a
+      // 120 Hz screen (96-111 FPS), so 60 is paced here as well. The wait
+      // runs in the frame bus; the rate is handed to it four times a second.
+      const pace = () => { const limit = currentRate() || 60; frameBus.setFrameUs(limit >= 120 ? 0 : 1e6 / limit); };
+      pace(); setInterval(pace, 250);
       if (rate && rate < 60) log(`graphics: frame limiter at ${rate} FPS`);
     }
     // Quality: SettingsWin.UpdateUi hides resolution and windowed mode on
@@ -5502,6 +5598,8 @@ const chatWindows = new Map();
     } catch (error) { log(`mobile debug: native input resolution unavailable: ${error}`); }
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
     hookAttach(update.virtualAddress, {
+      // Called by the frame bus only while the screen is touched (and the frame after).
+      touchOnly: true,
       onEnter() {
         try {
           const current = frame(); if (current === lastFrame) return; lastFrame = current;
@@ -5831,7 +5929,10 @@ const chatWindows = new Map();
   // A frame counter for tests (Game Data cannot show the real rate). On by
   // default on the Test channel; tesl-reborn-graphics.json "showFps" decides
   // when present.
-  const fpsCounter = { frames: 0, since: Date.now(), value: 0 };
+  // The frame bus counts frames natively.
+  const fpsCounter = { base: 0, since: Date.now(), value: 0,
+    get frames() { return ((globalThis as any).__teslFrameBus?.frames() ?? 0) - this.base; },
+    set frames(value) { this.base = ((globalThis as any).__teslFrameBus?.frames() ?? 0) - value; } };
   function fpsMeterEnabled() {
     try {
       const graphics = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`) || "null");
@@ -6119,7 +6220,6 @@ const chatWindows = new Map();
     let nextPoll = 0, queued = false;
     hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
       onLeave() {
-        fpsCounter.frames++;
         if (queued || Date.now() < nextPoll) return;
         queued = true; nextPoll = Date.now() + 250;
         schedule(0, () => {
