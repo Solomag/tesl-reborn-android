@@ -6326,6 +6326,52 @@ const chatWindows = new Map();
     diagnostic("ready", `${attached.size} input hooks; original Ctrl+D permissions preserved`);
   });
   // END android-ui: global-shortcuts
+
+  // The game's debug window (DebugRuntime, opened by the corner gesture) is
+  // IMGUI: Unity hands a touch on it to the uGUI below as well, so buttons
+  // under the window fired (report after 178). While its main window is open
+  // the game's EventSystem is switched off, and back on when it closes.
+  section("debug window blocks the UI below", () => {
+    const owner = img.classes.find(c => c.name === "DebugRuntime");
+    if (!owner) throw Error("DebugRuntime not found");
+    let runtime = null, searched = false, blocked = null;
+    const services = cls(img, "SparkleServices.ServicesManager");
+    for (const method of owner.methods.filter(m => ["Awake", "Start"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+      hookAttach(method.virtualAddress, { onEnter(args) { this.self = args[0]; }, onLeave() {
+        try { if (runtime) runtime.free(); runtime = new Il2Cpp.Object(this.self).ref(false); } catch (_) {}
+      } });
+    }
+    const eventSystem = () => ucls("UnityEngine.EventSystems.EventSystem").method("get_current").invoke();
+    const release = () => {
+      if (!blocked) return;
+      try { if (unityAlive(blocked.target)) call(blocked.target, "set_enabled", true); } catch (_) {}
+      blocked.free(); blocked = null;
+      log("debug window: game UI input back on");
+    };
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
+      try {
+        if (!runtime && !searched) {
+          searched = true;
+          const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(owner.type.object);
+          if (!isNull(found)) runtime = found.ref(false);
+        }
+        let open = false;
+        if (runtime && unityAlive(runtime.target)) {
+          const behaviour = runtime.target;
+          open = Boolean(call(behaviour, "get_isActiveAndEnabled")) && Boolean(behaviour.field("_displayState").value.field("mainWindow").value);
+          // Hidden by the game's own toggle: nothing is drawn, nothing to block.
+          if (open) try { if (Boolean(call(services.method("get_Instance").invoke(), "get_HideDebugUi"))) open = false; } catch (_) {}
+        }
+        if (open && !blocked) {
+          const current = eventSystem();
+          if (unityAlive(current) && Boolean(call(current, "get_enabled"))) {
+            call(current, "set_enabled", false); blocked = current.ref(false);
+            log("debug window: game UI input off while it is open");
+          }
+        } else if (!open) release();
+      } catch (_) { release(); }
+    } });
+  });
 // END android-ui: chat-window
 
 
