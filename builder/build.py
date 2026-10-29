@@ -189,6 +189,11 @@ def patch_manifest(path):
     if not any(m.get(ANDROID + "name") == "android.max_aspect" for m in application.findall("meta-data")):
         ET.SubElement(application, "meta-data", {ANDROID + "name": "android.max_aspect", ANDROID + "value": "2.4"})
     application.set(ANDROID + "usesCleartextTraffic", "true")
+    # Lets `simpleperf` from adb shell sample the game's CPU (the battle is
+    # bound by native engine code on the main thread). Not debuggable: no
+    # debugger, no extra permissions; Android 10+ only reads CPU samples.
+    if application.find("profileable") is None:
+        ET.SubElement(application, "profileable", {ANDROID + "shell": "true"})
     if not any(
         e.get(ANDROID + "name") == "android.permission.INTERNET"
         for e in manifest.findall("uses-permission")
