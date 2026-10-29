@@ -6670,11 +6670,16 @@ const chatWindows = new Map();
       if(![3,4].includes(method.parameterCount) || method.parameters[2].type.name!=="System.Boolean")continue;
       method.implementation=function(...values) {
         const settings=Boolean(root) && Date.now()<watchUntil || resourceSettingsOpen();
+        // Report 92: closing Settings in a battle re-applied the same size with
+        // fullscreen false (the settings watch had expired), and afterwards
+        // the battle buttons took no touches. A request for the size already
+        // in force changes nothing but the fullscreen flag: always skipped.
+        const sameSize=true;
         let skip=false;
         try {const screen=chatScreen(),size=settings&&globalThis.__teslScaledSize?.(values[0],values[1]);
           skip=redundantSettingsResolution(size?[size.width,size.height,...values.slice(2)]:values,{
           width:screen.width,height:screen.height,fullscreen:null
-        },settings);}catch(_){}
+        },settings||sameSize);}catch(_){}
         watchUntil=Date.now()+2000;
         trace(skip?"SetResolution-skipped":"SetResolution",{width:values[0],height:values[1],fullscreen:values[2],
           refreshRate:values.length===4?values[3]:null,signature:method.parameters.map(p=>p.type.name).join(",")});

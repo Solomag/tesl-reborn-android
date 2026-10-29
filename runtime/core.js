@@ -11131,6 +11131,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       if (![3, 4].includes(method.parameterCount) || method.parameters[2].type.name !== "System.Boolean") continue;
       method.implementation = function(...values) {
         const settings = Boolean(root) && Date.now() < watchUntil || resourceSettingsOpen();
+        const sameSize = true;
         let skip = false;
         try {
           const screen = chatScreen(), size = settings && globalThis.__teslScaledSize?.(values[0], values[1]);
@@ -11138,7 +11139,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
             width: screen.width,
             height: screen.height,
             fullscreen: null
-          }, settings);
+          }, settings || sameSize);
         } catch (_) {
         }
         watchUntil = Date.now() + 2e3;
