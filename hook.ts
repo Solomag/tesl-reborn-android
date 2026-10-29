@@ -229,6 +229,31 @@ function hookAttach(target: NativePointerValue, callbacks: any): InvocationListe
   return Interceptor.attach(target, wrapped);
 }
 
+// A listener that enters JS only while its native flag is set: hooks on
+// functions that run every frame (Canvas.SendWillRenderCanvases) but only
+// have work now and then. Returns the switch for the flag.
+const gatedKeep: any[] = [];
+function gatedHook(target: NativePointerValue, side: "enter" | "leave", fn: () => void): (on: boolean) => void {
+  const flag = Memory.alloc(4);
+  const timed = hookTimer ? hookTimer(currentSection, fn) : fn;
+  const work = new NativeCallback(() => { try { timed(); } catch (_) { /* as a listener would */ } }, "void", []);
+  try {
+    const cm = new CModule(`
+#include <gum/guminterceptor.h>
+extern int armed;
+extern void work (void);
+void ${side === "enter" ? "onEnter" : "onLeave"} (GumInvocationContext * ic) { if (armed) work (); }
+`, { armed: flag, work });
+    Interceptor.attach(target, cm as any);
+    gatedKeep.push(cm, work);
+  } catch (_) {
+    const call = () => { if (flag.readS32()) { try { timed(); } catch (_) {} } };
+    Interceptor.attach(target, side === "enter" ? { onEnter: call } : { onLeave: call });
+    gatedKeep.push(work);
+  }
+  return (on: boolean) => flag.writeS32(on ? 1 : 0);
+}
+
 function section(name: string, fn: () => void) {
   currentSection = name;
   try { fn(); log(`OK   ${name}`); }
@@ -2568,6 +2593,8 @@ void onLeave (GumInvocationContext * ic) {
 // Android can overwrite the initial Graphic tint from a selectable/tween.
   // Track only the actual BackgroundImage bound to a legendary title row.
   const legendaryTitleRows = new Map();
+  // The render guard only runs while a legendary row is tracked.
+  let armTitleGuard: (on: boolean) => void = () => {};
   function titleListColour(self) {
     const key = self.handle.toString();
     const data = self.field("_titleData").value;
@@ -2588,6 +2615,7 @@ void onLeave (GumInvocationContext * ic) {
     call(image, "set_color", rgba(1, 0.75, 0, 1));
     if (!previous) {
       legendaryTitleRows.set(key, { row: self.weakRef(false), image: image.weakRef(false), repairs: 0, warned: false });
+      armTitleGuard(true);
       const transform = call(image, "get_transform");
       log(`titles UI: list tint target=${String(call(transform, "get_name")?.content || "?")}`);
       uiLogTree(call(self, "get_transform"), "titles UI list paths");
@@ -2617,6 +2645,7 @@ void onLeave (GumInvocationContext * ic) {
         record.row.free(); record.image.free(); legendaryTitleRows.delete(key);
       }
     }
+    armTitleGuard(legendaryTitleRows.size > 0);
   }
   section("player profile title item (legendary colour)", () => {
     const klass = cls(img, "PlayerProfileTitleItem");
@@ -2636,7 +2665,8 @@ void onLeave (GumInvocationContext * ic) {
     // Use a render callback when present, otherwise the existing main-thread scheduler.
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) {
-      hookAttach(render.virtualAddress, { onEnter() { maintainTitleListColours(); } });
+      armTitleGuard = gatedHook(render.virtualAddress, "enter", maintainTitleListColours);
+      armTitleGuard(legendaryTitleRows.size > 0);
       log("titles UI: list colour guard uses Canvas render callback");
     } else {
       const tick = () => { maintainTitleListColours(); schedule(100, tick, "title colours"); };
@@ -5443,12 +5473,13 @@ const chatWindows = new Map();
     if (Math.abs(current.x - record.desired.x) > 0.1 || Math.abs(current.y - record.desired.y) > 0.1)
       call(rect, "set_anchoredPosition", vec2(record.desired.x, record.desired.y));
   }
+  let armChatRender: (on: boolean) => void = () => {};
   function chatUpdate(self) {
     const record = chatWindows.get(self.handle.toString());
     if (!record || record.errors > 3) return;
     try {
       if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
-      record.renderPending = true;
+      record.renderPending = true; armChatRender(true);
       const touches = Number(chatInput().touchCount.invoke());
       if (chatScaleUpdate(record, touches)) return;
       const input = record.input.target;
@@ -5516,14 +5547,16 @@ const chatWindows = new Map();
       });
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-    if (render && !render.virtualAddress.isNull()) hookAttach(render.virtualAddress, {
-      // Report 23: this runs several times a frame (310/s at 104 FPS). The
-      // window's Update already found it active; apply once after that.
-      onLeave() { for (const record of chatWindows.values()) {
+    // Report 23: this runs several times a frame (310/s at 104 FPS). The
+    // window's Update already found it active; apply once after that. The
+    // listener enters JS only after such an Update.
+    if (render && !render.virtualAddress.isNull()) armChatRender = gatedHook(render.virtualAddress, "leave", () => {
+      armChatRender(false);
+      for (const record of chatWindows.values()) {
         if (!record.renderPending) continue;
         record.renderPending = false;
         try { chatApplyPosition(record); chatScaleApply(record); } catch (_) {}
-      } }
+      }
     });
     hookAttach(update.virtualAddress, {
       onEnter(args) { this.self = args[0]; },

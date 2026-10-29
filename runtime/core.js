@@ -3764,6 +3764,39 @@ function hookAttach(target, callbacks) {
   if (callbacks.onLeave) wrapped.onLeave = hookTimer(name, callbacks.onLeave);
   return Interceptor.attach(target, wrapped);
 }
+const gatedKeep = [];
+function gatedHook(target, side, fn) {
+  const flag = Memory.alloc(4);
+  const timed = hookTimer ? hookTimer(currentSection, fn) : fn;
+  const work = new NativeCallback(() => {
+    try {
+      timed();
+    } catch (_) {
+    }
+  }, "void", []);
+  try {
+    const cm = new CModule(`
+#include <gum/guminterceptor.h>
+extern int armed;
+extern void work (void);
+void ${side === "enter" ? "onEnter" : "onLeave"} (GumInvocationContext * ic) { if (armed) work (); }
+`, { armed: flag, work });
+    Interceptor.attach(target, cm);
+    gatedKeep.push(cm, work);
+  } catch (_) {
+    const call2 = () => {
+      if (flag.readS32()) {
+        try {
+          timed();
+        } catch (_2) {
+        }
+      }
+    };
+    Interceptor.attach(target, side === "enter" ? { onEnter: call2 } : { onLeave: call2 });
+    gatedKeep.push(work);
+  }
+  return (on) => flag.writeS32(on ? 1 : 0);
+}
 function section(name, fn) {
   currentSection = name;
   try {
@@ -6180,6 +6213,8 @@ void onLeave (GumInvocationContext * ic) {
     }
   });
   const legendaryTitleRows = /* @__PURE__ */ new Map();
+  let armTitleGuard = () => {
+  };
   function titleListColour(self) {
     const key = self.handle.toString();
     const data = self.field("_titleData").value;
@@ -6204,6 +6239,7 @@ void onLeave (GumInvocationContext * ic) {
     call(image, "set_color", rgba(1, 0.75, 0, 1));
     if (!previous) {
       legendaryTitleRows.set(key, { row: self.weakRef(false), image: image.weakRef(false), repairs: 0, warned: false });
+      armTitleGuard(true);
       const transform = call(image, "get_transform");
       log(`titles UI: list tint target=${String(call(transform, "get_name")?.content || "?")}`);
       uiLogTree(call(self, "get_transform"), "titles UI list paths");
@@ -6242,6 +6278,7 @@ void onLeave (GumInvocationContext * ic) {
         legendaryTitleRows.delete(key);
       }
     }
+    armTitleGuard(legendaryTitleRows.size > 0);
   }
   section("player profile title item (legendary colour)", () => {
     const klass = cls(img, "PlayerProfileTitleItem");
@@ -6267,9 +6304,8 @@ void onLeave (GumInvocationContext * ic) {
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
     if (render && !render.virtualAddress.isNull()) {
-      hookAttach(render.virtualAddress, { onEnter() {
-        maintainTitleListColours();
-      } });
+      armTitleGuard = gatedHook(render.virtualAddress, "enter", maintainTitleListColours);
+      armTitleGuard(legendaryTitleRows.size > 0);
       log("titles UI: list colour guard uses Canvas render callback");
     } else {
       const tick = () => {
@@ -9756,12 +9792,15 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     if (Math.abs(current.x - record.desired.x) > 0.1 || Math.abs(current.y - record.desired.y) > 0.1)
       call(rect, "set_anchoredPosition", vec2(record.desired.x, record.desired.y));
   }
+  let armChatRender = () => {
+  };
   function chatUpdate(self) {
     const record = chatWindows.get(self.handle.toString());
     if (!record || record.errors > 3) return;
     try {
       if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
       record.renderPending = true;
+      armChatRender(true);
       const touches = Number(chatInput().touchCount.invoke());
       if (chatScaleUpdate(record, touches)) return;
       const input = record.input.target;
@@ -9841,18 +9880,15 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       });
     }
     const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-    if (render && !render.virtualAddress.isNull()) hookAttach(render.virtualAddress, {
-      // Report 23: this runs several times a frame (310/s at 104 FPS). The
-      // window's Update already found it active; apply once after that.
-      onLeave() {
-        for (const record of chatWindows.values()) {
-          if (!record.renderPending) continue;
-          record.renderPending = false;
-          try {
-            chatApplyPosition(record);
-            chatScaleApply(record);
-          } catch (_) {
-          }
+    if (render && !render.virtualAddress.isNull()) armChatRender = gatedHook(render.virtualAddress, "leave", () => {
+      armChatRender(false);
+      for (const record of chatWindows.values()) {
+        if (!record.renderPending) continue;
+        record.renderPending = false;
+        try {
+          chatApplyPosition(record);
+          chatScaleApply(record);
+        } catch (_) {
         }
       }
     });
