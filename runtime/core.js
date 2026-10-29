@@ -4837,6 +4837,35 @@ void onLeave (GumInvocationContext * ic) {
   section("main thread scheduler", () => {
     frameBus.onDue(runPending);
   });
+  section("device diagnostics", () => {
+    const libc = Process.getModuleByName("libc.so");
+    let mte = "unknown";
+    try {
+      const prctl = new NativeFunction(libc.getExportByName("prctl"), "int", ["int", "ulong", "ulong", "ulong", "ulong"]);
+      const getauxval = new NativeFunction(libc.getExportByName("getauxval"), "ulong", ["ulong"]);
+      const hardware = (Number(getauxval(26)) & 1 << 18) !== 0;
+      const control = prctl(56, 0, 0, 0, 0);
+      const mode = control < 0 ? "?" : control & 2 ? "sync" : control & 4 ? "async" : "off";
+      mte = `${hardware ? "supported" : "not supported"}, ${control < 0 ? "control unreadable" : "tagged addresses " + (control & 1 ? "on" : "off") + ", checks " + mode}`;
+    } catch (error) {
+      mte = `unreadable: ${error}`;
+    }
+    log(`device: MTE ${mte}`);
+    schedule(2e3, () => {
+      try {
+        const info = ucls("UnityEngine.SystemInfo"), read = (name) => {
+          try {
+            return String(info.method(name, 0).invoke()?.content ?? info.method(name, 0).invoke());
+          } catch (_) {
+            return "?";
+          }
+        };
+        log(`device: GPU ${read("get_graphicsDeviceName")}; ${read("get_graphicsDeviceVersion")}; CPU ${read("get_processorType")} x${read("get_processorCount")}`);
+      } catch (error) {
+        log(`device: GPU unreadable: ${error}`);
+      }
+    }, "device diagnostics");
+  });
   section("main loop stall probe", () => {
     const probe = globalThis.__teslRebornStallProbe = { loads: 0, tasks: 0 };
     setInterval(() => {

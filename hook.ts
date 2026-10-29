@@ -1262,6 +1262,31 @@ void onLeave (GumInvocationContext * ic) {
     frameBus.onDue(runPending);
   });
 
+  // Report 106: the Pixel 8 Pro's main thread spent 86% of a core for about
+  // 12 FPS where a Xiaomi spends 65% for 55. Said once per start: whether
+  // the process runs with memory tagging (MTE, which Advanced Protection or
+  // developer options can turn on and which slows every allocation) and the
+  // graphics driver, the two things that set the Pixel 8 apart.
+  section("device diagnostics", () => {
+    const libc = Process.getModuleByName("libc.so");
+    let mte = "unknown";
+    try {
+      const prctl = new NativeFunction(libc.getExportByName("prctl"), "int", ["int", "ulong", "ulong", "ulong", "ulong"]);
+      const getauxval = new NativeFunction(libc.getExportByName("getauxval"), "ulong", ["ulong"]);
+      const hardware = (Number(getauxval(26)) & (1 << 18)) !== 0; // AT_HWCAP2, HWCAP2_MTE
+      const control = prctl(56, 0, 0, 0, 0); // PR_GET_TAGGED_ADDR_CTRL
+      const mode = control < 0 ? "?" : (control & 2) ? "sync" : (control & 4) ? "async" : "off";
+      mte = `${hardware ? "supported" : "not supported"}, ${control < 0 ? "control unreadable" : "tagged addresses " + ((control & 1) ? "on" : "off") + ", checks " + mode}`;
+    } catch (error) { mte = `unreadable: ${error}`; }
+    log(`device: MTE ${mte}`);
+    schedule(2000, () => {
+      try {
+        const info = ucls("UnityEngine.SystemInfo"), read = (name) => { try { return String(info.method(name, 0).invoke()?.content ?? info.method(name, 0).invoke()); } catch (_) { return "?"; } };
+        log(`device: GPU ${read("get_graphicsDeviceName")}; ${read("get_graphicsDeviceVersion")}; CPU ${read("get_processorType")} x${read("get_processorCount")}`);
+      } catch (error) { log(`device: GPU unreadable: ${error}`); }
+    }, "device diagnostics");
+  });
+
   // A gap between two service updates means the main thread was busy or
   // blocked: every hook writes timestamped messages to the port log, so the
   // last message before a reported stall names the code that ran right before
