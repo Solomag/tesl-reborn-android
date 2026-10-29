@@ -1058,7 +1058,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // (CModule): frame pacing, the frame count and the longest gap between
   // frames. JS is entered only when something is due: a scheduled task,
   // a touch on the screen (and the frame after it ends), or the leave
-  // callbacks, ten times a second. Before, a dozen JS callbacks ran on
+  // callbacks, four times a second (their own throttles were 250 ms or more). Before, a dozen JS callbacks ran on
   // every frame whether they had work or not.
   const frameBus = (() => {
     const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress;
@@ -1072,7 +1072,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     const dispatch = (flags: number) => {
       if (flags & 1) run(due);
       if (flags & 2) run(touch);
-      if (flags & 4) { state.add(8).writeDouble(Date.now() + 100); run(leave); }
+      if (flags & 4) { state.add(8).writeDouble(Date.now() + 250); run(leave); }
     };
     const wake = new NativeCallback(dispatch, "void", ["int"]);
     let touchCount = NULL;
@@ -3308,6 +3308,9 @@ function uiComponent(go, type) {
         for(const path of ["AppBase/UI/Sprites/Core/UtilityAssets/input-frame","AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon"])
           schedule(0,()=>loadNativeUiSprite(path,null),"deck search sprite preload");}
       if(Date.now()<next)return;next=Date.now()+250;
+      // simpleperf on 141: these scans of every DeckPickerWin were most of
+      // the 6% left in FindObjectsOfType; there is no deck picker in battle.
+      if(globalThis.__teslInBattle)return;
       schedule(0,()=>{
         const live=new Set();let scanned=false;
         try {
@@ -4014,6 +4017,9 @@ function uiComponent(go, type) {
       } catch (error) { if (mainReported !== "failed") { mainReported = "failed"; log(`graphics: main thread cpu unavailable: ${error}`); } }
     }
     function inBattle() {
+      // The battle watcher (BoardInputController.Awake .. destroyed) knows
+      // without a scan of every object.
+      if (typeof globalThis.__teslInBattle === "boolean") return globalThis.__teslInBattle;
       if (boardType === null) boardType = img.classes.find(c => c.name === "BoardInputController")?.type.object || false;
       if (!boardType) return false;
       const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(boardType);
@@ -4270,6 +4276,7 @@ function uiComponent(go, type) {
             try {
               if (live) live.free();
               live = new Il2Cpp.Object(args[0]).ref(false);
+              globalThis.__teslInBattle = true;
               globalThis.__teslPhysicsInBattle(true);
               if (!timer) timer = setInterval(() => {
                 let gone = true;
@@ -4277,6 +4284,7 @@ function uiComponent(go, type) {
                 if (!gone) return;
                 clearInterval(timer); timer = null;
                 if (live) { live.free(); live = null; }
+                globalThis.__teslInBattle = false;
                 globalThis.__teslPhysicsInBattle(false);
               }, 500);
             } catch (error) { log(`engine: battle physics switch failed: ${error}`); }
@@ -4284,6 +4292,22 @@ function uiComponent(go, type) {
         }
       } else log("engine: physics stepping kept (another libunity build)");
     } catch (error) { log(`engine: physics replace failed: ${error}`); }
+    // simpleperf on 141: JobQueue::ScheduleGroup -> Semaphore::Signal was
+    // 36% of the main thread, nearly all of it in the kernel: every job group
+    // wakes min(jobs, workers) sleeping workers, up to seven futex wakes on an
+    // eight-core phone, hundreds of groups a frame. At most two are woken
+    // now; the awake workers and the main thread (which runs jobs while it
+    // waits for a group) take the rest. The count is loaded by
+    // "ldr w8, [x20, #0x20]" before "csel w1, w24, w8, lo"; that load becomes
+    // "mov w8, #2". Checked by its bytes for this libunity build.
+    try {
+      const unity = Process.getModuleByName("libunity.so"), at = unity.base.add(0x41f58c);
+      const bytes = Array.from(new Uint8Array(at.readByteArray(16))).map(b => b.toString(16).padStart(2, "0")).join("");
+      if (bytes === "882240b980c200911f01186b0131981a") {
+        Memory.patchCode(at, 4, code => { code.writeU32(0x52800048); });
+        log("engine: job groups wake at most 2 workers");
+      } else log("engine: job wake count kept (another libunity build)");
+    } catch (error) { log(`engine: job wake patch failed: ${error}`); }
     schedule(3000, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();

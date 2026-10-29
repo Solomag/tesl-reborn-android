@@ -4626,7 +4626,7 @@ Il2Cpp.perform(() => {
       if (flags & 1) run(due);
       if (flags & 2) run(touch);
       if (flags & 4) {
-        state.add(8).writeDouble(Date.now() + 100);
+        state.add(8).writeDouble(Date.now() + 250);
         run(leave);
       }
     };
@@ -7172,6 +7172,7 @@ void onLeave (GumInvocationContext * ic) {
       }
       if (Date.now() < next) return;
       next = Date.now() + 250;
+      if (globalThis.__teslInBattle) return;
       schedule(0, () => {
         const live = /* @__PURE__ */ new Set();
         let scanned = false;
@@ -7975,6 +7976,7 @@ void onLeave (GumInvocationContext * ic) {
       }
     }
     function inBattle() {
+      if (typeof globalThis.__teslInBattle === "boolean") return globalThis.__teslInBattle;
       if (boardType === null) boardType = img.classes.find((c) => c.name === "BoardInputController")?.type.object || false;
       if (!boardType) return false;
       const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(boardType);
@@ -8283,6 +8285,7 @@ void onLeave (GumInvocationContext * ic) {
             try {
               if (live) live.free();
               live = new Il2Cpp.Object(args[0]).ref(false);
+              globalThis.__teslInBattle = true;
               globalThis.__teslPhysicsInBattle(true);
               if (!timer) timer = setInterval(() => {
                 let gone = true;
@@ -8297,6 +8300,7 @@ void onLeave (GumInvocationContext * ic) {
                   live.free();
                   live = null;
                 }
+                globalThis.__teslInBattle = false;
                 globalThis.__teslPhysicsInBattle(false);
               }, 500);
             } catch (error) {
@@ -8307,6 +8311,18 @@ void onLeave (GumInvocationContext * ic) {
       } else log("engine: physics stepping kept (another libunity build)");
     } catch (error) {
       log(`engine: physics replace failed: ${error}`);
+    }
+    try {
+      const unity = Process.getModuleByName("libunity.so"), at = unity.base.add(4322700);
+      const bytes = Array.from(new Uint8Array(at.readByteArray(16))).map((b) => b.toString(16).padStart(2, "0")).join("");
+      if (bytes === "882240b980c200911f01186b0131981a") {
+        Memory.patchCode(at, 4, (code) => {
+          code.writeU32(1384120392);
+        });
+        log("engine: job groups wake at most 2 workers");
+      } else log("engine: job wake count kept (another libunity build)");
+    } catch (error) {
+      log(`engine: job wake patch failed: ${error}`);
     }
     schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
