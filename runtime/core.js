@@ -8825,6 +8825,10 @@ void onLeave (GumInvocationContext * ic) {
               if (live) live.free();
               live = new Il2Cpp.Object(args[0]).ref(false);
               globalThis.__teslInBattle = true;
+              try {
+                globalThis.__teslBattleCameras?.();
+              } catch (_) {
+              }
               if (physicsSkip) globalThis.__teslPhysicsInBattle(true);
               if (!timer) timer = setInterval(() => {
                 let gone = true;
@@ -10750,6 +10754,74 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       }
     });
     diagnostic("ready", `${attached.size} input hooks; original Ctrl+D permissions preserved`);
+  });
+  section("battle cameras", () => {
+    const toLayer = (name) => {
+      try {
+        return Number(ucls("UnityEngine.LayerMask").method("NameToLayer", 1).invoke(Il2Cpp.string(name)));
+      } catch (_) {
+        return -1;
+      }
+    };
+    schedule(3e3, () => {
+      log(`cameras: layers MatchDragging=${toLayer("MatchDragging")} RuneWaveInput=${toLayer("RuneWaveInput")} Orthographic=${toLayer("Orthographic")} 3DUI=${toLayer("3DUI")} UI=${toLayer("UI")}`);
+    }, "camera layer names");
+    if (!experiment("cameraSkip")) return;
+    const hand = img.classes.find((c) => c.name === "CardHandController");
+    if (!hand) throw Error("CardHandController not found");
+    let drag = null, offTimer = null;
+    const findDrag = () => {
+      if (drag && unityAlive(drag.target)) return drag.target;
+      if (drag) {
+        drag.free();
+        drag = null;
+      }
+      try {
+        const go = ucls("UnityEngine.GameObject").method("Find", 1).invoke(Il2Cpp.string("Camera_Drag"));
+        if (isNull(go)) return null;
+        const camera = call(go, "GetComponent", ucls("UnityEngine.Camera").type.object);
+        if (isNull(camera)) return null;
+        drag = camera.ref(false);
+        return camera;
+      } catch (_) {
+        return null;
+      }
+    };
+    const setDrag = (on) => {
+      const camera = findDrag();
+      if (camera && Boolean(call(camera, "get_enabled")) !== on) call(camera, "set_enabled", on);
+    };
+    const start = hand.method("SetDragCard", 2), stop = ["DetachDragCard", "ClearDragCard"].map((n) => hand.tryMethod(n, 0)).filter(Boolean);
+    hookAttach(start.virtualAddress, { onEnter() {
+      if (offTimer) {
+        clearTimeout(offTimer);
+        offTimer = null;
+      }
+      try {
+        setDrag(true);
+      } catch (_) {
+      }
+    } });
+    for (const method of stop) hookAttach(method.virtualAddress, { onLeave() {
+      if (offTimer) clearTimeout(offTimer);
+      offTimer = setTimeout(() => {
+        offTimer = null;
+        schedule(0, () => {
+          try {
+            setDrag(false);
+          } catch (_) {
+          }
+        }, "drag camera off");
+      }, 500);
+    } });
+    globalThis.__teslBattleCameras = () => schedule(2e3, () => {
+      try {
+        setDrag(false);
+        log("cameras: Camera_Drag off between drags");
+      } catch (error) {
+        log(`cameras: ${error}`);
+      }
+    }, "drag camera at battle start");
   });
   section("debug window blocks the UI below", () => {
     const owner = img.classes.find((c) => c.name === "DebugRuntime");
