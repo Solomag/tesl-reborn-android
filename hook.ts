@@ -864,6 +864,19 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     } catch (e) { return "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files"; }
   }
 
+  // Risky changes run only where tesl-reborn-experiments.json switches them on
+  // ({"name": true}); the file is put on a test phone by hand, nobody else has it.
+  let experiments: any = null;
+  function experiment(name: string): boolean {
+    if (experiments === null) {
+      experiments = {};
+      try { experiments = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-experiments.json`) || "{}") || {}; } catch (_) {}
+      const on = Object.keys(experiments).filter(key => experiments[key] === true);
+      if (on.length) log(`experiments on: ${on.join(", ")}`);
+    }
+    return experiments[name] === true;
+  }
+
   function readTextFile(path: string): string {
     try {
       const file = Il2Cpp.corlib.class("System.IO.File");
@@ -4228,11 +4241,15 @@ function uiComponent(go, type) {
     const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
     const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
     let animatorType = null, engineCutsReported = "", animatorCalls = undefined;
+    let skinnedType = null, cameraType = null;
+    const skipped = new Set();
     // Off on patch 150: with off-screen culling the battle camera rig (no
     // renderers of its own) stopped moving and the Guard wall effects, which
     // animate in from invisible, never appeared. The engine decides
     // visibility by an animator's own renderers, which does not fit this game.
-    const animatorCullingWanted = false;
+    // On the test phone it can be switched on as an experiment, for skinned
+    // characters only (a SkinnedMeshRenderer below, no camera).
+    const animatorCullingWanted = experiment("animatorCulling");
     // InitializeVisibilityCulling and SyncPlayStateToCulling in this build of
     // libunity (offsets from Unity's symbols matched by code), checked by bytes.
     function animatorNative() {
@@ -4281,13 +4298,20 @@ function uiComponent(go, type) {
           const native = animatorNative();
           if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
           const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);
+          if (!skinnedType) { skinnedType = ucls("UnityEngine.SkinnedMeshRenderer").type.object; cameraType = ucls("UnityEngine.Camera").type.object; }
           let changed = 0, odd = 0;
           for (let i = 0; i < all.length; i++) {
-            const self = all.get(i).field("m_CachedPtr").value as NativePointer;
+            const animator = all.get(i), self = animator.field("m_CachedPtr").value as NativePointer;
             if (self.isNull()) continue;
             const mode = self.add(0xcc).readS32();
             if (mode < 0 || mode > 2) { odd++; continue; }
-            if (mode !== 0) continue;
+            if (mode !== 0 || skipped.has(self.toString())) continue;
+            let skinned = false;
+            try {
+              const go = call(animator, "get_gameObject"), below = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean");
+              skinned = below.invoke(skinnedType, true).length > 0 && below.invoke(cameraType, true).length === 0;
+            } catch (_) {}
+            if (!skinned) { skipped.add(self.toString()); continue; }
             self.add(0xcc).writeS32(1);
             native.initialize(self); native.sync(self);
             changed++;

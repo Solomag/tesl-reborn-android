@@ -4432,6 +4432,19 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
       return "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files";
     }
   }
+  let experiments = null;
+  function experiment(name) {
+    if (experiments === null) {
+      experiments = {};
+      try {
+        experiments = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-experiments.json`) || "{}") || {};
+      } catch (_) {
+      }
+      const on = Object.keys(experiments).filter((key) => experiments[key] === true);
+      if (on.length) log(`experiments on: ${on.join(", ")}`);
+    }
+    return experiments[name] === true;
+  }
   function readTextFile(path) {
     try {
       const file = Il2Cpp.corlib.class("System.IO.File");
@@ -8236,7 +8249,9 @@ void onLeave (GumInvocationContext * ic) {
     const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
     const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
     let animatorType = null, engineCutsReported = "", animatorCalls = void 0;
-    const animatorCullingWanted = false;
+    let skinnedType = null, cameraType = null;
+    const skipped = /* @__PURE__ */ new Set();
+    const animatorCullingWanted = experiment("animatorCulling");
     function animatorNative() {
       if (animatorCalls !== void 0) return animatorCalls;
       animatorCalls = null;
@@ -8286,16 +8301,30 @@ void onLeave (GumInvocationContext * ic) {
           const native = animatorNative();
           if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
           const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);
+          if (!skinnedType) {
+            skinnedType = ucls("UnityEngine.SkinnedMeshRenderer").type.object;
+            cameraType = ucls("UnityEngine.Camera").type.object;
+          }
           let changed = 0, odd = 0;
           for (let i = 0; i < all.length; i++) {
-            const self = all.get(i).field("m_CachedPtr").value;
+            const animator = all.get(i), self = animator.field("m_CachedPtr").value;
             if (self.isNull()) continue;
             const mode2 = self.add(204).readS32();
             if (mode2 < 0 || mode2 > 2) {
               odd++;
               continue;
             }
-            if (mode2 !== 0) continue;
+            if (mode2 !== 0 || skipped.has(self.toString())) continue;
+            let skinned = false;
+            try {
+              const go = call(animator, "get_gameObject"), below = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean");
+              skinned = below.invoke(skinnedType, true).length > 0 && below.invoke(cameraType, true).length === 0;
+            } catch (_) {
+            }
+            if (!skinned) {
+              skipped.add(self.toString());
+              continue;
+            }
             self.add(204).writeS32(1);
             native.initialize(self);
             native.sync(self);
