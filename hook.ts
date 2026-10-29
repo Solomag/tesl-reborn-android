@@ -1200,7 +1200,7 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     // double nextDue @0, double nextLeave @8, int64 frameUs @16, u32 frames @24,
     // u32 maxGap @28, int64 lastUs @32, int64 nextFrameUs @40, int prevTouch @48,
     // int hasTouch @52, int touchListeners @56
-    const state = Memory.alloc(64);
+    const state = Memory.alloc(96);
     state.writeDouble(Infinity); state.add(8).writeDouble(0);
     const due = [], touch = [], leave = [];
     const run = (list) => { for (let i = 0; i < list.length; i++) { try { list[i](); } catch (_) { /* one failing callback does not stop the others */ } } };
@@ -1220,12 +1220,13 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     const noTouch = new NativeCallback(() => 0, "int", []);
     state.add(52).writeS32(touchCount.isNull() ? 0 : 1);
     const libc = Process.getModuleByName("libc.so");
-    let cm = null;
+    let cm = null, adpfTarget = null;
     try { cm = new CModule(`
 #include <gum/guminterceptor.h>
 typedef struct { long s; long ns; } ts_t;
 typedef struct { double next_due; double next_leave; long long frame_us; unsigned frames; unsigned max_gap;
-  long long last_us; long long next_frame_us; int prev_touch; int has_touch; int touch_listeners; } State;
+  long long last_us; long long next_frame_us; int prev_touch; int has_touch; int touch_listeners; int pad;
+  void * session; int (* report) (void * session, long long nanos); long long work_start_us; } State;
 extern int clock_gettime (int clock, ts_t * t);
 extern int usleep (unsigned us);
 extern void wake (int flags);
@@ -1242,6 +1243,9 @@ void onEnter (GumInvocationContext * ic) {
     state.next_frame_us = next > n ? next : n;
   } else state.next_frame_us = 0;
   state.frames++;
+  // ADPF: the work this frame took, from the end of the last pacing wait.
+  if (state.session && state.report && state.work_start_us) state.report (state.session, (t - state.work_start_us) * 1000LL);
+  state.work_start_us = now_us ();
   int flags = 0;
   if ((double) (t / 1000) >= state.next_due) flags |= 1;
   if (state.touch_listeners) {
@@ -1256,6 +1260,36 @@ void onLeave (GumInvocationContext * ic) {
 `, { clock_gettime: libc.getExportByName("clock_gettime"), usleep: libc.getExportByName("usleep"), wake, touch_count: touchCount.isNull() ? noTouch : touchCount, state });
       Interceptor.attach(update, cm as any);
       log("frame bus: native");
+      // Reports 110-111 (Pixel 8 Pro): in battle the GPU sat at 150-302 of
+      // ~890 MHz, the mid cores at 0.40 GHz and every game thread under half
+      // busy, at 17-28 FPS. Pixels raise clocks for games that send
+      // performance hints (ADPF); Unity 2017 sends none. A hint session for
+      // the game's main, graphics and worker threads gets the target frame
+      // time and, every frame from the native bus, the time the frame took.
+      try {
+        const android = Process.getModuleByName("libandroid.so");
+        const getManager = new NativeFunction(android.getExportByName("APerformanceHint_getManager"), "pointer", []);
+        const createSession = new NativeFunction(android.getExportByName("APerformanceHint_createSession"), "pointer", ["pointer", "pointer", "size_t", "int64"]);
+        const updateTarget = new NativeFunction(android.getExportByName("APerformanceHint_updateTargetWorkDuration"), "int", ["pointer", "int64"]);
+        const report = android.getExportByName("APerformanceHint_reportActualWorkDuration");
+        const tids = [];
+        for (const thread of Process.enumerateThreads()) {
+          let name = "";
+          try { name = String((File as any).readAllText(`/proc/self/task/${thread.id}/comm`)).trim(); } catch (_) {}
+          if (/^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(name)) tids.push(thread.id);
+        }
+        const manager = getManager();
+        if (!manager.isNull() && tids.length) {
+          const list = Memory.alloc(4 * tids.length);
+          tids.forEach((tid, i) => list.add(4 * i).writeS32(tid));
+          const session = createSession(manager, list, tids.length, 16666667);
+          if (!session.isNull()) {
+            state.add(64).writePointer(session); state.add(72).writePointer(report);
+            adpfTarget = (us) => updateTarget(session, Math.round(us * 1000));
+            log(`frame bus: performance hints for ${tids.length} game threads`);
+          } else log("frame bus: performance hints refused");
+        }
+      } catch (error) { log(`frame bus: performance hints unavailable: ${error}`); }
     } catch (error) {
       // The same work in JS, as before the bus: one listener instead of a dozen.
       log(`frame bus: native unavailable, JS fallback: ${error}`);
@@ -1291,7 +1325,10 @@ void onLeave (GumInvocationContext * ic) {
       onLeave(fn) { const call = timed(fn); leave.push(call); return { detach() { const i = leave.indexOf(call); if (i >= 0) leave.splice(i, 1); } }; },
       frames: () => state.add(24).readU32(),
       takeMaxGap() { const gap = state.add(28).readU32(); state.add(28).writeU32(0); return gap; },
-      setFrameUs(us: number) { state.add(16).writeS64(Math.round(us)); },
+      setFrameUs(us: number) {
+        state.add(16).writeS64(Math.round(us));
+        try { adpfTarget?.(us > 0 ? us : 1e6 / 120); } catch (_) {}
+      },
     };
   })();
   frameLeaves = frameBus; (globalThis as any).__teslFrameBus = frameBus;
@@ -3752,10 +3789,11 @@ void onLeave (GumInvocationContext * ic) {
       state.writePointer(answer.target.handle); state.add(8).writeS32(key.length);
       for (let i = 0; i < key.length; i++) state.add(16 + i * 2).writeU16(key.charCodeAt(i));
     };
-    // The key from the game's own localization file (settings.Video.tab ->
-    // "Video"), so the very first window already reads Game data; a key
+    // The tab's key (report 111 learned settings.video; the localization
+    // file's settings.Video.tab is another text), so the very first window
+    // already reads Game data; a key
     // learned on a phone (saved) still wins if the game ever changes it.
-    let known = "settings.Video.tab";
+    let known = "settings.video";
     try { known = JSON.parse(readTextFile(file) || "{}")?.videoTab || known; } catch (_) {}
     if (known) use(known);
     globalThis.__teslVideoTabKey = (key) => {
