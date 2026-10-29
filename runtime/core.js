@@ -7750,7 +7750,9 @@ void onLeave (GumInvocationContext * ic) {
     return width > target.width ? target : { width, height };
   }
   section("graphics: render resolution", () => {
-    const percent = graphicsRenderScale(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`));
+    if (graphicsRenderScale(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`)))
+      log("graphics: saved render resolution ignored (setting removed)");
+    const percent = 0;
     if (!percent) return;
     const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
     const name = "UnityEngine.Screen::SetResolution(System.Int32,System.Int32,System.Boolean,System.Int32)";
@@ -7788,7 +7790,7 @@ void onLeave (GumInvocationContext * ic) {
     const file = `${persistentPath()}/tesl-reborn-graphics.json`;
     const rate = graphicsFrameRate(readTextFile(file));
     globalThis.__teslTargetRate = rate || 60;
-    let chosenQuality = graphicsQuality(readTextFile(file)) ?? 3;
+    let chosenQuality = 3;
     let allowMsaa = false;
     try {
       allowMsaa = JSON.parse(readTextFile(file) || "{}")?.msaa === true;
@@ -8672,10 +8674,9 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             else {
               const go = call(dropdown, "get_gameObject");
               const shown = Boolean(call(go, "get_activeSelf"));
-              if (!shown) call(go, "SetActive", true);
               const video = window.target.field("_videoButton").value;
               const options = Number(call(call(dropdown, "get_options"), "get_Count"));
-              const tab = unityAlive(video) ? call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown") : "no video tab";
+              const tab = unityAlive(video) ? call(video, "get_activeSelf") ? "video tab visible" : "video tab hidden" : "no video tab";
               let tabs = "";
               try {
                 tabs = layoutGameDataTab(window.target);
@@ -8687,7 +8688,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
               } catch (error) {
                 tabs = `game data tab: ${error}`;
               }
-              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}, ${tabs}`;
+              state = `quality dropdown ${shown ? "visible" : "hidden"}, ${options} levels, ${tab}, ${tabs}`;
             }
             if (state !== reported) {
               reported = state;

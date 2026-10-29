@@ -478,12 +478,9 @@ public class ResourceActivity extends Activity {
     int[] rateValues = new int[rates.size()];
     int at = 0;
     for (int rate : rates) rateValues[at++] = rate;
-    int[] scales = new int[15];
-    for (int i = 0; i < scales.length; i++) scales[i] = 30 + i * 5;
     addGraphicsSlider(box, file, graphics, "frameRate", tr("Frame rate"), rateValues, 60, " FPS",
         tr("Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display."));
-    addGraphicsSlider(box, file, graphics, "renderScale", tr("Render resolution"), scales, 100, "%",
-        tr("Lower resolution draws fewer pixels: faster and cooler, slightly softer. Applies on the next game start."));
+    // Render resolution was removed: the battle is CPU-bound (report 90).
     // The hook's corner frame counter. Until it is set here the hook shows it
     // on the Test channel only.
     Switch counter = new Switch(this);

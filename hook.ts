@@ -3832,7 +3832,11 @@ function uiComponent(go, type) {
     return width > target.width ? target : { width, height };
   }
   section("graphics: render resolution", () => {
-    const percent = graphicsRenderScale(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`));
+    // Removed after report 90: the battle is limited by the CPU, and of the
+    // graphics settings only MSAA cost frames. A saved scale is ignored.
+    if (graphicsRenderScale(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`)))
+      log("graphics: saved render resolution ignored (setting removed)");
+    const percent = 0;
     if (!percent) return;
     // Report from a Pixel 8 Pro: the game draws at the full 2841x1344 with 4x
     // antialiasing and drops to 5-12 FPS in matches. Unity scales the picture
@@ -3873,7 +3877,9 @@ function uiComponent(go, type) {
     const rate = graphicsFrameRate(readTextFile(file));
     globalThis.__teslTargetRate = rate || 60;
     // Without an expert choice: the highest quality, with MSAA off (below).
-    let chosenQuality = graphicsQuality(readTextFile(file)) ?? 3;
+    // The quality choice was removed with the render resolution (report 90):
+    // always the highest level, MSAA off.
+    let chosenQuality = 3;
     let allowMsaa = false;
     try { allowMsaa = JSON.parse(readTextFile(file) || "{}")?.msaa === true; } catch (_) {}
     // Report 38: Unity ignores targetFrameRate while vSync is on, and every
@@ -4613,16 +4619,13 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             let state;
             if (!unityAlive(dropdown)) state = "no quality dropdown in this window";
             else {
+              // The quality dropdown and the Video tab stay hidden, as the game
+              // has them on mobile (the setting was removed after report 90).
               const go = call(dropdown, "get_gameObject");
               const shown = Boolean(call(go, "get_activeSelf"));
-              if (!shown) call(go, "SetActive", true);
-              // Report 36: showing the hidden Settings_Tab_Video panel laid it
-              // over Audio. The window has its own Video tab button
-              // (_videoButton, tab 0, left of Audio) that mobile hides; show
-              // it and let the game's tabs switch the panels.
               const video = window.target.field("_videoButton").value;
               const options = Number(call(call(dropdown, "get_options"), "get_Count"));
-              const tab = unityAlive(video) ? (call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown")) : "no video tab";
+              const tab = unityAlive(video) ? (call(video, "get_activeSelf") ? "video tab visible" : "video tab hidden") : "no video tab";
               let tabs = "";
               try {
                 tabs = layoutGameDataTab(window.target);
@@ -4634,7 +4637,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
                   tabs = layoutGameDataTab(window.target) || "game data tab not placed";
                 }
               } catch (error) { tabs = `game data tab: ${error}`; }
-              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}, ${tabs}`;
+              state = `quality dropdown ${shown ? "visible" : "hidden"}, ${options} levels, ${tab}, ${tabs}`;
             }
             if (state !== reported) { reported = state; log(`graphics: ${state}`); }
           } catch (error) { log(`graphics: quality check failed: ${error}`); }
