@@ -29,10 +29,11 @@ for(const wrapped of [false,true]) {
   schedule:(_,f)=>scheduled.push(f),NativeFunction:function(){return()=>shown++},
   cls:(_,n)=>n==='SparkleServices.UsernameAndPassword'?{alloc:()=>cred}:{method:m=>methods[m]??(methods[m]={virtualAddress:m})},
   Il2Cpp:{Object:function(handle){assert.equal(handle,'callback-pointer');return callback;},string:x=>x}};
- vm.createContext(x);vm.runInContext('let autoLoginTried=false;\n'+extract('  section("auto login",','  // CreditsLoaderPatch'),x);
+ vm.createContext(x);vm.runInContext('let autoLoginAt=0;const autoLoginRecent=()=>Date.now()-autoLoginAt<60000;\n'+extract('  section("auto login",','  // CreditsLoaderPatch'),x);
  methods.OnLogin.implementation.call({handle:'self'},{handle:'title'},{handle:'desc'},wrapped?{handle:'callback-pointer'}:'callback-pointer');
- scheduled.forEach(f=>f());assert.equal(invoked,1);assert.equal(freed,1);assert.equal(shown,0);
- methods.OnLogin.implementation.call({handle:'self'},{handle:'title'},{handle:'desc'},'callback-pointer');assert.equal(shown,1,'one automatic attempt per process');
+ scheduled.splice(0).forEach(f=>f());assert.equal(invoked,1);assert.equal(freed,1);assert.equal(shown,0);
+ methods.OnLogin.implementation.call({handle:'self'},{handle:'title'},{handle:'desc'},'callback-pointer');assert.equal(shown,1,'no second attempt within a minute');
+ vm.runInContext('autoLoginAt-=61000',x);methods.OnLogin.implementation.call({handle:'self'},{handle:'title'},{handle:'desc'},'callback-pointer');scheduled.splice(0).forEach(f=>f());assert.equal(shown,1,'a later reconnect logs in again');assert.equal(invoked,2);
 }
 console.log('PASS: escaped/truncated log secrets, explicit auth outcomes, username retention and raw/managed callback invocation');
 // Credential commits must replace the file only after a complete successful write.
