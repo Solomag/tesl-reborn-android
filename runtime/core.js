@@ -5407,9 +5407,21 @@ void onLeave (GumInvocationContext * ic) {
     }
     return "teslreborn://" + host + "?" + query;
   }
+  function liveSettingsWindow() {
+    let destroyed = false;
+    if (resourceSettingsWindow) try {
+      destroyed = Boolean(ucls("UnityEngine.Object").method("op_Equality").invoke(resourceSettingsWindow.target, NULL));
+    } catch (_) {
+    }
+    if (destroyed) {
+      resourceSettingsWindow.free();
+      resourceSettingsWindow = null;
+    }
+    return resourceSettingsWindow;
+  }
   function resourceSettingsOpen() {
     try {
-      return resourceSettingsWindow != null && Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy"));
+      return liveSettingsWindow() != null && Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy"));
     } catch (_) {
       return false;
     }
@@ -7494,7 +7506,18 @@ void onLeave (GumInvocationContext * ic) {
     for (const type of ["TMPro.TextMeshProUGUI", "UnityEngine.UI.Text"]) {
       try {
         const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
-        for (let i = 0; i < labels.length; i++) call(labels.get(i), "set_text", text);
+        for (let i = 0; i < labels.length; i++) {
+          const label = labels.get(i);
+          try {
+            const parts = call(label, "get_gameObject").method("GetComponents").overload("System.Type").invoke(ucls("UnityEngine.Behaviour").type.object);
+            for (let j = 0; j < parts.length; j++) {
+              const part = parts.get(j);
+              if (/locali[sz]/i.test(String(part.class?.name || "")) && Boolean(call(part, "get_enabled"))) call(part, "set_enabled", false);
+            }
+          } catch (_) {
+          }
+          call(label, "set_text", text);
+        }
       } catch (_) {
       }
     }
@@ -7525,7 +7548,7 @@ void onLeave (GumInvocationContext * ic) {
     }
     if (typeName !== "SettingsWin" && !/^SettingsWin(?:Mobile)?$/i.test(compactName)) return;
     const window = call(root, "get_gameObject");
-    if (resourceSettingsWindow && !resourceSettingsWindow.target.handle.equals(window.handle)) {
+    if ((typeof liveSettingsWindow === "function" ? liveSettingsWindow() : resourceSettingsWindow) && !resourceSettingsWindow.target.handle.equals(window.handle)) {
       try {
         const previous = call(resourceSettingsWindow.target, "get_transform");
         if (Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")) && Boolean(call(previous, "IsChildOf", root))) return;
@@ -9975,7 +9998,15 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   }
   function chatSetup(self) {
     const key = self.handle.toString();
-    if (chatWindows.has(key)) return;
+    const kept = chatWindows.get(key);
+    if (kept) {
+      if (unityAlive(kept.window.target) && unityAlive(kept.input.target)) return;
+      chatWindows.delete(key);
+      for (const name of ["window", "rect", "input", "canvas", "controls", "handle"]) try {
+        kept[name]?.free();
+      } catch (_) {
+      }
+    }
     let controls = null, pickerCreated = null, createdRecord = null;
     try {
       const root = call(self, "get_transform"), window = chatFind(root, "Window");
@@ -10107,6 +10138,10 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     const record = chatWindows.get(self.handle.toString());
     if (!record || record.errors > 3) return;
     try {
+      if (!unityAlive(record.controls.target)) {
+        chatWindows.delete(self.handle.toString());
+        return;
+      }
       if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
       record.renderPending = true;
       armChatRender(true);
@@ -11265,7 +11300,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
         else return;
         if (resourceSettingsOpen() && Number(ucls("UnityEngine.Input").method("get_touchCount", 0).invoke()) > 0) {
           watchUntil = now + 2e3;
-          if (!root) root = resourceSettingsWindow.target.ref(false);
+          if (!root && (typeof liveSettingsWindow === "function" ? liveSettingsWindow() : resourceSettingsWindow)) root = resourceSettingsWindow.target.ref(false);
         }
         if (now < watchUntil) {
           if (now >= nextCapture) {

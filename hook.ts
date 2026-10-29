@@ -1823,8 +1823,19 @@ void onLeave (GumInvocationContext * ic) {
     return "teslreborn://" + host + "?" + query;
   }
 
+  // Reports 97 and 102: Settings opened after a battle aborted the game
+  // (setjmp cookie mismatch). The window kept from before the battle was
+  // destroyed with its scene; a call on a destroyed object throws inside
+  // Unity, and that exception crossing a hook aborts the process, try/catch
+  // or not. The kept window is checked with Unity's own null test first.
+  function liveSettingsWindow(): any {
+    let destroyed = false;
+    if (resourceSettingsWindow) try { destroyed = Boolean(ucls("UnityEngine.Object").method("op_Equality").invoke(resourceSettingsWindow.target, NULL)); } catch (_) {}
+    if (destroyed) { resourceSettingsWindow.free(); resourceSettingsWindow = null; }
+    return resourceSettingsWindow;
+  }
   function resourceSettingsOpen(): boolean {
-    try { return resourceSettingsWindow != null && Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")); }
+    try { return liveSettingsWindow() != null && Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")); }
     catch (_) { return false; }
   }
 
@@ -3581,7 +3592,20 @@ function uiComponent(go, type) {
     for (const type of ["TMPro.TextMeshProUGUI", "UnityEngine.UI.Text"]) {
       try {
         const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
-        for (let i = 0; i < labels.length; i++) call(labels.get(i), "set_text", text);
+        for (let i = 0; i < labels.length; i++) {
+          const label = labels.get(i);
+          // Report 102: the label read "Video" until another tab was picked;
+          // the game's localization component wrote it back. It is switched
+          // off on this label.
+          try {
+            const parts = call(label, "get_gameObject").method("GetComponents").overload("System.Type").invoke(ucls("UnityEngine.Behaviour").type.object);
+            for (let j = 0; j < parts.length; j++) {
+              const part = parts.get(j);
+              if (/locali[sz]/i.test(String(part.class?.name || "")) && Boolean(call(part, "get_enabled"))) call(part, "set_enabled", false);
+            }
+          } catch (_) {}
+          call(label, "set_text", text);
+        }
       } catch (_) {}
     }
     if (unityAlive(dropdown)) { const go = call(dropdown, "get_gameObject"); if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false); }
@@ -3606,7 +3630,7 @@ function uiComponent(go, type) {
     }
     if(typeName!=="SettingsWin" && !/^SettingsWin(?:Mobile)?$/i.test(compactName)) return;
     const window = call(root, "get_gameObject");
-    if (resourceSettingsWindow && !resourceSettingsWindow.target.handle.equals(window.handle)) {
+    if ((typeof liveSettingsWindow === "function" ? liveSettingsWindow() : resourceSettingsWindow) && !resourceSettingsWindow.target.handle.equals(window.handle)) {
       try {
         const previous = call(resourceSettingsWindow.target, "get_transform");
         if (Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")) && Boolean(call(previous, "IsChildOf", root))) return;
@@ -5670,7 +5694,15 @@ const chatWindows = new Map();
   }
   function chatSetup(self) {
     const key = self.handle.toString();
-    if (chatWindows.has(key)) return;
+    // Report 102: after battles the chat had no emoji button. A record kept
+    // for a window destroyed with its scene (its address since reused)
+    // blocked the setup of the new one.
+    const kept = chatWindows.get(key);
+    if (kept) {
+      if (unityAlive(kept.window.target) && unityAlive(kept.input.target)) return;
+      chatWindows.delete(key);
+      for (const name of ["window", "rect", "input", "canvas", "controls", "handle"]) try { kept[name]?.free(); } catch (_) {}
+    }
     let controls = null, pickerCreated = null, createdRecord = null;
     try {
       const root = call(self, "get_transform"), window = chatFind(root, "Window");
@@ -5775,6 +5807,8 @@ const chatWindows = new Map();
     const record = chatWindows.get(self.handle.toString());
     if (!record || record.errors > 3) return;
     try {
+      // A call on a destroyed object aborts the game through the hook.
+      if (!unityAlive(record.controls.target)) { chatWindows.delete(self.handle.toString()); return; }
       if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
       record.renderPending = true; armChatRender(true);
       const touches = Number(chatInput().touchCount.invoke());
@@ -6781,7 +6815,7 @@ const chatWindows = new Map();
         if(now<watchUntil || now>=nextSettingsCheck)nextSettingsCheck=now+250;else return;
         if(resourceSettingsOpen() && Number(ucls("UnityEngine.Input").method("get_touchCount",0).invoke())>0) {
           watchUntil=now+2000;
-          if(!root)root=resourceSettingsWindow.target.ref(false);
+          if(!root&&(typeof liveSettingsWindow==="function"?liveSettingsWindow():resourceSettingsWindow))root=resourceSettingsWindow.target.ref(false);
         }
         // Report 25: every frame cost 46-76 ms/s; four samples a second keep the trace.
         if(now<watchUntil){if(now>=nextCapture){nextCapture=now+250;capture();}}
