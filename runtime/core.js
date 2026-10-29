@@ -10018,6 +10018,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
   function loadingVersionState() {
     if (Date.now() < versionScreenCheck) return versionScreenState;
     versionScreenCheck = Date.now() + 500;
+    if (startupVersionComplete) return versionScreenState = { visible: false, scene: versionScreenState.scene };
     let scene = "", names = [];
     try {
       const value = ucls("UnityEngine.SceneManagement.SceneManager").method("GetActiveScene", 0).invoke();

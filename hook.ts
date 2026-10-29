@@ -5675,6 +5675,10 @@ const chatWindows = new Map();
   function loadingVersionState() {
     if(Date.now()<versionScreenCheck)return versionScreenState;
     versionScreenCheck=Date.now()+500;
+    // simpleperf on a battle: these scans of every loaded object were 12% of
+    // the main thread. The badge only waits for the first menu; after that
+    // the answer cannot change.
+    if(startupVersionComplete)return versionScreenState={visible:false,scene:versionScreenState.scene};
     let scene="",names=[];
     try {const value=ucls("UnityEngine.SceneManagement.SceneManager").method("GetActiveScene",0).invoke();scene=String(value.method("get_name",0).invoke()?.content||"");}catch(_){}
     try {
