@@ -3728,7 +3728,31 @@ const hookTimer = (() => {
     return null;
   }
 })();
+const sharedLeaves = /* @__PURE__ */ new Map();
+function sharedLeave(target, onLeave) {
+  const key = ptr(target).toString();
+  let list = sharedLeaves.get(key);
+  if (!list) {
+    const calls = list = [];
+    sharedLeaves.set(key, calls);
+    Interceptor.attach(target, { onLeave(retval) {
+      for (let i = 0; i < calls.length; i++) {
+        try {
+          calls[i].call(this, retval);
+        } catch (_) {
+        }
+      }
+    } });
+  }
+  list.push(onLeave);
+  return { detach() {
+    const i = list.indexOf(onLeave);
+    if (i >= 0) list.splice(i, 1);
+  } };
+}
 function hookAttach(target, callbacks) {
+  if (typeof callbacks === "object" && callbacks !== null && callbacks.onLeave && !callbacks.onEnter)
+    return sharedLeave(target, hookTimer ? hookTimer(currentSection, callbacks.onLeave) : callbacks.onLeave);
   if (!hookTimer || typeof callbacks !== "object" || callbacks === null) return Interceptor.attach(target, callbacks);
   const name = currentSection, wrapped = {};
   if (callbacks.onEnter) wrapped.onEnter = hookTimer(name, callbacks.onEnter);
@@ -8057,7 +8081,7 @@ Il2Cpp.perform(() => {
           skipping = battle;
           log(`engine: physics ${battle ? "syncs transforms only (battle)" : "steps normally"}`);
         };
-        const physicsSkip = false;
+        const physicsSkip = true;
         const board = img.classes.find((c) => c.name === "BoardInputController");
         if (physicsSkip && board) {
           let live = null, timer = null;

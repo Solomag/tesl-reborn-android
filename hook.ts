@@ -196,7 +196,27 @@ const hookTimer = (() => {
     };
   } catch (_) { return null; }
 })();
+// Each Interceptor listener is its own native -> JS crossing; a dozen
+// sections ran an onLeave on ServicesManager.Update every frame. Leave-only
+// hooks on one function now share a single listener that calls them in turn.
+const sharedLeaves = new Map<string, Function[]>();
+function sharedLeave(target: NativePointerValue, onLeave: Function): InvocationListener {
+  const key = ptr(target as any).toString();
+  let list = sharedLeaves.get(key);
+  if (!list) {
+    const calls: Function[] = list = [];
+    sharedLeaves.set(key, calls);
+    Interceptor.attach(target, { onLeave(retval) {
+      for (let i = 0; i < calls.length; i++) { try { calls[i].call(this, retval); } catch (_) { /* as a separate listener would: the others still run */ } }
+    } });
+  }
+  list.push(onLeave);
+  return { detach() { const i = list!.indexOf(onLeave); if (i >= 0) list!.splice(i, 1); } } as any;
+}
+
 function hookAttach(target: NativePointerValue, callbacks: any): InvocationListener {
+  if (typeof callbacks === "object" && callbacks !== null && callbacks.onLeave && !callbacks.onEnter)
+    return sharedLeave(target, hookTimer ? hookTimer(currentSection, callbacks.onLeave) : callbacks.onLeave);
   if (!hookTimer || typeof callbacks !== "object" || callbacks === null) return Interceptor.attach(target, callbacks);
   const name = currentSection, wrapped: any = {};
   if (callbacks.onEnter) wrapped.onEnter = hookTimer(name, callbacks.onEnter);
@@ -4080,10 +4100,11 @@ function uiComponent(go, type) {
         // The battle is a live BoardInputController: on from its Awake, off
         // as soon as Unity has destroyed it (its native pointer is cleared),
         // checked twice a second so the rewards screen gets real physics.
-        // Report 80: a battle hung on patch 136 right after a game error,
-        // possibly while taking a prophecy card; kinematic colliders only
-        // move to their targets when PhysX steps. Off until that is ruled out.
-        const physicsSkip = false;
+        // Report 80: a battle hung on patch 136 while taking the opponent's
+        // prophecy, the known server stall (the card was in hand after the
+        // reconnect; an own prophecy in the same battle went fine). Kept on
+        // in the test channel to rule it out.
+        const physicsSkip = true;
         const board = img.classes.find(c => c.name === "BoardInputController");
         if (physicsSkip && board) {
           let live = null, timer = null;

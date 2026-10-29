@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 137,
-  "version": "android-137-physics-normal",
-  "bytes": 459593,
-  "sha256": "69e9dd4a557ac6fa7441dde55799baf808d28decce53c8b5709fdbf2c72ddc0a",
+  "revision": 138,
+  "version": "android-138-shared-frame-hooks",
+  "bytes": 460374,
+  "sha256": "b93698ad209634415d1593ce54dddf8bdb070e040b3a4d04aca83c18b7b8535d",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "e7becde6cbc14d8aba677a516a2524afe6881788ad67a097101b4010d2b52d02"
+  "sourceSha256": "de7a119d1c5caf697449b71b070823ec3931d785439ec7d5018a1d9450729a08"
 }
