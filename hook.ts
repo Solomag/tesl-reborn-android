@@ -2711,7 +2711,11 @@ void onLeave (GumInvocationContext * ic) {
   // sufficient evidence to delete these credentials.
   // ---------------------------------------------------------------------
   const LOGIN_FILE = "tesl-login.json";
-  let autoLoginTried = false;
+  // When the remembered login was last used. A login screen right after it
+  // means the server refused it; one much later (a reconnect after the phone
+  // slept, report 121) is a new session and may log in again.
+  let autoLoginAt = 0;
+  const autoLoginRecent = () => Date.now() - autoLoginAt < 60000;
 
   function readSavedLogin(): { username: string; password: string } | null {
     try {
@@ -2757,7 +2761,7 @@ void onLeave (GumInvocationContext * ic) {
     // showing the login window.
     const useRemembered = (callback: any, saved: { username: string; password: string }, failed: () => void) => {
       const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
-      autoLoginTried = true;
+      autoLoginAt = Date.now();
       log(`auto login as ${saved.username}`);
       schedule(0, () => {
         try {
@@ -2777,9 +2781,9 @@ void onLeave (GumInvocationContext * ic) {
     mobile.implementation = function (title, description, callback) {
       try {
         const stored = readSavedLogin();
-        const saved = autoLoginTried || !stored?.password ? null : stored;
+        const saved = autoLoginRecent() || !stored?.password ? null : stored;
         if (!saved) {
-          if (autoLoginTried) {
+          if (autoLoginRecent()) {
             // The server did not accept the remembered credentials.
             // A second login screen can follow a network/session failure, not a credential rejection.
             log("auto login already attempted; keeping saved credentials and showing login");
@@ -2807,9 +2811,9 @@ void onLeave (GumInvocationContext * ic) {
     fallback.implementation = function (title, description, callback) {
       try {
         const stored = readSavedLogin();
-        const saved = autoLoginTried || !stored?.password ? null : stored;
+        const saved = autoLoginRecent() || !stored?.password ? null : stored;
         if (!saved) {
-          if (autoLoginTried) {
+          if (autoLoginRecent()) {
             // A second login screen can follow a network/session failure, not a credential rejection.
             log("auto login already attempted; keeping saved credentials and showing login");
           }
