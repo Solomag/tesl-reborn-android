@@ -7479,6 +7479,38 @@ void onLeave (GumInvocationContext * ic) {
       log(`settings button trace: ${error}`);
     }
   }
+  const gameDataLabels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
+  function videoTabAsGameData(self) {
+    let video = null, dropdown = null;
+    try {
+      video = self.field("_videoButton").value;
+      dropdown = self.field("_qualityDropdown").value;
+    } catch (_) {
+      return false;
+    }
+    if (!unityAlive(video)) return false;
+    if (!Boolean(call(video, "get_activeSelf"))) call(video, "SetActive", true);
+    const text = Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data");
+    for (const type of ["TMPro.TextMeshProUGUI", "UnityEngine.UI.Text"]) {
+      try {
+        const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
+        for (let i = 0; i < labels.length; i++) call(labels.get(i), "set_text", text);
+      } catch (_) {
+      }
+    }
+    if (unityAlive(dropdown)) {
+      const go = call(dropdown, "get_gameObject");
+      if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false);
+    }
+    const old = findGameDataButton(call(self, "get_transform"));
+    if (!isNull(old)) {
+      const go = call(old, "get_gameObject");
+      call(go, "set_name", Il2Cpp.string("RebornGameDataOld"));
+      call(go, "SetActive", false);
+      ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go);
+    }
+    return true;
+  }
   function installSettingsDataButton(self) {
     if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
     if (closingSettings.has(settingsWindowKey(self))) return;
@@ -7508,13 +7540,18 @@ void onLeave (GumInvocationContext * ic) {
       if (resourceSettingsWindow) resourceSettingsWindow.free();
       resourceSettingsWindow = window.ref(false);
     }
+    try {
+      if (videoTabAsGameData(self)) return;
+    } catch (error) {
+      log(`settings data: video tab: ${error}`);
+    }
     const existing = findGameDataButton(root);
     if (!isNull(existing)) {
       const go = call(existing, "get_gameObject");
       if (!call(go, "get_activeSelf")) call(go, "SetActive", true);
       return;
     }
-    const labels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
+    const labels = gameDataLabels;
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
       ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
     });
@@ -8663,6 +8700,25 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
     const updateUi = cls(img, "SettingsWin").tryMethod("UpdateUi", 0);
     if (!updateUi || updateUi.virtualAddress.isNull()) return;
     let reported = "";
+    const onTab = cls(img, "SettingsWin").tryMethod("HandleOnTabSelected", 1);
+    if (onTab && !onTab.virtualAddress.isNull()) hookAttach(onTab.virtualAddress, {
+      onEnter(args) {
+        if (args[1].toInt32() !== 0) return;
+        let current = 1;
+        try {
+          current = enumVal(new Il2Cpp.Object(args[0]).field("_activeTabIndex").value) || 1;
+        } catch (_) {
+        }
+        args[1] = ptr(current);
+        schedule(0, () => {
+          try {
+            ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
+          } catch (error) {
+            log(`settings data: open failed: ${error}`);
+          }
+        }, "game data tab");
+      }
+    });
     const onQuality = cls(img, "SettingsWin").tryMethod("HandleQualityOnValueChanged", 1);
     if (onQuality && !onQuality.virtualAddress.isNull()) hookAttach(onQuality.virtualAddress, {
       onLeave() {
@@ -8690,24 +8746,13 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             let state;
             if (!unityAlive(dropdown)) state = "no quality dropdown in this window";
             else {
-              const go = call(dropdown, "get_gameObject");
-              const shown = Boolean(call(go, "get_activeSelf"));
-              if (!shown) call(go, "SetActive", true);
-              const video = window.target.field("_videoButton").value;
-              const options = Number(call(call(dropdown, "get_options"), "get_Count"));
-              const tab = unityAlive(video) ? call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown") : "no video tab";
               let tabs = "";
               try {
-                tabs = layoutGameDataTab(window.target);
-                if (!tabs) {
-                  closingSettings.delete(settingsWindowKey(window.target));
-                  installSettingsDataButton(window.target);
-                  tabs = layoutGameDataTab(window.target) || "game data tab not placed";
-                }
+                tabs = videoTabAsGameData(window.target) ? "video tab is Game data" : "no video tab";
               } catch (error) {
-                tabs = `game data tab: ${error}`;
+                tabs = `video tab: ${error}`;
               }
-              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}, ${tabs}`;
+              state = `quality dropdown hidden, ${tabs}`;
             }
             if (state !== reported) {
               reported = state;

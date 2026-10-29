@@ -3566,6 +3566,30 @@ function uiComponent(go, type) {
       }
     }catch(error){log(`settings button trace: ${error}`);}
   }
+  const gameDataLabels = {en_us:"Game data",de_de:"Spieldaten",es_es:"Datos del juego",es_mx:"Datos del juego",fr_fr:"Données du jeu",it_it:"Dati di gioco",pl_pl:"Dane gry",pt_br:"Dados do jogo",ru_ru:"Данные игры",tr_tr:"Oyun verileri"};
+  // The quality choice was removed after report 90, but hiding the Video tab
+  // (153) lost the separate Game data button after battles (reports 94-97).
+  // The Video tab itself becomes Game data: the window keeps its own four-tab
+  // layout, the quality dropdown is hidden, and selecting that tab opens the
+  // Reborn data screen (HandleOnTabSelected below).
+  function videoTabAsGameData(self) {
+    let video = null, dropdown = null;
+    try { video = self.field("_videoButton").value; dropdown = self.field("_qualityDropdown").value; } catch (_) { return false; }
+    if (!unityAlive(video)) return false;
+    if (!Boolean(call(video, "get_activeSelf"))) call(video, "SetActive", true);
+    const text = Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data");
+    for (const type of ["TMPro.TextMeshProUGUI", "UnityEngine.UI.Text"]) {
+      try {
+        const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
+        for (let i = 0; i < labels.length; i++) call(labels.get(i), "set_text", text);
+      } catch (_) {}
+    }
+    if (unityAlive(dropdown)) { const go = call(dropdown, "get_gameObject"); if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false); }
+    // A separate button from an earlier patch goes.
+    const old = findGameDataButton(call(self, "get_transform"));
+    if (!isNull(old)) { const go = call(old, "get_gameObject"); call(go, "set_name", Il2Cpp.string("RebornGameDataOld")); call(go, "SetActive", false); ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go); }
+    return true;
+  }
   function installSettingsDataButton(self) {
     if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
     if (closingSettings.has(settingsWindowKey(self))) return;
@@ -3596,9 +3620,10 @@ function uiComponent(go, type) {
       if (resourceSettingsWindow) resourceSettingsWindow.free();
       resourceSettingsWindow = window.ref(false);
     }
+    try { if (videoTabAsGameData(self)) return; } catch (error) { log(`settings data: video tab: ${error}`); }
     const existing = findGameDataButton(root);
     if (!isNull(existing)) { const go=call(existing,"get_gameObject"); if(!call(go,"get_activeSelf"))call(go,"SetActive",true); return; }
-    const labels = {en_us:"Game data",de_de:"Spieldaten",es_es:"Datos del juego",es_mx:"Datos del juego",fr_fr:"Données du jeu",it_it:"Dati di gioco",pl_pl:"Dane gry",pt_br:"Dados do jogo",ru_ru:"Данные игры",tr_tr:"Oyun verileri"};
+    const labels = gameDataLabels;
     const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
       ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
     });
@@ -4627,6 +4652,17 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
     let reported = "";
     // The game asks to keep the display settings after a quality change; say
     // what Unity applied so a test can compare levels.
+    const onTab = cls(img, "SettingsWin").tryMethod("HandleOnTabSelected", 1);
+    if (onTab && !onTab.virtualAddress.isNull()) hookAttach(onTab.virtualAddress, {
+      onEnter(args) {
+        if (args[1].toInt32() !== 0) return;
+        // Stay on the tab that was showing (Audio when none was).
+        let current = 1;
+        try { current = enumVal(new Il2Cpp.Object(args[0]).field("_activeTabIndex").value) || 1; } catch (_) {}
+        args[1] = ptr(current);
+        schedule(0, () => { try { ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources")); } catch (error) { log(`settings data: open failed: ${error}`); } }, "game data tab");
+      }
+    });
     const onQuality = cls(img, "SettingsWin").tryMethod("HandleQualityOnValueChanged", 1);
     if (onQuality && !onQuality.virtualAddress.isNull()) hookAttach(onQuality.virtualAddress, {
       onLeave() {
@@ -4646,28 +4682,10 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             let state;
             if (!unityAlive(dropdown)) state = "no quality dropdown in this window";
             else {
-              // Reports 94-97: with the Video tab hidden again (153) the Game
-              // data tab went missing after a battle and Settings crashed once.
-              // The four-tab layout that worked for weeks is back while that is
-              // found; the quality itself stays fixed at the highest level.
-              const go = call(dropdown, "get_gameObject");
-              const shown = Boolean(call(go, "get_activeSelf"));
-              if (!shown) call(go, "SetActive", true);
-              const video = window.target.field("_videoButton").value;
-              const options = Number(call(call(dropdown, "get_options"), "get_Count"));
-              const tab = unityAlive(video) ? (call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown")) : "no video tab";
               let tabs = "";
-              try {
-                tabs = layoutGameDataTab(window.target);
-                // Report 25: reopened in the menu after a battle the window
-                // had no Game data tab; it is visible now, so add it here.
-                if (!tabs) {
-                  closingSettings.delete(settingsWindowKey(window.target));
-                  installSettingsDataButton(window.target);
-                  tabs = layoutGameDataTab(window.target) || "game data tab not placed";
-                }
-              } catch (error) { tabs = `game data tab: ${error}`; }
-              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}, ${tabs}`;
+              try { tabs = videoTabAsGameData(window.target) ? "video tab is Game data" : "no video tab"; }
+              catch (error) { tabs = `video tab: ${error}`; }
+              state = `quality dropdown hidden, ${tabs}`;
             }
             if (state !== reported) { reported = state; log(`graphics: ${state}`); }
             // Reports 94-96: after a battle the menu's Settings had no Game data
