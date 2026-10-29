@@ -7361,6 +7361,11 @@ Il2Cpp.perform(() => {
       }
       call(button, "set_sizeDelta", call(shown[0], "get_sizeDelta"));
     }
+    const flowRow = call(shown[0], "get_parent");
+    if (!isNull(uiComponent(call(flowRow, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup"))) {
+      ucls("UnityEngine.UI.LayoutRebuilder").method("MarkLayoutForRebuild", 1).invoke(flowRow);
+      return `${shown.length + 1} tabs in the row layout`;
+    }
     const at = (node) => {
       const p = call(node, "get_position");
       return { x: Number(p.field("x").value), y: Number(p.field("y").value), z: Number(p.field("z").value) };
@@ -7761,6 +7766,86 @@ Il2Cpp.perform(() => {
       log(`render: lights ${count("UnityEngine.Light")} (shadowed ${count("UnityEngine.Light", (l) => enumVal(call(l, "get_shadows")) !== 0)}), particle systems ${count("UnityEngine.ParticleSystem")}, mesh renderers ${count("UnityEngine.MeshRenderer")}, skinned ${count("UnityEngine.SkinnedMeshRenderer")}, projectors ${count("UnityEngine.Projector")}`);
       log(`render: particles playing ${count("UnityEngine.ParticleSystem", (p) => Boolean(call(p, "get_isPlaying")))}, alive ${count("UnityEngine.ParticleSystem", (p) => Number(call(p, "get_particleCount")) > 0)}, visible renderers ${count("UnityEngine.ParticleSystemRenderer", (r) => Boolean(call(r, "get_isVisible")))}`);
     }
+    let profiled = false;
+    function profileMainThread() {
+      if (profiled) return;
+      profiled = true;
+      const targets = [];
+      const seen = /* @__PURE__ */ new Set();
+      const add = (method, label) => {
+        if (!method || method.isStatic || method.virtualAddress.isNull()) return;
+        const key = method.virtualAddress.toString();
+        if (seen.has(key)) return;
+        seen.add(key);
+        targets.push({ at: method.virtualAddress, label });
+      };
+      for (const klass of img.classes) {
+        if (klass.name === "ServicesManager") continue;
+        for (const method of klass.methods)
+          if (method.parameterCount === 0 && ["Update", "LateUpdate", "FixedUpdate"].includes(method.name))
+            add(method, `${klass.name}.${method.name}`);
+      }
+      for (const [type, name] of [
+        ["UnityEngine.UI.CanvasUpdateRegistry", "PerformUpdate"],
+        ["TMPro.TMP_UpdateManager", "DoRebuilds"],
+        ["UnityEngine.Canvas", "SendWillRenderCanvases"]
+      ]) {
+        try {
+          const k = ucls(type);
+          add(k.tryMethod(name, 0) || k.methods.find((m) => m.name === name), `${k.name}.${name}`);
+        } catch (_) {
+        }
+      }
+      const count = targets.length;
+      const totals = Memory.alloc(count * 8), calls = Memory.alloc(count * 4);
+      const cm = new CModule(`
+        #include <gum/guminterceptor.h>
+        struct ts { long sec; long nsec; };
+        extern int clock_gettime(int, struct ts *);
+        extern long long totals[];
+        extern int calls[];
+        static long long now(void) { struct ts t; clock_gettime(1, &t); return t.sec * 1000000000LL + t.nsec; }
+        void onEnter(GumInvocationContext *ic) { *GUM_IC_GET_INVOCATION_DATA(ic, long long) = now(); }
+        void onLeave(GumInvocationContext *ic) {
+          int i = GPOINTER_TO_INT(gum_invocation_context_get_listener_function_data(ic));
+          totals[i] += now() - *GUM_IC_GET_INVOCATION_DATA(ic, long long);
+          calls[i]++;
+        }`, { clock_gettime: Process.getModuleByName("libc.so").getExportByName("clock_gettime"), totals, calls });
+      const listeners = [];
+      Interceptor.beginTransaction();
+      try {
+        targets.forEach((target, i) => {
+          try {
+            listeners.push(Interceptor.attach(target.at, { onEnter: cm.onEnter, onLeave: cm.onLeave }, ptr(i)));
+          } catch (_) {
+          }
+        });
+      } finally {
+        Interceptor.endTransaction();
+      }
+      const started = Date.now();
+      log(`profile: timing ${listeners.length} of ${count} main-thread methods for 45 s`);
+      schedule(45e3, () => {
+        Interceptor.beginTransaction();
+        try {
+          for (const listener of listeners) listener.detach();
+        } finally {
+          Interceptor.endTransaction();
+        }
+        const seconds = (Date.now() - started) / 1e3;
+        const rows = targets.map((target, i) => ({
+          label: target.label,
+          ms: totals.add(i * 8).readS64().toNumber() / 1e6 / seconds,
+          calls: calls.add(i * 4).readS32() / seconds
+        })).filter((row) => row.ms > 0.05).sort((a, b) => b.ms - a.ms);
+        let sum = 0;
+        for (const row of rows) sum += row.ms;
+        log(`profile: ${sum.toFixed(0)} ms/s in timed methods (nested calls counted in each)`);
+        for (const row of rows.slice(0, 25)) log(`profile: ${row.ms.toFixed(1)} ms/s ${Math.round(row.calls)}/s ${row.label}`);
+        profileKeep = cm;
+      }, "main thread profile");
+    }
+    let profileKeep = null;
     schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
@@ -7785,6 +7870,13 @@ Il2Cpp.perform(() => {
             log(`render: snapshot failed: ${error}`);
           }
         }, "graphics render snapshot");
+        if (mode === "battle") schedule(1e4, () => {
+          try {
+            profileMainThread();
+          } catch (error) {
+            log(`profile: failed: ${error}`);
+          }
+        }, "main thread profile start");
         applyRate(state2.cap ? `${mode} rate` : "cap lifted");
         return;
       }
