@@ -6852,7 +6852,10 @@ const chatWindows = new Map();
     // game's whole UI is one camera-space root, CanvasRoot:1/1 (report 26);
     // WorldSpace (2) is not the screen and never hosts the notice.
     function overlayHost() {
-      const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")
+      // Report 119 (Pixel 8 Pro): this scan of every Canvas, prefabs and
+      // hidden ones included, grew through each battle (865 -> 1473 ms per
+      // 15 s). Only active ones can host the banner.
+      const values = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type")
         .invoke(ucls("UnityEngine.Canvas").type.object);
       let host = null, rank = -Infinity;
       const seen = hostRoots = [];
@@ -6897,8 +6900,9 @@ const chatWindows = new Map();
           // put a later screen Canvas above it (report 27: built under
           // CanvasRoot, yet never seen). While the badge or a message should
           // show, move to a better host when one appears.
-          if (!nested || !wanted || Date.now() < hostCheckAt) return;
-          hostCheckAt = Date.now() + 2000;
+          // No better host is looked for in battle, and every 10 s elsewhere.
+          if (!nested || !wanted || Date.now() < hostCheckAt || globalThis.__teslInBattle) return;
+          hostCheckAt = Date.now() + 10000;
           better = overlayHost();
           if (!better || better.handle.toString() === hostKey) return;
           discard();
@@ -7109,7 +7113,7 @@ const chatWindows = new Map();
         schedule(0, () => {
           queued = false;
           try { notices.poll(); banner.tick(); } catch (error) { log(`update notice poll: ${error}`); }
-        });
+        }, "banner tick");
       }
     });
     // Public HTTPS requests need no account token. Never wait for this check

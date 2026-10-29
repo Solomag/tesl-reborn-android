@@ -11320,7 +11320,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     const unityObject = ucls("UnityEngine.Object");
     const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
     function overlayHost() {
-      const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+      const values = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
       let host = null, rank = -Infinity;
       const seen = hostRoots = [];
       for (let i = 0; i < values.length; i++) {
@@ -11366,8 +11366,8 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       if (root) {
         if (!alive(root.target)) discard();
         else {
-          if (!nested2 || !wanted || Date.now() < hostCheckAt) return;
-          hostCheckAt = Date.now() + 2e3;
+          if (!nested2 || !wanted || Date.now() < hostCheckAt || globalThis.__teslInBattle) return;
+          hostCheckAt = Date.now() + 1e4;
           better = overlayHost();
           if (!better || better.handle.toString() === hostKey) return;
           discard();
@@ -11610,7 +11610,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           } catch (error) {
             log(`update notice poll: ${error}`);
           }
-        });
+        }, "banner tick");
       }
     });
     schedule(1e3, () => {

@@ -89,7 +89,7 @@ const r={Date:class extends Date {static now(){return clock;}},PLUGIN_VERSION:'1
   nested:n=>{assert.equal(name,'UnityEngine.UI.CanvasScaler');assert.equal(n,'ScaleMode');return {field:()=>({value:1})};},
   method:method=>({invoke:value=>method==='op_Equality'?Boolean(value.dead):undefined,overload:()=>({invoke:value=>{
    calls.push([value,method]);if(method==='Destroy')value.dead=true;
-   if(method==='FindObjectsOfTypeAll'){finds++;return {length:hosts.length,get:i=>hosts[i]};}
+   if(method==='FindObjectsOfTypeAll'||method==='FindObjectsOfType'){finds++;return {length:hosts.length,get:i=>hosts[i]};}
   }})})}),
  newWith:(type,name)=>object(name),Il2Cpp:{string:value=>value,array:()=>[],corlib:{class:()=>({})}},
  uiAdd:(go,type)=>{assert(!/GraphicRaycaster|Button|EventTrigger/.test(type));return object(type);},
