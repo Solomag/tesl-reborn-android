@@ -4277,10 +4277,9 @@ function uiComponent(go, type) {
               if (live) live.free();
               live = new Il2Cpp.Object(args[0]).ref(false);
               globalThis.__teslInBattle = true;
-              // Report 83: started from inside this hook, the probe's attach
-              // left the main thread stuck while a rejoined battle loaded.
-              // It starts later, from the JS thread.
-              setTimeout(() => { try { if (globalThis.__teslInBattle) globalThis.__teslCameraProbe?.(); } catch (_) {} }, 5000);
+              // Reports 83-84: attaching the camera probe (CModule listeners on
+              // Camera::CustomCull/CustomRender) froze the main thread both from
+              // this hook and 5 s later from the JS thread. It is not started.
               globalThis.__teslPhysicsInBattle(true);
               if (!timer) timer = setInterval(() => {
                 let gone = true;
