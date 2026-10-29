@@ -903,7 +903,9 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     }
     return experiments[name] === true;
   }
-  try { if (experiment("safeInvoke")) installSafeInvoke(); } catch (error) { log(`safe invoke unavailable: ${error}`); }
+  // On for everyone after report 108; {"safeInvoke": false} in the
+  // experiments file turns it off on a phone.
+  try { experiment("safeInvoke"); if (experiments.safeInvoke !== false) installSafeInvoke(); } catch (error) { log(`safe invoke unavailable: ${error}`); }
 
   // Reports 97-106: "setjmp cookie mismatch" aborts. Every managed call
   // the hook makes went straight to the method's code through a Frida
@@ -3749,6 +3751,7 @@ void onLeave (GumInvocationContext * ic) {
   // The Video tab itself becomes Game data: the window keeps its own four-tab
   // layout, the quality dropdown is hidden, and selecting that tab opens the
   // Reborn data screen (HandleOnTabSelected below).
+  let videoKeyReported = false;
   function videoTabAsGameData(self) {
     let video = null, dropdown = null;
     try { video = self.field("_videoButton").value; dropdown = self.field("_qualityDropdown").value; } catch (_) { return false; }
@@ -3760,24 +3763,31 @@ void onLeave (GumInvocationContext * ic) {
         const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
         for (let i = 0; i < labels.length; i++) {
           const label = labels.get(i);
-          // Report 102: the label read "Video" until another tab was picked;
-          // its localization component sets it from a key. That key is
-          // learned here and answered with "Game data" by LocalizationManager.
-          // GetText itself (below), so later windows draw it from the start.
-          try {
-            const parts = call(label, "get_gameObject").method("GetComponents").overload("System.Type").invoke(ucls("UnityEngine.Behaviour").type.object);
-            for (let j = 0; j < parts.length; j++) {
-              const part = parts.get(j);
-              if (!/^Localize/.test(String(part.class?.name || ""))) continue;
-              const key = String(part.field("_key").value?.content || "");
-              if (key) globalThis.__teslVideoTabKey?.(key);
-            }
-          } catch (_) {}
+
           call(label, "set_text", text);
         }
       } catch (_) {}
     }
     if (unityAlive(dropdown)) { const go = call(dropdown, "get_gameObject"); if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false); }
+    // Report 102: the label read "Video" until another tab was picked; a
+    // localization component sets it from a key. Report 108: none was found
+    // on the text object itself, so every Localize* component under the tab
+    // is searched. Its key is answered with "Game data" by
+    // LocalizationManager.GetText (above), so later windows draw it at once.
+    try {
+      const found = [];
+      for (const name of ["LocalizeTextMeshProUGUI", "LocalizeTextMeshPro", "LocalizeTextUGUI"]) {
+        const klass = img.classes.find(c => c.name === name);
+        if (!klass) continue;
+        const parts = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(klass.type.object, true);
+        for (let j = 0; j < parts.length; j++) {
+          const key = String(parts.get(j).field("_key").value?.content || "");
+          found.push(`${name}:${key || "-"}`);
+          if (key) globalThis.__teslVideoTabKey?.(key);
+        }
+      }
+      if (!found.length && !videoKeyReported) { videoKeyReported = true; log("settings data: no localization component under the Video tab"); }
+    } catch (error) { if (!videoKeyReported) { videoKeyReported = true; log(`settings data: Video tab key unreadable: ${error}`); } }
     // Report 104: the window opens on Audio but its TabGroup leaves the first
     // toggle (Video, hidden on mobile until now) lit. The toggle of the tab
     // actually shown is switched on; the group turns the others off.

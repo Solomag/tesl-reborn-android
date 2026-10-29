@@ -4469,7 +4469,8 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     return experiments[name] === true;
   }
   try {
-    if (experiment("safeInvoke")) installSafeInvoke();
+    experiment("safeInvoke");
+    if (experiments.safeInvoke !== false) installSafeInvoke();
   } catch (error) {
     log(`safe invoke unavailable: ${error}`);
   }
@@ -7682,6 +7683,7 @@ void onLeave (GumInvocationContext * ic) {
     globalThis.__teslVideoTabKeep = cm;
     log(`settings data: Video tab text override ${known ? "for " + known : "waits for the key"}`);
   });
+  let videoKeyReported = false;
   function videoTabAsGameData(self) {
     let video = null, dropdown = null;
     try {
@@ -7698,16 +7700,6 @@ void onLeave (GumInvocationContext * ic) {
         const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
         for (let i = 0; i < labels.length; i++) {
           const label = labels.get(i);
-          try {
-            const parts = call(label, "get_gameObject").method("GetComponents").overload("System.Type").invoke(ucls("UnityEngine.Behaviour").type.object);
-            for (let j = 0; j < parts.length; j++) {
-              const part = parts.get(j);
-              if (!/^Localize/.test(String(part.class?.name || ""))) continue;
-              const key = String(part.field("_key").value?.content || "");
-              if (key) globalThis.__teslVideoTabKey?.(key);
-            }
-          } catch (_) {
-          }
           call(label, "set_text", text);
         }
       } catch (_) {
@@ -7716,6 +7708,28 @@ void onLeave (GumInvocationContext * ic) {
     if (unityAlive(dropdown)) {
       const go = call(dropdown, "get_gameObject");
       if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false);
+    }
+    try {
+      const found = [];
+      for (const name of ["LocalizeTextMeshProUGUI", "LocalizeTextMeshPro", "LocalizeTextUGUI"]) {
+        const klass = img.classes.find((c) => c.name === name);
+        if (!klass) continue;
+        const parts = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(klass.type.object, true);
+        for (let j = 0; j < parts.length; j++) {
+          const key = String(parts.get(j).field("_key").value?.content || "");
+          found.push(`${name}:${key || "-"}`);
+          if (key) globalThis.__teslVideoTabKey?.(key);
+        }
+      }
+      if (!found.length && !videoKeyReported) {
+        videoKeyReported = true;
+        log("settings data: no localization component under the Video tab");
+      }
+    } catch (error) {
+      if (!videoKeyReported) {
+        videoKeyReported = true;
+        log(`settings data: Video tab key unreadable: ${error}`);
+      }
     }
     try {
       const active = enumVal(self.field("_activeTabIndex").value);
