@@ -623,19 +623,35 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   //    b) The same check inside LoadAssetBundleInternal decides whether the platform manifest (shipped in the OBB as
   //       assets/android) is read locally or downloaded. Force "local" for that call only.
   section("bundles: desktop behaviour", () => {
-    let inLoad = false;
-    hookAttach(byName("AssetBundles.AssetBundleManager", "LoadAssetBundleInternal").virtualAddress, {
-      onEnter() { inLoad = true; },
-      onLeave() { inLoad = false; },
-    });
-    let once = 0;
-    hookAttach(byName("PlatformUtils", "PlatformDownloadsBundles").virtualAddress, {
-      onLeave(ret) { if (inLoad) { ret.replace(ptr(0)); if (once++ < 3) log("PlatformUtils.PlatformDownloadsBundles -> false (manifest from OBB)"); } },
-    });
-    let once2 = 0;
-    hookAttach(byName("AssetCatalog", "PlatformDownloadsBundles").virtualAddress, {
-      onLeave(ret) { ret.replace(ptr(0)); if (once2++ < 3) log("AssetCatalog.PlatformDownloadsBundles -> false (no CDN download)"); },
-    });
+    // These run 350-700 times a second while cards load; in JS each was a
+    // native -> JS crossing. Now native: AssetCatalog's answer is patched to
+    // "return false", and PlatformUtils' answer is replaced in a CModule
+    // listener while LoadAssetBundleInternal runs (a native depth counter).
+    const load = byName("AssetBundles.AssetBundleManager", "LoadAssetBundleInternal").virtualAddress;
+    const platform = byName("PlatformUtils", "PlatformDownloadsBundles").virtualAddress;
+    const catalog = byName("AssetCatalog", "PlatformDownloadsBundles").virtualAddress;
+    const depth = Memory.alloc(4);
+    try {
+      const cm = new CModule(`
+#include <gum/guminterceptor.h>
+extern int depth;
+void load_enter (GumInvocationContext * ic) { depth++; }
+void load_leave (GumInvocationContext * ic) { if (depth > 0) depth--; }
+void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_context_replace_return_value (ic, (gpointer) 0); }
+`, { depth });
+      Interceptor.attach(load, { onEnter: cm.load_enter, onLeave: cm.load_leave } as any);
+      Interceptor.attach(platform, { onLeave: cm.platform_leave } as any);
+      (globalThis as any).__teslBundlesKeep = cm;
+      log("PlatformUtils.PlatformDownloadsBundles -> false while loading bundles (manifest from OBB, native)");
+    } catch (error) {
+      let inLoad = false;
+      hookAttach(load, { onEnter() { inLoad = true; }, onLeave() { inLoad = false; } });
+      hookAttach(platform, { onLeave(ret) { if (inLoad) ret.replace(ptr(0)); } });
+      log(`PlatformUtils.PlatformDownloadsBundles -> false while loading bundles (JS: ${error})`);
+    }
+    // mov w0, #0; ret
+    Memory.patchCode(catalog, 8, code => { code.writeU32(0x52800000); code.add(4).writeU32(0xd65f03c0); });
+    log("AssetCatalog.PlatformDownloadsBundles -> false (no CDN download, patched)");
     // Where do the streaming assets (the OBB) come from?
     try {
       let seenLocal = 0;

@@ -4213,31 +4213,39 @@ Il2Cpp.perform(() => {
     }
   };
   section("bundles: desktop behaviour", () => {
-    let inLoad = false;
-    hookAttach(byName("AssetBundles.AssetBundleManager", "LoadAssetBundleInternal").virtualAddress, {
-      onEnter() {
+    const load = byName("AssetBundles.AssetBundleManager", "LoadAssetBundleInternal").virtualAddress;
+    const platform = byName("PlatformUtils", "PlatformDownloadsBundles").virtualAddress;
+    const catalog = byName("AssetCatalog", "PlatformDownloadsBundles").virtualAddress;
+    const depth = Memory.alloc(4);
+    try {
+      const cm = new CModule(`
+#include <gum/guminterceptor.h>
+extern int depth;
+void load_enter (GumInvocationContext * ic) { depth++; }
+void load_leave (GumInvocationContext * ic) { if (depth > 0) depth--; }
+void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_context_replace_return_value (ic, (gpointer) 0); }
+`, { depth });
+      Interceptor.attach(load, { onEnter: cm.load_enter, onLeave: cm.load_leave });
+      Interceptor.attach(platform, { onLeave: cm.platform_leave });
+      globalThis.__teslBundlesKeep = cm;
+      log("PlatformUtils.PlatformDownloadsBundles -> false while loading bundles (manifest from OBB, native)");
+    } catch (error) {
+      let inLoad = false;
+      hookAttach(load, { onEnter() {
         inLoad = true;
-      },
-      onLeave() {
+      }, onLeave() {
         inLoad = false;
-      }
+      } });
+      hookAttach(platform, { onLeave(ret) {
+        if (inLoad) ret.replace(ptr(0));
+      } });
+      log(`PlatformUtils.PlatformDownloadsBundles -> false while loading bundles (JS: ${error})`);
+    }
+    Memory.patchCode(catalog, 8, (code) => {
+      code.writeU32(1384120320);
+      code.add(4).writeU32(3596551104);
     });
-    let once = 0;
-    hookAttach(byName("PlatformUtils", "PlatformDownloadsBundles").virtualAddress, {
-      onLeave(ret) {
-        if (inLoad) {
-          ret.replace(ptr(0));
-          if (once++ < 3) log("PlatformUtils.PlatformDownloadsBundles -> false (manifest from OBB)");
-        }
-      }
-    });
-    let once2 = 0;
-    hookAttach(byName("AssetCatalog", "PlatformDownloadsBundles").virtualAddress, {
-      onLeave(ret) {
-        ret.replace(ptr(0));
-        if (once2++ < 3) log("AssetCatalog.PlatformDownloadsBundles -> false (no CDN download)");
-      }
-    });
+    log("AssetCatalog.PlatformDownloadsBundles -> false (no CDN download, patched)");
     try {
       let seenLocal = 0;
       const mgr = cls(img, "AssetBundles.AssetBundleManager");
