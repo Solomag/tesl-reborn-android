@@ -3753,6 +3753,13 @@ function uiComponent(go, type) {
       log(`graphics: render scale ${auto.renderScale || 100}% -> ${renderScale}%, learned frame rates reset`);
       auto = { msaaOff: auto.msaaOff };
     }
+    // Report 74: rates learned before patch 131 include our own object scan,
+    // which grew through each battle; they are learned again once.
+    const learning = 131;
+    if (auto.at && auto.learning !== learning) {
+      log(`graphics: learned frame rates from before patch ${learning} reset`);
+      auto = { msaaOff: auto.msaaOff };
+    }
     const learnedRate = value => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     // Patch 117 kept one rate for both.
     const modes = {
@@ -3769,7 +3776,7 @@ function uiComponent(go, type) {
     const saveAuto = () => {
       try {
         writeTextFile(autoFile, JSON.stringify({ menu: { rate: modes.menu.cap || ceiling }, battle: { rate: modes.battle.cap || ceiling },
-          msaaOff, renderScale, at: new Date().toISOString() }));
+          msaaOff, renderScale, learning, at: new Date().toISOString() }));
       } catch (_) {}
     };
     function antiAliasingOff() {

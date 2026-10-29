@@ -7645,6 +7645,11 @@ Il2Cpp.perform(() => {
       log(`graphics: render scale ${auto.renderScale || 100}% -> ${renderScale}%, learned frame rates reset`);
       auto = { msaaOff: auto.msaaOff };
     }
+    const learning = 131;
+    if (auto.at && auto.learning !== learning) {
+      log(`graphics: learned frame rates from before patch ${learning} reset`);
+      auto = { msaaOff: auto.msaaOff };
+    }
     const learnedRate = (value) => ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     const modes = {
       menu: { cap: learnedRate(auto.menu?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
@@ -7663,6 +7668,7 @@ Il2Cpp.perform(() => {
           battle: { rate: modes.battle.cap || ceiling },
           msaaOff,
           renderScale,
+          learning,
           at: (/* @__PURE__ */ new Date()).toISOString()
         }));
       } catch (_) {
