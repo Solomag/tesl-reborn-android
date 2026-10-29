@@ -8637,10 +8637,12 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
     const setQuality = manager.tryMethod("SetQuality", 1);
     if (setQuality) hookAttach(setQuality.virtualAddress, {
       onEnter(args) {
-        const self = new Il2Cpp.Object(args[0]).ref(false), value = args[1].toInt32();
+        const self = new Il2Cpp.Object(args[0]).ref(false);
+        let value = args[1].toInt32();
         schedule(0, () => {
           try {
-            chosenQuality = value >= 0 && value <= 3 ? value : null;
+            chosenQuality = 3;
+            value = 3;
             let saved = {};
             try {
               saved = JSON.parse(readTextFile(file) || "{}") || {};
@@ -8690,9 +8692,10 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             else {
               const go = call(dropdown, "get_gameObject");
               const shown = Boolean(call(go, "get_activeSelf"));
+              if (!shown) call(go, "SetActive", true);
               const video = window.target.field("_videoButton").value;
               const options = Number(call(call(dropdown, "get_options"), "get_Count"));
-              const tab = unityAlive(video) ? call(video, "get_activeSelf") ? "video tab visible" : "video tab hidden" : "no video tab";
+              const tab = unityAlive(video) ? call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown") : "no video tab";
               let tabs = "";
               try {
                 tabs = layoutGameDataTab(window.target);
@@ -8704,7 +8707,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
               } catch (error) {
                 tabs = `game data tab: ${error}`;
               }
-              state = `quality dropdown ${shown ? "visible" : "hidden"}, ${options} levels, ${tab}, ${tabs}`;
+              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}, ${tabs}`;
             }
             if (state !== reported) {
               reported = state;

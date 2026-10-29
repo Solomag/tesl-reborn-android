@@ -4603,10 +4603,12 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
     const setQuality = manager.tryMethod("SetQuality", 1);
     if (setQuality) hookAttach(setQuality.virtualAddress, {
       onEnter(args) {
-        const self = new Il2Cpp.Object(args[0]).ref(false), value = args[1].toInt32();
+        const self = new Il2Cpp.Object(args[0]).ref(false); let value = args[1].toInt32();
         schedule(0, () => {
           try {
-            chosenQuality = value >= 0 && value <= 3 ? value : null;
+            // The choice is not kept (setting removed after report 90): the
+            // highest level is applied whatever was picked.
+            chosenQuality = 3; value = 3;
             let saved = {};
             try { saved = JSON.parse(readTextFile(file) || "{}") || {}; } catch (_) {}
             if (chosenQuality === null) delete saved.quality; else saved.quality = chosenQuality;
@@ -4641,13 +4643,16 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             let state;
             if (!unityAlive(dropdown)) state = "no quality dropdown in this window";
             else {
-              // The quality dropdown and the Video tab stay hidden, as the game
-              // has them on mobile (the setting was removed after report 90).
+              // Reports 94-97: with the Video tab hidden again (153) the Game
+              // data tab went missing after a battle and Settings crashed once.
+              // The four-tab layout that worked for weeks is back while that is
+              // found; the quality itself stays fixed at the highest level.
               const go = call(dropdown, "get_gameObject");
               const shown = Boolean(call(go, "get_activeSelf"));
+              if (!shown) call(go, "SetActive", true);
               const video = window.target.field("_videoButton").value;
               const options = Number(call(call(dropdown, "get_options"), "get_Count"));
-              const tab = unityAlive(video) ? (call(video, "get_activeSelf") ? "video tab visible" : "video tab hidden") : "no video tab";
+              const tab = unityAlive(video) ? (call(video, "get_activeSelf") ? "video tab visible" : (call(video, "SetActive", true), "video tab shown")) : "no video tab";
               let tabs = "";
               try {
                 tabs = layoutGameDataTab(window.target);
@@ -4659,7 +4664,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
                   tabs = layoutGameDataTab(window.target) || "game data tab not placed";
                 }
               } catch (error) { tabs = `game data tab: ${error}`; }
-              state = `quality dropdown ${shown ? "visible" : "hidden"}, ${options} levels, ${tab}, ${tabs}`;
+              state = `quality dropdown ${shown ? "visible" : "unhidden"}, ${options} levels, ${tab}, ${tabs}`;
             }
             if (state !== reported) { reported = state; log(`graphics: ${state}`); }
             // Reports 94-96: after a battle the menu's Settings had no Game data
