@@ -3695,6 +3695,23 @@ function uiComponent(go, type) {
       if (call(call(node, "get_gameObject"), "get_activeInHierarchy")) shown.push(node);
     }
     if (shown.length < 2) return null;
+    // Report 95: after a battle the menu's window had only Audio and
+    // Preferences while a Game data button was still found and active: it
+    // was not in this window's tab row. A button outside the row, or hidden
+    // by its parents, is dropped so the caller installs a new one.
+    const tabRow = call(shown[0], "get_parent");
+    const buttonParent = call(button, "get_parent");
+    // Only a row laid out by a HorizontalLayoutGroup takes the button in;
+    // otherwise it is the window's own child.
+    const rowLaidOut = !isNull(uiComponent(call(tabRow, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup"));
+    const inRow = !rowLaidOut || !isNull(buttonParent) && call(buttonParent, "GetInstanceID") === call(tabRow, "GetInstanceID");
+    if (!inRow || !Boolean(call(buttonObject, "get_activeInHierarchy"))) {
+      log(`settings data: Game data tab ${inRow ? "hidden by its parents" : "outside the tab row"}; installed again`);
+      call(buttonObject, "set_name", Il2Cpp.string("RebornGameDataOld"));
+      call(buttonObject, "SetActive", false);
+      ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(buttonObject);
+      return null;
+    }
     // Report 44: opened in battle, the tabs had no size yet when the button
     // was styled (0x0), so it stayed too small and Preferences ran into it.
     // Take the size again from a visible tab now.

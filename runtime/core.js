@@ -7607,6 +7607,17 @@ void onLeave (GumInvocationContext * ic) {
       if (call(call(node, "get_gameObject"), "get_activeInHierarchy")) shown.push(node);
     }
     if (shown.length < 2) return null;
+    const tabRow = call(shown[0], "get_parent");
+    const buttonParent = call(button, "get_parent");
+    const rowLaidOut = !isNull(uiComponent(call(tabRow, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup"));
+    const inRow = !rowLaidOut || !isNull(buttonParent) && call(buttonParent, "GetInstanceID") === call(tabRow, "GetInstanceID");
+    if (!inRow || !Boolean(call(buttonObject, "get_activeInHierarchy"))) {
+      log(`settings data: Game data tab ${inRow ? "hidden by its parents" : "outside the tab row"}; installed again`);
+      call(buttonObject, "set_name", Il2Cpp.string("RebornGameDataOld"));
+      call(buttonObject, "SetActive", false);
+      ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(buttonObject);
+      return null;
+    }
     const size = call(shown[0], "get_rect"), width = Number(size.field("m_Width").value), height = Number(size.field("m_Height").value);
     if (width > 0 && height > 0) {
       const layout = uiComponent(call(button, "get_gameObject"), "UnityEngine.UI.LayoutElement");
