@@ -10885,10 +10885,22 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         }, "drag camera off");
       }, 500);
     } });
+    const targetingOff = () => {
+      try {
+        const go = ucls("UnityEngine.GameObject").method("Find", 1).invoke(Il2Cpp.string("Camera_Targeting"));
+        if (isNull(go)) return "not found";
+        const camera = call(go, "GetComponent", ucls("UnityEngine.Camera").type.object);
+        if (isNull(camera)) return "no camera";
+        if (Boolean(call(camera, "get_enabled"))) call(camera, "set_enabled", false);
+        return "off";
+      } catch (error) {
+        return `failed: ${error}`;
+      }
+    };
     globalThis.__teslBattleCameras = () => schedule(2e3, () => {
       try {
         setDrag(false);
-        log("cameras: Camera_Drag off between drags");
+        log(`cameras: Camera_Drag off between drags, Camera_Targeting ${targetingOff()}`);
       } catch (error) {
         log(`cameras: ${error}`);
       }

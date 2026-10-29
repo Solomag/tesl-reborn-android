@@ -6452,8 +6452,21 @@ const chatWindows = new Map();
       if (offTimer) clearTimeout(offTimer);
       offTimer = setTimeout(() => { offTimer = null; schedule(0, () => { try { setDrag(false); } catch (_) {} }, "drag camera off"); }, 500);
     } });
-    // Off when a battle starts (the camera comes with the board).
-    globalThis.__teslBattleCameras = () => schedule(2000, () => { try { setDrag(false); log("cameras: Camera_Drag off between drags"); } catch (error) { log(`cameras: ${error}`); } }, "drag camera at battle start");
+    // Report 118: Camera_Targeting's layer 18 has no name and held no
+    // renderer in any battle snapshot (0:395 5:3 8:4, then 0:563 5:8 8:4);
+    // nothing in the code puts anything there. Off for the battle as well.
+    const targetingOff = () => {
+      try {
+        const go = ucls("UnityEngine.GameObject").method("Find", 1).invoke(Il2Cpp.string("Camera_Targeting"));
+        if (isNull(go)) return "not found";
+        const camera = call(go, "GetComponent", ucls("UnityEngine.Camera").type.object);
+        if (isNull(camera)) return "no camera";
+        if (Boolean(call(camera, "get_enabled"))) call(camera, "set_enabled", false);
+        return "off";
+      } catch (error) { return `failed: ${error}`; }
+    };
+    // Off when a battle starts (the cameras come with the board).
+    globalThis.__teslBattleCameras = () => schedule(2000, () => { try { setDrag(false); log(`cameras: Camera_Drag off between drags, Camera_Targeting ${targetingOff()}`); } catch (error) { log(`cameras: ${error}`); } }, "drag camera at battle start");
   });
 
   // The game's debug window (DebugRuntime, opened by the corner gesture) is
