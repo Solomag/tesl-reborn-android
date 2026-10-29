@@ -8235,7 +8235,20 @@ void onLeave (GumInvocationContext * ic) {
     const getFixedStep = icall(["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"], "float", []);
     const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
     const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
-    let animatorType = null, engineCutsReported = "";
+    let animatorType = null, engineCutsReported = "", animatorCalls = void 0;
+    function animatorNative() {
+      if (animatorCalls !== void 0) return animatorCalls;
+      animatorCalls = null;
+      try {
+        const unity = Process.getModuleByName("libunity.so");
+        const init = unity.base.add(1595424), sync = unity.base.add(1620336);
+        const hex = (at) => Array.from(new Uint8Array(at.readByteArray(16))).map((b) => b.toString(16).padStart(2, "0")).join("");
+        if (hex(init) === "f44fbea9fd7b01a9fd430091f30300aa" && hex(sync) === "f657bda9f44f01a9fd7b02a9fd830091")
+          animatorCalls = { initialize: new NativeFunction(init, "void", ["pointer"]), sync: new NativeFunction(sync, "void", ["pointer"]) };
+      } catch (_) {
+      }
+      return animatorCalls;
+    }
     function engineCuts() {
       const notes = [];
       try {
@@ -8268,6 +8281,27 @@ void onLeave (GumInvocationContext * ic) {
             }
           }
           if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
+        } else if (animatorNative()) {
+          const native = animatorNative();
+          if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
+          const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);
+          let changed = 0, odd = 0;
+          for (let i = 0; i < all.length; i++) {
+            const self = all.get(i).field("m_CachedPtr").value;
+            if (self.isNull()) continue;
+            const mode2 = self.add(204).readS32();
+            if (mode2 < 0 || mode2 > 2) {
+              odd++;
+              continue;
+            }
+            if (mode2 !== 0) continue;
+            self.add(204).writeS32(1);
+            native.initialize(self);
+            native.sync(self);
+            changed++;
+          }
+          if (odd) notes.push(`${odd} animators with an unexpected culling field left alone`);
+          if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates (native)`);
         } else notes.push("animator culling stripped");
       } catch (error) {
         notes.push(`animator culling failed: ${error}`);

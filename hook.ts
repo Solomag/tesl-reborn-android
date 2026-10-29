@@ -4227,7 +4227,21 @@ function uiComponent(go, type) {
     const getFixedStep = icall(["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"], "float", []);
     const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
     const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
-    let animatorType = null, engineCutsReported = "";
+    let animatorType = null, engineCutsReported = "", animatorCalls = undefined;
+    // InitializeVisibilityCulling and SyncPlayStateToCulling in this build of
+    // libunity (offsets from Unity's symbols matched by code), checked by bytes.
+    function animatorNative() {
+      if (animatorCalls !== undefined) return animatorCalls;
+      animatorCalls = null;
+      try {
+        const unity = Process.getModuleByName("libunity.so");
+        const init = unity.base.add(0x185820), sync = unity.base.add(0x18b970);
+        const hex = (at) => Array.from(new Uint8Array(at.readByteArray(16))).map(b => b.toString(16).padStart(2, "0")).join("");
+        if (hex(init) === "f44fbea9fd7b01a9fd430091f30300aa" && hex(sync) === "f657bda9f44f01a9fd7b02a9fd830091")
+          animatorCalls = { initialize: new NativeFunction(init, "void", ["pointer"]), sync: new NativeFunction(sync, "void", ["pointer"]) };
+      } catch (_) {}
+      return animatorCalls;
+    }
     function engineCuts() {
       const notes = [];
       try {
@@ -4254,6 +4268,27 @@ function uiComponent(go, type) {
             if (animatorMode(item.handle) === 0) { setAnimatorMode(item.handle, 1); changed++; }
           }
           if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
+        } else if (animatorNative()) {
+          // Animator::SetCullingMode is stripped from this build; in Unity's
+          // full 2017.4.17f1 library it is: if (m_CullingMode (+0xCC) != m)
+          // { m_CullingMode = m; InitializeVisibilityCulling();
+          // SyncPlayStateToCulling(); } and both of those are still here.
+          const native = animatorNative();
+          if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
+          const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);
+          let changed = 0, odd = 0;
+          for (let i = 0; i < all.length; i++) {
+            const self = all.get(i).field("m_CachedPtr").value as NativePointer;
+            if (self.isNull()) continue;
+            const mode = self.add(0xcc).readS32();
+            if (mode < 0 || mode > 2) { odd++; continue; }
+            if (mode !== 0) continue;
+            self.add(0xcc).writeS32(1);
+            native.initialize(self); native.sync(self);
+            changed++;
+          }
+          if (odd) notes.push(`${odd} animators with an unexpected culling field left alone`);
+          if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates (native)`);
         } else notes.push("animator culling stripped");
       } catch (error) { notes.push(`animator culling failed: ${error}`); }
       const line = notes.join(", ");
