@@ -146,6 +146,8 @@ let currentSection = "startup";
 // Report 10: the Pixel 8 Pro ran the hook 4-13x slower with MTE off. Every 15 s
 // say where the process may run, which core this thread is on, the core clocks
 // and the hottest sensors, to tell small cores, low clocks and heat apart.
+const threadTicks = new Map<number, number>();
+let threadTicksAt = 0;
 const cpuReport = (() => {
   try {
     const getCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
@@ -167,6 +169,31 @@ const cpuReport = (() => {
       heat.sort((a, b) => b.c - a.c);
       log(`cpu: allowed ${allowed}, this thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; ` +
         `heat ${heat.slice(0, 3).map(h => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
+      // Report 31 (Pixel 8 Pro): 10-14 FPS with the main thread on a fast
+      // core and the others idle. How busy each game thread is (CPU time
+      // since the last line, % of one core) says whether a frame waits on the
+      // main thread, the graphics driver thread or something else.
+      try {
+        const now = Date.now(), totals = new Map();
+        for (const thread of Process.enumerateThreads()) {
+          const stat = read(`/proc/self/task/${thread.id}/stat`);
+          const close = stat.lastIndexOf(")");
+          if (close < 0) continue;
+          const name = stat.slice(stat.indexOf("(") + 1, close), fields = stat.slice(close + 2).split(" ");
+          const ticks = Number(fields[11]) + Number(fields[12]);
+          const group = /^Worker Thread/.test(name) ? "workers" : name;
+          const last = threadTicks.get(thread.id);
+          threadTicks.set(thread.id, ticks);
+          if (last !== undefined && ticks >= last) totals.set(group, (totals.get(group) || 0) + ticks - last);
+        }
+        if (threadTicksAt) {
+          const seconds = (now - threadTicksAt) / 1000;
+          const top = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6)
+            .map(([name, ticks]) => `${name} ${Math.round(ticks / seconds)}%`);
+          log(`threads: ${top.join(", ")}`);
+        }
+        threadTicksAt = now;
+      } catch (_) {}
     };
   } catch (_) { return null; }
 })();

@@ -3650,6 +3650,8 @@ function loadOverrides() {
   return o;
 }
 let currentSection = "startup";
+const threadTicks = /* @__PURE__ */ new Map();
+let threadTicksAt = 0;
 const cpuReport = (() => {
   try {
     const getCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
@@ -3676,6 +3678,27 @@ const cpuReport = (() => {
       }
       heat.sort((a, b) => b.c - a.c);
       log(`cpu: allowed ${allowed}, this thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; heat ${heat.slice(0, 3).map((h) => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
+      try {
+        const now = Date.now(), totals = /* @__PURE__ */ new Map();
+        for (const thread of Process.enumerateThreads()) {
+          const stat = read(`/proc/self/task/${thread.id}/stat`);
+          const close = stat.lastIndexOf(")");
+          if (close < 0) continue;
+          const name = stat.slice(stat.indexOf("(") + 1, close), fields = stat.slice(close + 2).split(" ");
+          const ticks = Number(fields[11]) + Number(fields[12]);
+          const group = /^Worker Thread/.test(name) ? "workers" : name;
+          const last = threadTicks.get(thread.id);
+          threadTicks.set(thread.id, ticks);
+          if (last !== void 0 && ticks >= last) totals.set(group, (totals.get(group) || 0) + ticks - last);
+        }
+        if (threadTicksAt) {
+          const seconds = (now - threadTicksAt) / 1e3;
+          const top = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, ticks]) => `${name} ${Math.round(ticks / seconds)}%`);
+          log(`threads: ${top.join(", ")}`);
+        }
+        threadTicksAt = now;
+      } catch (_) {
+      }
     };
   } catch (_) {
     return null;

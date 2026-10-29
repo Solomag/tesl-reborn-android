@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 162,
-  "version": "android-162-dead-window-guards",
-  "bytes": 483395,
-  "sha256": "4e6307b907a4acc7781bb8935cebeb9c44f17e86fdde7f556d5a72e7f5b62dce",
+  "revision": 163,
+  "version": "android-163-thread-load",
+  "bytes": 484565,
+  "sha256": "8ff2fbcb7ab316757c628f66c7a9b7acebc47284e06dbebb5a42913699e61d6c",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "b3ac14d700d35563f40b91121f09934bf5cd55c5593b1dc0cc0c32c63c352aed"
+  "sourceSha256": "fc35bb59ead1ad17ec001d34d66367d7068a2cf58e8a1441269f89c4a445f529"
 }
