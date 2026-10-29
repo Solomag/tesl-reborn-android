@@ -7557,6 +7557,66 @@ Il2Cpp.perform(() => {
     const getVSync = icall(["UnityEngine.QualitySettings::get_vSyncCount()", "UnityEngine.QualitySettings::get_vSyncCount"], "int", []);
     const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
     const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
+    const getterFields = {};
+    function getterField(names) {
+      const key = names[0];
+      if (key in getterFields) return getterFields[key];
+      let found = null;
+      const trace = [];
+      try {
+        let at = null;
+        for (const name of names) {
+          const p = resolve(Memory.allocUtf8String(name));
+          if (!p.isNull()) {
+            at = p;
+            break;
+          }
+        }
+        if (!at) throw Error("getter not found");
+        const start = at;
+        let owner = null;
+        for (let i = 0; i < 24 && !found; i++) {
+          const ins = Instruction.parse(at);
+          trace.push(`${ins.mnemonic} ${ins.opStr}`);
+          if (ins.mnemonic === "ret") break;
+          if (!owner && ins.mnemonic === "b") {
+            at = ptr(ins.opStr.replace("#", ""));
+            continue;
+          }
+          if (!owner && ins.mnemonic === "bl") owner = ptr(ins.opStr.replace("#", ""));
+          else if (owner && /^ldr/.test(ins.mnemonic)) {
+            const m = ins.opStr.match(/^([ws])0, \[x0(?:, #(0x[0-9a-f]+|\d+))?\]$/);
+            if (m) {
+              const kind = m[1] === "s" ? "float" : "int";
+              found = { owner: new NativeFunction(owner, "pointer", []), offset: Number(m[2] || 0), kind, read: new NativeFunction(start, kind, []) };
+            }
+          }
+          at = ins.next;
+        }
+        if (!found) throw Error("no field load");
+      } catch (error) {
+        log(`engine: ${key} field unknown: ${error}; ${trace.join("; ")}`);
+      }
+      return getterFields[key] = found;
+    }
+    function writeField(names, value) {
+      const field = getterField(names);
+      if (!field) return false;
+      const owner = field.owner();
+      if (owner.isNull()) return false;
+      const at = owner.add(field.offset), now = field.read();
+      const held = field.kind === "float" ? at.readFloat() : at.readS32();
+      if (Math.abs(held - now) > 1e-6) {
+        log(`engine: ${names[0]} field +${field.offset} holds ${held}, getter ${now}; not written`);
+        getterFields[names[0]] = null;
+        return false;
+      }
+      if (field.kind === "float") at.writeFloat(value);
+      else at.writeS32(value);
+      return field.read();
+    }
+    const antiAliasingNames = ["UnityEngine.QualitySettings::get_antiAliasing()", "UnityEngine.QualitySettings::get_antiAliasing"];
+    const fixedStepNames = ["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"];
     const currentRate = () => {
       const cap = globalThis.__teslRateCap;
       return cap ? Math.min(rate || 60, cap) : rate;
@@ -7614,7 +7674,7 @@ Il2Cpp.perform(() => {
       const managed = quality2.tryMethod("set_antiAliasing", 1);
       if (managed) managed.invoke(0);
       else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
-      else throw Error("no antiAliasing setter");
+      else if (writeField(antiAliasingNames, 0) !== 0) throw Error("no antiAliasing setter");
       return samples;
     }
     let mainCpu = null, mainSamples = 0, mainReported = "";
@@ -7890,6 +7950,12 @@ Il2Cpp.perform(() => {
             setFixedStep(1 / 30);
             notes.push(`physics step ${(step * 1e3).toFixed(1)} -> 33.3 ms`);
           }
+        } else {
+          const field = getterField(fixedStepNames), step = field ? field.read() : 0;
+          if (field && step < 1 / 30 - 5e-4) {
+            const now = writeField(fixedStepNames, 1 / 30);
+            notes.push(now === false ? "physics step not set" : `physics step ${(step * 1e3).toFixed(1)} -> ${(now * 1e3).toFixed(1)} ms (field)`);
+          }
         }
       } catch (error) {
         notes.push(`physics step failed: ${error}`);
@@ -7907,7 +7973,7 @@ Il2Cpp.perform(() => {
             }
           }
           if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
-        }
+        } else notes.push("animator culling stripped");
       } catch (error) {
         notes.push(`animator culling failed: ${error}`);
       }

@@ -3674,6 +3674,53 @@ function uiComponent(go, type) {
     // engine function takes it as its first argument.
     const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
     const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
+    // Report 69: the build strips setters the game never calls
+    // (antiAliasing, fixedDeltaTime) together with their engine functions;
+    // the getters stay. A getter calls the manager accessor and loads a
+    // field: both are read from its code and the field is written directly,
+    // only when it holds what the getter returns.
+    const getterFields = {};
+    function getterField(names) {
+      const key = names[0];
+      if (key in getterFields) return getterFields[key];
+      let found = null; const trace = [];
+      try {
+        let at = null;
+        for (const name of names) { const p = resolve(Memory.allocUtf8String(name)); if (!p.isNull()) { at = p; break; } }
+        if (!at) throw Error("getter not found");
+        const start = at; let owner = null;
+        for (let i = 0; i < 24 && !found; i++) {
+          const ins: any = Instruction.parse(at);
+          trace.push(`${ins.mnemonic} ${ins.opStr}`);
+          if (ins.mnemonic === "ret") break;
+          if (!owner && ins.mnemonic === "b") { at = ptr(ins.opStr.replace("#", "")); continue; }
+          if (!owner && ins.mnemonic === "bl") owner = ptr(ins.opStr.replace("#", ""));
+          else if (owner && /^ldr/.test(ins.mnemonic)) {
+            const m = ins.opStr.match(/^([ws])0, \[x0(?:, #(0x[0-9a-f]+|\d+))?\]$/);
+            if (m) {
+              const kind = m[1] === "s" ? "float" : "int";
+              found = { owner: new NativeFunction(owner, "pointer", []), offset: Number(m[2] || 0), kind, read: new NativeFunction(start, kind, []) };
+            }
+          }
+          at = ins.next;
+        }
+        if (!found) throw Error("no field load");
+      } catch (error) { log(`engine: ${key} field unknown: ${error}; ${trace.join("; ")}`); }
+      return getterFields[key] = found;
+    }
+    function writeField(names, value) {
+      const field = getterField(names);
+      if (!field) return false;
+      const owner = field.owner();
+      if (owner.isNull()) return false;
+      const at = owner.add(field.offset), now = field.read();
+      const held = field.kind === "float" ? at.readFloat() : at.readS32();
+      if (Math.abs(held - now) > 1e-6) { log(`engine: ${names[0]} field +${field.offset} holds ${held}, getter ${now}; not written`); getterFields[names[0]] = null; return false; }
+      if (field.kind === "float") at.writeFloat(value); else at.writeS32(value);
+      return field.read();
+    }
+    const antiAliasingNames = ["UnityEngine.QualitySettings::get_antiAliasing()", "UnityEngine.QualitySettings::get_antiAliasing"];
+    const fixedStepNames = ["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"];
     // The rate in force: the chosen one, or the heat cap while it lasts.
     const currentRate = () => { const cap = globalThis.__teslRateCap; return cap ? Math.min(rate || 60, cap) : rate; };
     function applyRate(why) {
@@ -3733,7 +3780,7 @@ function uiComponent(go, type) {
       const managed = quality.tryMethod("set_antiAliasing", 1);
       if (managed) managed.invoke(0);
       else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
-      else throw Error("no antiAliasing setter");
+      else if (writeField(antiAliasingNames, 0) !== 0) throw Error("no antiAliasing setter");
       return samples;
     }
     // Report (1)(2): CPH2723 held 25 FPS in battle at any quality, cool, with
@@ -3941,6 +3988,12 @@ function uiComponent(go, type) {
         if (setFixedStep && getFixedStep) {
           const step = getFixedStep();
           if (step < 1 / 30 - 0.0005) { setFixedStep(1 / 30); notes.push(`physics step ${(step * 1000).toFixed(1)} -> 33.3 ms`); }
+        } else {
+          const field = getterField(fixedStepNames), step = field ? field.read() : 0;
+          if (field && step < 1 / 30 - 0.0005) {
+            const now = writeField(fixedStepNames, 1 / 30);
+            notes.push(now === false ? "physics step not set" : `physics step ${(step * 1000).toFixed(1)} -> ${(now * 1000).toFixed(1)} ms (field)`);
+          }
         }
       } catch (error) { notes.push(`physics step failed: ${error}`); }
       try {
@@ -3955,7 +4008,7 @@ function uiComponent(go, type) {
             if (animatorMode(item.handle) === 0) { setAnimatorMode(item.handle, 1); changed++; }
           }
           if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
-        }
+        } else notes.push("animator culling stripped");
       } catch (error) { notes.push(`animator culling failed: ${error}`); }
       const line = notes.join(", ");
       if (line && line !== engineCutsReported) { engineCutsReported = line; log(`engine: ${line}`); }
