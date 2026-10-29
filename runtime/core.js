@@ -8710,6 +8710,19 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
               reported = state;
               log(`graphics: ${state}`);
             }
+            try {
+              const root = call(window.target, "get_transform"), button = findGameDataButton(root);
+              const name = (node) => String(call(node, "get_name")?.content || "?");
+              let where = "none";
+              if (!isNull(button)) {
+                const go = call(button, "get_gameObject"), parent = call(button, "get_parent");
+                const p = call(button, "get_position"), sd = call(button, "get_sizeDelta");
+                where = `parent ${isNull(parent) ? "-" : name(parent)}, active ${call(go, "get_activeSelf")}/${call(go, "get_activeInHierarchy")}, at ${Number(p.field("x").value).toFixed(2)},${Number(p.field("y").value).toFixed(2)}, size ${Number(sd.field("x").value).toFixed(0)}x${Number(sd.field("y").value).toFixed(0)}`;
+              }
+              log(`settings data: window ${call(window.target, "GetInstanceID")} (${name(root)}), Game data ${where}`);
+            } catch (error) {
+              log(`settings data: check failed: ${error}`);
+            }
           } catch (error) {
             log(`graphics: quality check failed: ${error}`);
           } finally {
