@@ -7663,9 +7663,9 @@ void onLeave (GumInvocationContext * ic) {
       state.add(8).writeS32(key.length);
       for (let i = 0; i < key.length; i++) state.add(16 + i * 2).writeU16(key.charCodeAt(i));
     };
-    let known = "";
+    let known = "settings.Video.tab";
     try {
-      known = JSON.parse(readTextFile(file) || "{}")?.videoTab || "";
+      known = JSON.parse(readTextFile(file) || "{}")?.videoTab || known;
     } catch (_) {
     }
     if (known) use(known);

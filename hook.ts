@@ -3733,8 +3733,11 @@ void onLeave (GumInvocationContext * ic) {
       state.writePointer(answer.target.handle); state.add(8).writeS32(key.length);
       for (let i = 0; i < key.length; i++) state.add(16 + i * 2).writeU16(key.charCodeAt(i));
     };
-    let known = "";
-    try { known = JSON.parse(readTextFile(file) || "{}")?.videoTab || ""; } catch (_) {}
+    // The key from the game's own localization file (settings.Video.tab ->
+    // "Video"), so the very first window already reads Game data; a key
+    // learned on a phone (saved) still wins if the game ever changes it.
+    let known = "settings.Video.tab";
+    try { known = JSON.parse(readTextFile(file) || "{}")?.videoTab || known; } catch (_) {}
     if (known) use(known);
     globalThis.__teslVideoTabKey = (key) => {
       if (key === known) return;
