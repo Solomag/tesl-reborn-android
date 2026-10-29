@@ -4605,12 +4605,11 @@ void onLeave (GumInvocationContext * ic) {
           const renderer = all.get(i), go = call(renderer, "get_gameObject");
           if (!Boolean(call(renderer, "get_enabled")) || !Boolean(call(go, "get_activeInHierarchy"))) continue;
           const layer = Number(call(go, "get_layer"));
-          const entry = layers.get(layer) || { active: 0, visible: 0 };
-          entry.active++; if (Boolean(call(renderer, "get_isVisible"))) entry.visible++;
-          layers.set(layer, entry);
+          // Renderer.isVisible is stripped from this build (report after 182).
+          layers.set(layer, (layers.get(layer) || 0) + 1);
         }
-        const row = Array.from(layers.entries()).sort((a, b) => a[0] - b[0]).map(([layer, e]) => `${layer}:${e.active}/${e.visible}`).join(" ");
-        log(`render: renderers by layer (active/drawn) ${row}; Targeting=18 Drag=19 Ortho=16 UI=5`);
+        const row = Array.from(layers.entries()).sort((a, b) => a[0] - b[0]).map(([layer, n]) => `${layer}:${n}`).join(" ");
+        log(`render: active renderers by layer ${row}; Camera_Targeting=18 Camera_Drag=19 Camera_Ortho=16 UI=5`);
       } catch (error) { log(`render: layer count failed: ${error}`); }
       // Report 25: 294 particle systems in a battle. How many run and draw?
       log(`render: particles playing ${count("UnityEngine.ParticleSystem", p => Boolean(call(p, "get_isPlaying")))},` +
@@ -6383,7 +6382,9 @@ const chatWindows = new Map();
   section("battle cameras", () => {
     const toLayer = (name) => { try { return Number(ucls("UnityEngine.LayerMask").method("NameToLayer", 1).invoke(Il2Cpp.string(name))); } catch (_) { return -1; } };
     schedule(3000, () => {
-      log(`cameras: layers MatchDragging=${toLayer("MatchDragging")} RuneWaveInput=${toLayer("RuneWaveInput")} Orthographic=${toLayer("Orthographic")} 3DUI=${toLayer("3DUI")} UI=${toLayer("UI")}`);
+      let name18 = "?";
+      try { name18 = String(ucls("UnityEngine.LayerMask").method("LayerToName", 1).invoke(18)?.content ?? "?"); } catch (_) {}
+      log(`cameras: layers MatchDragging=${toLayer("MatchDragging")} RuneWaveInput=${toLayer("RuneWaveInput")} Orthographic=${toLayer("Orthographic")} 3DUI=${toLayer("3DUI")} UI=${toLayer("UI")}; layer 18 (Camera_Targeting) is "${name18}"`);
     }, "camera layer names");
     if (!experiment("cameraSkip")) return;
     const hand = img.classes.find(c => c.name === "CardHandController");
