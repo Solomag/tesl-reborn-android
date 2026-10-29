@@ -8236,6 +8236,7 @@ void onLeave (GumInvocationContext * ic) {
     const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
     const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
     let animatorType = null, engineCutsReported = "", animatorCalls = void 0;
+    const animatorCullingWanted = false;
     function animatorNative() {
       if (animatorCalls !== void 0) return animatorCalls;
       animatorCalls = null;
@@ -8281,7 +8282,7 @@ void onLeave (GumInvocationContext * ic) {
             }
           }
           if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
-        } else if (animatorNative()) {
+        } else if (animatorCullingWanted && animatorNative()) {
           const native = animatorNative();
           if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
           const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);

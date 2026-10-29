@@ -4228,6 +4228,11 @@ function uiComponent(go, type) {
     const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
     const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
     let animatorType = null, engineCutsReported = "", animatorCalls = undefined;
+    // Off on patch 150: with off-screen culling the battle camera rig (no
+    // renderers of its own) stopped moving and the Guard wall effects, which
+    // animate in from invisible, never appeared. The engine decides
+    // visibility by an animator's own renderers, which does not fit this game.
+    const animatorCullingWanted = false;
     // InitializeVisibilityCulling and SyncPlayStateToCulling in this build of
     // libunity (offsets from Unity's symbols matched by code), checked by bytes.
     function animatorNative() {
@@ -4268,7 +4273,7 @@ function uiComponent(go, type) {
             if (animatorMode(item.handle) === 0) { setAnimatorMode(item.handle, 1); changed++; }
           }
           if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
-        } else if (animatorNative()) {
+        } else if (animatorCullingWanted && animatorNative()) {
           // Animator::SetCullingMode is stripped from this build; in Unity's
           // full 2017.4.17f1 library it is: if (m_CullingMode (+0xCC) != m)
           // { m_CullingMode = m; InitializeVisibilityCulling();
