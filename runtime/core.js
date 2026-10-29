@@ -8814,7 +8814,22 @@ void onLeave (GumInvocationContext * ic) {
     try {
       const unity = Process.getModuleByName("libunity.so"), at = unity.base.add(4322700);
       const bytes = Array.from(new Uint8Array(at.readByteArray(16))).map((b) => b.toString(16).padStart(2, "0")).join("");
-      if (bytes === "882240b980c200911f01186b0131981a") {
+      let fastest = 0, cores = 0;
+      try {
+        const max = [];
+        for (let cpu = 0; cpu < 16; cpu++) {
+          try {
+            max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
+          } catch (_) {
+          }
+        }
+        const top = Math.max(...max);
+        cores = max.filter((f) => f > 0).length;
+        fastest = max.filter((f) => f === top).length;
+      } catch (_) {
+      }
+      if (fastest === 1) log(`engine: job wake count kept (${cores} cores, one fastest)`);
+      else if (bytes === "882240b980c200911f01186b0131981a") {
         Memory.patchCode(at, 4, (code) => {
           code.writeU32(1384120392);
         });

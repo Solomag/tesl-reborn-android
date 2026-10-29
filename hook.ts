@@ -4801,7 +4801,19 @@ void onLeave (GumInvocationContext * ic) {
     try {
       const unity = Process.getModuleByName("libunity.so"), at = unity.base.add(0x41f58c);
       const bytes = Array.from(new Uint8Array(at.readByteArray(16))).map(b => b.toString(16).padStart(2, "0")).join("");
-      if (bytes === "882240b980c200911f01186b0131981a") {
+      // Report 113 (Pixel 8 Pro, Tensor G3: one prime, four mid, four
+      // little cores): the workers ran at 140-190% on mid cores at 0.9 GHz.
+      // Phones with a single fastest core keep the engine's own wake count.
+      let fastest = 0, cores = 0;
+      try {
+        const max = [];
+        for (let cpu = 0; cpu < 16; cpu++) {
+          try { max.push(Number(String((File as any).readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0); } catch (_) {}
+        }
+        const top = Math.max(...max); cores = max.filter(f => f > 0).length; fastest = max.filter(f => f === top).length;
+      } catch (_) {}
+      if (fastest === 1) log(`engine: job wake count kept (${cores} cores, one fastest)`);
+      else if (bytes === "882240b980c200911f01186b0131981a") {
         Memory.patchCode(at, 4, code => { code.writeU32(0x52800048); });
         log("engine: job groups wake at most 2 workers");
       } else log("engine: job wake count kept (another libunity build)");
