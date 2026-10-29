@@ -6165,7 +6165,7 @@ const chatWindows = new Map();
     };
   }
   section("Settings display diagnostics",()=>{
-    let watchUntil=0,root=null,nextCapture=0;
+    let watchUntil=0,root=null,nextCapture=0,nextSettingsCheck=0;
     let pendingReport=null,flushQueued=false,lastFlush=0,lastDimensions="";
     function flushDisplay() {
       flushQueued=false;if(!pendingReport)return;
@@ -6222,6 +6222,9 @@ const chatWindows = new Map();
     hookAttach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
       try {
         const now=Date.now();
+        // Report 71: once Settings had been open this check cost 28-32 ms/s
+        // for the rest of the battle; a touch is looked for four times a second.
+        if(now<watchUntil || now>=nextSettingsCheck)nextSettingsCheck=now+250;else return;
         if(resourceSettingsOpen() && Number(ucls("UnityEngine.Input").method("get_touchCount",0).invoke())>0) {
           watchUntil=now+2000;
           if(!root)root=resourceSettingsWindow.target.ref(false);

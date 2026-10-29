@@ -10566,7 +10566,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     };
   }
   section("Settings display diagnostics", () => {
-    let watchUntil = 0, root = null, nextCapture = 0;
+    let watchUntil = 0, root = null, nextCapture = 0, nextSettingsCheck = 0;
     let pendingReport = null, flushQueued = false, lastFlush = 0, lastDimensions = "";
     function flushDisplay() {
       flushQueued = false;
@@ -10641,6 +10641,8 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
       try {
         const now = Date.now();
+        if (now < watchUntil || now >= nextSettingsCheck) nextSettingsCheck = now + 250;
+        else return;
         if (resourceSettingsOpen() && Number(ucls("UnityEngine.Input").method("get_touchCount", 0).invoke()) > 0) {
           watchUntil = now + 2e3;
           if (!root) root = resourceSettingsWindow.target.ref(false);
