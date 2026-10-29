@@ -1009,7 +1009,10 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   // due time is compared, the queue is scanned when something is due.
   let nextDue = Infinity;
   function schedule(delayMs: number, fn: () => void, tag?: string) {
-    const at = Date.now() + delayMs;
+    // Report 81: three 100 ms ticks (title colours, chat sizes, previews)
+    // each fell due on their own frame, so a managed dispatch ran 30 times a
+    // second. Longer delays land on a 50 ms grid and share one dispatch.
+    const at = delayMs >= 100 ? Math.ceil((Date.now() + delayMs) / 50) * 50 : Date.now() + delayMs;
     pending.push({ at, fn, tag });
     if (at < nextDue) nextDue = at;
   }

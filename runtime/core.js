@@ -4555,7 +4555,7 @@ Il2Cpp.perform(() => {
   const pending = [];
   let nextDue = Infinity;
   function schedule(delayMs, fn, tag) {
-    const at = Date.now() + delayMs;
+    const at = delayMs >= 100 ? Math.ceil((Date.now() + delayMs) / 50) * 50 : Date.now() + delayMs;
     pending.push({ at, fn, tag });
     if (at < nextDue) nextDue = at;
   }
