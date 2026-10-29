@@ -6348,7 +6348,8 @@ void onLeave (GumInvocationContext * ic) {
     return low + high * 4294967296;
   }
   const LOGIN_FILE = "tesl-login.json";
-  let autoLoginTried = false;
+  let autoLoginAt = 0;
+  const autoLoginRecent = () => Date.now() - autoLoginAt < 6e4;
   function readSavedLogin() {
     try {
       const text = readTextFile(`${persistentPath()}/${LOGIN_FILE}`);
@@ -6390,7 +6391,7 @@ void onLeave (GumInvocationContext * ic) {
     const credentials = cls(img, "SparkleServices.UsernameAndPassword");
     const useRemembered = (callback, saved, failed) => {
       const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
-      autoLoginTried = true;
+      autoLoginAt = Date.now();
       log(`auto login as ${saved.username}`);
       schedule(0, () => {
         try {
@@ -6415,9 +6416,9 @@ void onLeave (GumInvocationContext * ic) {
     mobile.implementation = function(title, description, callback) {
       try {
         const stored = readSavedLogin();
-        const saved = autoLoginTried || !stored?.password ? null : stored;
+        const saved = autoLoginRecent() || !stored?.password ? null : stored;
         if (!saved) {
-          if (autoLoginTried) {
+          if (autoLoginRecent()) {
             log("auto login already attempted; keeping saved credentials and showing login");
           }
           mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
@@ -6444,9 +6445,9 @@ void onLeave (GumInvocationContext * ic) {
     fallback.implementation = function(title, description, callback) {
       try {
         const stored = readSavedLogin();
-        const saved = autoLoginTried || !stored?.password ? null : stored;
+        const saved = autoLoginRecent() || !stored?.password ? null : stored;
         if (!saved) {
-          if (autoLoginTried) {
+          if (autoLoginRecent()) {
             log("auto login already attempted; keeping saved credentials and showing login");
           }
           fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
