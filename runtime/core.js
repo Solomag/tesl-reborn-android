@@ -11312,6 +11312,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
   function createUpdateBanner() {
     const showFps = fpsMeterEnabled();
     let fps = null, fpsText = null, fpsLogAt = 0, lastFrameAt = 0;
+    let badgeShown = null, fpsTop = null, fpsShown = null, badgeCaption = null;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
@@ -11359,6 +11360,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       gradientTexture = gradientSprite = badgeBackground = null;
       fps = fpsText = null;
       root = label = canvas = panel = badge = badgeText = null;
+      badgeShown = fpsTop = fpsShown = badgeCaption = null;
     }
     function ensure(wanted) {
       if (disabled) return;
@@ -11495,9 +11497,14 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {
           }
-          const badgeAnchor = locateLoginVersion(call(root.target, "get_transform")) || locateSplashVersion();
-          uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
-          call(badge, "SetActive", versionScreen.visible);
+          if (versionScreen.visible) {
+            const badgeAnchor = locateLoginVersion(call(root.target, "get_transform")) || locateSplashVersion();
+            uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
+          }
+          if (badgeShown !== versionScreen.visible) {
+            badgeShown = versionScreen.visible;
+            call(badge, "SetActive", versionScreen.visible);
+          }
           const loaded = !versionScreen.visible || loginAnchorLogged;
           if (loadingState !== loaded) {
             loadingState = loaded;
@@ -11533,11 +11540,20 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
             }
           }
           if (fps) {
-            uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);
-            call(fpsText, "set_text", Il2Cpp.string(`${measured} FPS`));
+            if (fpsTop !== top) {
+              fpsTop = top;
+              uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);
+            }
+            if (fpsShown !== measured) {
+              fpsShown = measured;
+              call(fpsText, "set_text", Il2Cpp.string(`${measured} FPS`));
+            }
           }
           const caption = portVersionCaption();
-          call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android") + "</size>"));
+          if (badgeCaption !== caption) {
+            badgeCaption = caption;
+            call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android") + "</size>"));
+          }
           const signature = caption + ":" + versionScreen.visible + ":" + versionScreen.scene;
           if (signature !== reportedCaption) {
             reportedCaption = signature;

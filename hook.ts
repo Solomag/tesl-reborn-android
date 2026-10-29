@@ -6838,6 +6838,7 @@ const chatWindows = new Map();
   function createUpdateBanner() {
     const showFps = fpsMeterEnabled();
     let fps = null, fpsText = null, fpsLogAt = 0, lastFrameAt = 0;
+    let badgeShown = null, fpsTop = null, fpsShown = null, badgeCaption = null;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
@@ -6888,6 +6889,7 @@ const chatWindows = new Map();
       gradientTexture=gradientSprite=badgeBackground=null;
       fps = fpsText = null;
       root = label = canvas = panel = badge = badgeText = null;
+      badgeShown = fpsTop = fpsShown = badgeCaption = null;
     }
     function ensure(wanted) {
       if (disabled) return;
@@ -7028,9 +7030,15 @@ const chatWindows = new Map();
             const safe = ucls("UnityEngine.Screen").method("get_safeArea", 0).invoke();
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {}
-          const badgeAnchor=locateLoginVersion(call(root.target,"get_transform"))||locateSplashVersion();
-          uiPlace(badge,badgeAnchor.x,badgeAnchor.y,0.5,1,0,0,Math.min(620,Math.max(240,width)),72);
-          call(badge,"SetActive",versionScreen.visible);
+          // Report 120 (Pixel 8 Pro): this tick still grew through a battle
+          // (441 -> 1042 ms per 15 s). The badge is placed by searching the
+          // login and splash screens; it shows only on those, so it is placed
+          // only while it shows, and switched only when that changes.
+          if (versionScreen.visible) {
+            const badgeAnchor=locateLoginVersion(call(root.target,"get_transform"))||locateSplashVersion();
+            uiPlace(badge,badgeAnchor.x,badgeAnchor.y,0.5,1,0,0,Math.min(620,Math.max(240,width)),72);
+          }
+          if (badgeShown !== versionScreen.visible) { badgeShown = versionScreen.visible; call(badge,"SetActive",versionScreen.visible); }
           // The status file keeps only the last state; the log keeps each change.
           // Leaving the game during its first load breaks it (GestureBridge
           // restarts it on return): tell the APK while this process is still
@@ -7064,11 +7072,11 @@ const chatWindows = new Map();
             catch (error) { log(`graphics: auto frame rate failed: ${error}`); }
           }
           if (fps) {
-            uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);
-            call(fpsText, "set_text", Il2Cpp.string(`${measured} FPS`));
+            if (fpsTop !== top) { fpsTop = top; uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36); }
+            if (fpsShown !== measured) { fpsShown = measured; call(fpsText, "set_text", Il2Cpp.string(`${measured} FPS`)); }
           }
           const caption = portVersionCaption();
-          call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android")+"</size>"));
+          if (badgeCaption !== caption) { badgeCaption = caption; call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android")+"</size>")); }
           const signature=caption+":"+versionScreen.visible+":"+versionScreen.scene;
           if (signature !== reportedCaption) {
             reportedCaption = signature;
