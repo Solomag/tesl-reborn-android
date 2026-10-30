@@ -7438,6 +7438,7 @@ void onLeave (GumInvocationContext * ic) {
             call(t, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Center"));
           } catch (_) {
           }
+          uiPlace(call(clearText, "get_gameObject"), 0.5, 0.5, 0.5, 0.5, 0, 0, 24, 30);
         }
         {
           const back = uiComponent(clear, "UnityEngine.UI.Image"), frame = call(image, "get_sprite");

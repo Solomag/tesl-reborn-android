@@ -3591,7 +3591,10 @@ function uiComponent(go, type) {
       catch(error){log(`deck search: kept the built-in font: ${error}`);}
       phase="clear button";const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});{const r=uiRect(clear);call(r,"set_anchorMin",vec2(1,0));call(r,"set_anchorMax",vec2(1,1));call(r,"set_pivot",vec2(1,.5));call(r,"set_anchoredPosition",vec2(-6,0));call(r,"set_sizeDelta",vec2(52,-12));}
       const clearText=call(call(clear,"get_transform"),"Find",Il2Cpp.string("Label"));
-      if(!isNull(clearText)){const t=uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI");call(t,"set_fontSize",28);try{call(t,"set_alignment",uiEnum("TMPro.TextAlignmentOptions","Center"));}catch(_){}}
+      if(!isNull(clearText)){const t=uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI");call(t,"set_fontSize",28);try{call(t,"set_alignment",uiEnum("TMPro.TextAlignmentOptions","Center"));}catch(_){}
+        // 198: stretched over the button the X still drew in its top-left
+        // corner. A glyph-sized box in the middle puts it there either way.
+        uiPlace(call(clearText,"get_gameObject"),.5,.5,.5,.5,0,0,24,30);}
       // The "X" sits on a button framed like the search field itself: the
       // close-x-icon sprite came out as a white square (194), a bare X looked
       // unfinished (195).
