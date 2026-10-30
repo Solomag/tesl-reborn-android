@@ -4882,7 +4882,6 @@ void onLeave (GumInvocationContext * ic) {
               if (live) live.free();
               live = new Il2Cpp.Object(args[0]).ref(false);
               globalThis.__teslInBattle = true;
-              try { globalThis.__teslBattleCameras?.(); } catch (_) {}
               // Reports 83-84: attaching the camera probe (CModule listeners on
               // Camera::CustomCull/CustomRender) froze the main thread both from
               // this hook and 5 s later from the JS thread. It is not started.
@@ -6418,12 +6417,10 @@ const chatWindows = new Map();
   });
   // END android-ui: global-shortcuts
 
-  // Camera_Drag (depth 4) culls and renders its layer every frame, but only
-  // the card being dragged is ever on it: CardHandController.SetDragCard puts
-  // it on "MatchDragging", DetachDragCard/ClearDragCard put it back on
-  // "Default" (CardHandController.cs:704, 629, 644, 720). With the
-  // "cameraSkip" experiment the camera is off between drags, switched on in
-  // SetDragCard itself and off half a second after the card is let go.
+  // Battle camera layers, for the reports. Switching Camera_Drag and
+  // Camera_Targeting off outside drags and aiming (cameraSkip, 181-189) saved
+  // little and cost the targeting arrows and a flicker of the mulligan cards
+  // (report 122); both cameras stay as the game leaves them.
   section("battle cameras", () => {
     const toLayer = (name) => { try { return Number(ucls("UnityEngine.LayerMask").method("NameToLayer", 1).invoke(Il2Cpp.string(name))); } catch (_) { return -1; } };
     schedule(3000, () => {
@@ -6431,36 +6428,6 @@ const chatWindows = new Map();
       try { name18 = String(ucls("UnityEngine.LayerMask").method("LayerToName", 1).invoke(18)?.content ?? "?"); } catch (_) {}
       log(`cameras: layers MatchDragging=${toLayer("MatchDragging")} RuneWaveInput=${toLayer("RuneWaveInput")} Orthographic=${toLayer("Orthographic")} 3DUI=${toLayer("3DUI")} UI=${toLayer("UI")}; layer 18 (Camera_Targeting) is "${name18}"`);
     }, "camera layer names");
-    if (!experiment("cameraSkip")) return;
-    const hand = img.classes.find(c => c.name === "CardHandController");
-    if (!hand) throw Error("CardHandController not found");
-    let drag = null, offTimer = null;
-    const findDrag = () => {
-      if (drag && unityAlive(drag.target)) return drag.target;
-      if (drag) { drag.free(); drag = null; }
-      try {
-        const go = ucls("UnityEngine.GameObject").method("Find", 1).invoke(Il2Cpp.string("Camera_Drag"));
-        if (isNull(go)) return null;
-        const camera = call(go, "GetComponent", ucls("UnityEngine.Camera").type.object);
-        if (isNull(camera)) return null;
-        drag = camera.ref(false); return camera;
-      } catch (_) { return null; }
-    };
-    const setDrag = (on) => { const camera = findDrag(); if (camera && Boolean(call(camera, "get_enabled")) !== on) call(camera, "set_enabled", on); };
-    const start = hand.method("SetDragCard", 2), stop = ["DetachDragCard", "ClearDragCard"].map(n => hand.tryMethod(n, 0)).filter(Boolean);
-    hookAttach(start.virtualAddress, { onEnter() {
-      if (offTimer) { clearTimeout(offTimer); offTimer = null; }
-      try { setDrag(true); } catch (_) {}
-    } });
-    for (const method of stop) hookAttach(method.virtualAddress, { onLeave() {
-      if (offTimer) clearTimeout(offTimer);
-      offTimer = setTimeout(() => { offTimer = null; schedule(0, () => { try { setDrag(false); } catch (_) {} }, "drag camera off"); }, 500);
-    } });
-    // Camera_Targeting stays on: switching it off (186) lost the targeting
-    // arrows (report 122). The arrows are drawn only while aiming, so the
-    // layer looked empty in the snapshots.
-    // Off when a battle starts (the cameras come with the board).
-    globalThis.__teslBattleCameras = () => schedule(2000, () => { try { setDrag(false); log("cameras: Camera_Drag off between drags"); } catch (error) { log(`cameras: ${error}`); } }, "drag camera at battle start");
   });
 
   // The game's debug window (DebugRuntime, opened by the corner gesture) is
