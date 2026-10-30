@@ -7528,6 +7528,7 @@ void onLeave (GumInvocationContext * ic) {
     } });
     const preloadAt = Date.now() + 15e3;
     let preloaded = false;
+    let fullScanAt = 0;
     hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
       if (!preloaded && Date.now() >= preloadAt) {
         preloaded = true;
@@ -7538,15 +7539,16 @@ void onLeave (GumInvocationContext * ic) {
       next = Date.now() + 250;
       if (globalThis.__teslInBattle) return;
       const known = [...records.values()];
-      if (known.length && known.every((r) => {
+      const open = known.filter((r) => {
         try {
           return unityAlive(r.self.target) && Boolean(call(call(r.self.target, "get_gameObject"), "get_activeInHierarchy"));
         } catch (_) {
           return false;
         }
-      })) {
-        schedule(0, () => {
-          for (const r of known) {
+      });
+      if (known.length && (open.length === known.length || Date.now() < fullScanAt)) {
+        if (open.length) schedule(0, () => {
+          for (const r of open) {
             try {
               scanPicker(r.self.target, call(r.self.target, "get_gameObject"), false);
             } catch (_) {
@@ -7555,6 +7557,7 @@ void onLeave (GumInvocationContext * ic) {
         }, "deck search scan");
         return;
       }
+      fullScanAt = Date.now() + 3e3;
       schedule(0, () => {
         const live = /* @__PURE__ */ new Set();
         let scanned = false;

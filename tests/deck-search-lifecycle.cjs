@@ -65,7 +65,7 @@ a.step();assert.equal(a.bars.length,1,'no per-frame recreate loop');
 a.step(750);assert.equal(a.bars.length,2);assert(a.bars[1].active);assert.equal(a.refs(),4,'only committed roots survive');
 assert.deepEqual(a.rect.offset,{x:9,y:-70});
 a.scanError(true);a.step();assert(a.bars[1].active,'transient enumeration failure preserves installed UI');assert.equal(a.refs(),4);
-a.scanError(false);a.open(false);a.step();assert(a.bars[1].destroyed);assert.equal(a.refs(),0);assert.deepEqual(a.rect.offset,{x:9,y:12});
+a.scanError(false);a.open(false);a.step(3000);assert(a.bars[1].destroyed);assert.equal(a.refs(),0);assert.deepEqual(a.rect.offset,{x:9,y:12});
 console.log('PASS: cold creation rolls back, backs off, installs once and releases roots on close; failed scans preserve working UI');
 
 const b=fixture();b.fail(99);b.step(0);b.step(500);b.step(1000);b.step(2000);b.step(10000);

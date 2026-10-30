@@ -3653,7 +3653,7 @@ function uiComponent(go, type) {
     }});
     // The first open of the deck list also waited for the frame and clear
     // icon (report 30). Load them into the cache once the menu has settled.
-    const preloadAt=Date.now()+15000;let preloaded=false;
+    const preloadAt=Date.now()+15000;let preloaded=false;let fullScanAt=0;
     hookAttach(cls(img,"SparkleServices.ServicesManager").method("Update",0).virtualAddress,{onLeave(){
       if(!preloaded&&Date.now()>=preloadAt){preloaded=true;
         for(const path of ["AppBase/UI/Sprites/Core/UtilityAssets/input-frame","AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon"])
@@ -3666,11 +3666,16 @@ function uiComponent(go, type) {
       // 0.8 s per 15 s with the deck list open. An open picker is checked
       // directly, without the search.
       // A known picker that closed falls through to the full scan (cleanup).
+      // Report 121 (196): a closed picker kept in records sent every tick to
+      // the full search again (0.7 s per 15 s). New pickers install through
+      // UpdateUi, so the full search (cleanup) runs at most every 3 s.
       const known=[...records.values()];
-      if(known.length&&known.every(r=>{try{return unityAlive(r.self.target)&&Boolean(call(call(r.self.target,"get_gameObject"),"get_activeInHierarchy"));}catch(_){return false;}})){
-        schedule(0,()=>{for(const r of known){try{scanPicker(r.self.target,call(r.self.target,"get_gameObject"),false);}catch(_){}}},"deck search scan");
+      const open=known.filter(r=>{try{return unityAlive(r.self.target)&&Boolean(call(call(r.self.target,"get_gameObject"),"get_activeInHierarchy"));}catch(_){return false;}});
+      if(known.length&&(open.length===known.length||Date.now()<fullScanAt)){
+        if(open.length)schedule(0,()=>{for(const r of open){try{scanPicker(r.self.target,call(r.self.target,"get_gameObject"),false);}catch(_){}}},"deck search scan");
         return;
       }
+      fullScanAt=Date.now()+3000;
       schedule(0,()=>{
         const live=new Set();let scanned=false;
         try {
