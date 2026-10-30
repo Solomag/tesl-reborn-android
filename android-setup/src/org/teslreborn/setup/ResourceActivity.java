@@ -463,23 +463,26 @@ public class ResourceActivity extends Activity {
       config = new JSONObject();
     }
     final JSONObject graphics = config;
-    // Report 44: 90 FPS on a 120 Hz display ran at 60, because frames are
-    // paced to whole refresh intervals. Offer only rates that divide one of
-    // this display's refresh rates (and always 60).
+    // The rate is a ceiling: the hook never goes above it and steps down to
+    // what the phone holds. Every 5 FPS from 30 up to the fastest refresh
+    // rate, plus the rates that divide a refresh rate (those pace evenly;
+    // report 44: 90 on a 120 Hz display ran unevenly).
     java.util.TreeSet<Integer> rates = new java.util.TreeSet<>();
-    rates.add(60);
+    int fastest = 60;
     try {
       for (android.view.Display.Mode mode : getWindowManager().getDefaultDisplay().getSupportedModes()) {
         int hz = Math.round(mode.getRefreshRate());
+        fastest = Math.max(fastest, hz);
         for (int rate = 20; rate <= hz; rate++) if (hz % rate == 0) rates.add(rate);
       }
     } catch (Exception ignored) {
     }
+    for (int rate = 30; rate <= fastest; rate += 5) rates.add(rate);
     int[] rateValues = new int[rates.size()];
     int at = 0;
     for (int rate : rates) rateValues[at++] = rate;
     addGraphicsSlider(box, file, graphics, "frameRate", tr("Frame rate"), rateValues, 60, " FPS",
-        tr("Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display."));
+        tr("The highest frame rate; a phone that cannot hold it is lowered automatically. Applies on the next game start."));
     // Render resolution was removed: the battle is CPU-bound (report 90).
     // The hook's corner frame counter. Until it is set here the hook shows it
     // on the Test channel only.

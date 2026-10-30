@@ -156,18 +156,18 @@ final class UiStrings {
           "Частота кадров", "Kare hızı"
         });
     TEXT.put(
-        "Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display.",
+        "The highest frame rate; a phone that cannot hold it is lowered automatically. Applies on the next game start.",
         new String[] {
-          "Applies on the next game start. 30 saves battery and heat; 90 and 120 need a fast display.",
-          "Gilt ab dem nächsten Spielstart. 30 spart Akku und Wärme; 90 und 120 brauchen ein schnelles Display.",
-          "Se aplica en el próximo inicio. 30 ahorra batería y calor; 90 y 120 requieren una pantalla rápida.",
-          "Se aplica en el próximo inicio. 30 ahorra batería y calor; 90 y 120 requieren una pantalla rápida.",
-          "S’applique au prochain lancement. 30 économise batterie et chaleur ; 90 et 120 demandent un écran rapide.",
-          "Si applica al prossimo avvio. 30 risparmia batteria e calore; 90 e 120 richiedono uno schermo veloce.",
-          "Działa od następnego uruchomienia. 30 oszczędza baterię i ciepło; 90 i 120 wymagają szybkiego ekranu.",
-          "Aplica-se no próximo início. 30 poupa bateria e calor; 90 e 120 exigem uma tela rápida.",
-          "Применится при следующем запуске игры. 30 бережёт батарею и меньше греет; 90 и 120 — для быстрых экранов.",
-          "Bir sonraki oyun başlangıcında uygulanır. 30 pil ve ısı tasarrufu sağlar; 90 ve 120 hızlı ekran ister."
+          "The highest frame rate; a phone that cannot hold it is lowered automatically. Applies on the next game start.",
+          "Die höchste Bildrate; hält das Telefon sie nicht, wird sie automatisch gesenkt. Gilt ab dem nächsten Spielstart.",
+          "La tasa máxima; si el teléfono no la sostiene, se reduce automáticamente. Se aplica en el próximo inicio.",
+          "La tasa máxima; si el teléfono no la sostiene, se reduce automáticamente. Se aplica en el próximo inicio.",
+          "La fréquence maximale ; si le téléphone ne la tient pas, elle baisse automatiquement. S’applique au prochain lancement.",
+          "La frequenza massima; se il telefono non la regge, viene abbassata automaticamente. Si applica al prossimo avvio.",
+          "Najwyższa liczba klatek; jeśli telefon jej nie utrzyma, zostanie automatycznie obniżona. Działa od następnego uruchomienia.",
+          "A taxa máxima; se o telefone não a mantiver, ela é reduzida automaticamente. Aplica-se no próximo início.",
+          "Верхний предел частоты кадров; если телефон его не держит, частота снижается автоматически. Применится при следующем запуске игры.",
+          "En yüksek kare hızı; telefon bunu tutamazsa otomatik olarak düşürülür. Bir sonraki oyun başlangıcında uygulanır."
         });
     TEXT.put(
         "Update channel",
