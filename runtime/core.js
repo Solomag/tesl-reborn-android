@@ -7425,9 +7425,8 @@ void onLeave (GumInvocationContext * ic) {
         uiPlace(clear, 1, 0.5, 1, 0.5, -8, 0, 76, 56);
         const clearText = call(call(clear, "get_transform"), "Find", Il2Cpp.string("Label"));
         if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_fontSize", 32);
-        loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon", uiComponent(clear, "UnityEngine.UI.Image"), () => {
-          if (!isNull(clearText)) call(call(clearText, "get_gameObject"), "SetActive", false);
-        });
+        call(uiComponent(clear, "UnityEngine.UI.Image"), "set_color", rgba(0, 0, 0, 0));
+        if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_color", rgba(0.85, 0.75, 0.55, 1));
         call(gridRect, "set_offsetMax", vec2(offset.x, offset.y - 82));
         call(bar, "SetActive", true);
         const record = { self: self.ref(false), input: input.ref(false), bar: bar.ref(false), grid: gridRect.ref(false), offset, hidden: /* @__PURE__ */ new Map() };

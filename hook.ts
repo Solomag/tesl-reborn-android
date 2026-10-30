@@ -3592,9 +3592,10 @@ function uiComponent(go, type) {
       phase="clear button";const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});uiPlace(clear,1,.5,1,.5,-8,0,76,56);
       const clearText=call(call(clear,"get_transform"),"Find",Il2Cpp.string("Label"));
       if(!isNull(clearText))call(uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI"),"set_fontSize",32);
-      loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon",uiComponent(clear,"UnityEngine.UI.Image"),()=>{
-        if(!isNull(clearText))call(call(clearText,"get_gameObject"),"SetActive",false);
-      });
+      // A plain "X" on no background: the close-x-icon sprite came out as a
+      // white square on the dark frame (194).
+      call(uiComponent(clear,"UnityEngine.UI.Image"),"set_color",rgba(0,0,0,0));
+      if(!isNull(clearText))call(uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI"),"set_color",rgba(.85,.75,.55,1));
       // Shrink the scroll viewport, not its layout-driven content grid.
       call(gridRect,"set_offsetMax",vec2(offset.x,offset.y-82));
       call(bar,"SetActive",true);
