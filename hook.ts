@@ -3671,10 +3671,11 @@ function uiComponent(go, type) {
       // A known picker that closed falls through to the full scan (cleanup).
       // Report 121 (196): a closed picker kept in records sent every tick to
       // the full search again (0.7 s per 15 s). New pickers install through
-      // UpdateUi, so the full search (cleanup) runs at most every 3 s.
+      // UpdateUi, so the full search (cleanup, and a fallback install) runs at
+      // most every 3 s; on the Pixel it was 0.3 s per 15 s in the menus.
       const known=[...records.values()];
       const open=known.filter(r=>{try{return unityAlive(r.self.target)&&Boolean(call(call(r.self.target,"get_gameObject"),"get_activeInHierarchy"));}catch(_){return false;}});
-      if(known.length&&(open.length===known.length||Date.now()<fullScanAt)){
+      if((known.length&&open.length===known.length)||Date.now()<fullScanAt){
         if(open.length)schedule(0,()=>{for(const r of open){try{scanPicker(r.self.target,call(r.self.target,"get_gameObject"),false);}catch(_){}}},"deck search scan");
         return;
       }

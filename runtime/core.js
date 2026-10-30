@@ -7561,7 +7561,7 @@ void onLeave (GumInvocationContext * ic) {
           return false;
         }
       });
-      if (known.length && (open.length === known.length || Date.now() < fullScanAt)) {
+      if (known.length && open.length === known.length || Date.now() < fullScanAt) {
         if (open.length) schedule(0, () => {
           for (const r of open) {
             try {

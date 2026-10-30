@@ -58,19 +58,20 @@ function fixture(){
   return{bars,messages,rect,refs:()=>refs,openList(){const t={};updateUi.onEnter.call(t,[self]);updateUi.onLeave.call(t);},fail:n=>{failures=n;},open:v=>{open=v;},scanError:v=>{scanError=v;},step(ms=250){tick+=ms;update();}};
 }
 
-const a=fixture();a.fail(1);a.step(0);a.step();assert.equal(a.bars.length,0,'wait for UI to settle');
-a.step();assert.equal(a.bars.length,1);assert(a.bars[0].destroyed);assert(!a.bars[0].active);
+const a=fixture();a.fail(1);a.step(0);assert.equal(a.bars.length,0,'wait for UI to settle');
+// The full search runs at most every 3 s (201).
+a.step(3000);assert.equal(a.bars.length,1);assert(a.bars[0].destroyed);assert(!a.bars[0].active);
 assert.deepEqual(a.rect.offset,{x:9,y:12},'failed creation restores viewport');assert.equal(a.refs(),0,'failed creation releases all roots');
 a.step();assert.equal(a.bars.length,1,'no per-frame recreate loop');
-a.step(750);assert.equal(a.bars.length,2);assert(a.bars[1].active);assert.equal(a.refs(),4,'only committed roots survive');
+a.step(3000);assert.equal(a.bars.length,2);assert(a.bars[1].active);assert.equal(a.refs(),4,'only committed roots survive');
 assert.deepEqual(a.rect.offset,{x:9,y:-70});
 a.scanError(true);a.step();assert(a.bars[1].active,'transient enumeration failure preserves installed UI');assert.equal(a.refs(),4);
 a.scanError(false);a.open(false);a.step(3000);assert(a.bars[1].destroyed);assert.equal(a.refs(),0);assert.deepEqual(a.rect.offset,{x:9,y:12});
 console.log('PASS: cold creation rolls back, backs off, installs once and releases roots on close; failed scans preserve working UI');
 
-const b=fixture();b.fail(99);b.step(0);b.step(500);b.step(1000);b.step(2000);b.step(10000);
+const b=fixture();b.fail(99);b.step(0);b.step(3000);b.step(3000);b.step(3000);b.step(10000);
 assert.equal(b.bars.length,3,'bounded initialization failures');assert(b.bars.every(o=>o.destroyed&&!o.active));assert.equal(b.refs(),0);
-b.open(false);b.step();b.fail(0);b.open(true);b.step();b.step(500);assert.equal(b.bars.length,4);assert(b.bars[3].active);
+b.open(false);b.step(3000);b.fail(0);b.open(true);b.step(3000);b.step(3000);assert.equal(b.bars.length,4);assert(b.bars[3].active);
 assert.equal(b.messages.filter(m=>m.includes('initialization attempt')).length,3);
 console.log('PASS: persistent failures stop after three attempts; reopening retries without restarting the client');
 
