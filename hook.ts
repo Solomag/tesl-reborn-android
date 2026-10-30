@@ -3589,9 +3589,9 @@ function uiComponent(go, type) {
       phase="placeholder";const hint=hold(deckSearchText(placeholderGO,labels[resourceLanguage()]||labels.en_us,30));call(hint,"set_color",rgba(.65,.65,.65,1));call(input,"set_placeholder",hint);
       phase="game font";try{const source=styleLikeGameInput(input,label,hint);if(source&&!deckSearchStyleLogged){deckSearchStyleLogged=true;log(`deck search: text styled like the game's ${source}`);}}
       catch(error){log(`deck search: kept the built-in font: ${error}`);}
-      phase="clear button";const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});uiPlace(clear,1,.5,1,.5,-8,0,76,56);
+      phase="clear button";const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});{const r=uiRect(clear);call(r,"set_anchorMin",vec2(1,0));call(r,"set_anchorMax",vec2(1,1));call(r,"set_pivot",vec2(1,.5));call(r,"set_anchoredPosition",vec2(-6,0));call(r,"set_sizeDelta",vec2(52,-12));}
       const clearText=call(call(clear,"get_transform"),"Find",Il2Cpp.string("Label"));
-      if(!isNull(clearText))call(uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI"),"set_fontSize",32);
+      if(!isNull(clearText)){const t=uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI");call(t,"set_fontSize",28);try{call(t,"set_alignment",uiEnum("TMPro.TextAlignmentOptions","Center"));}catch(_){}}
       // The "X" sits on a button framed like the search field itself: the
       // close-x-icon sprite came out as a white square (194), a bare X looked
       // unfinished (195).
