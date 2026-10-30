@@ -7425,7 +7425,14 @@ void onLeave (GumInvocationContext * ic) {
         uiPlace(clear, 1, 0.5, 1, 0.5, -8, 0, 76, 56);
         const clearText = call(call(clear, "get_transform"), "Find", Il2Cpp.string("Label"));
         if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_fontSize", 32);
-        call(uiComponent(clear, "UnityEngine.UI.Image"), "set_color", rgba(0, 0, 0, 0));
+        {
+          const back = uiComponent(clear, "UnityEngine.UI.Image"), frame = call(image, "get_sprite");
+          if (!isNull(frame)) {
+            call(back, "set_sprite", frame);
+            call(back, "set_type", call(image, "get_type"));
+          }
+          call(back, "set_color", call(image, "get_color"));
+        }
         if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_color", rgba(0.85, 0.75, 0.55, 1));
         call(gridRect, "set_offsetMax", vec2(offset.x, offset.y - 82));
         call(bar, "SetActive", true);
@@ -7474,6 +7481,7 @@ void onLeave (GumInvocationContext * ic) {
         record.lastQuery = "";
         return key;
       }
+      if (query === record.lastQuery && record.lastCount >= 0) return key;
       const tiles = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tile.type.object, true), tilesRoot = tiles.object.ref(false);
       try {
         if (query === record.lastQuery && tiles.length === record.lastCount) return key;
@@ -7529,6 +7537,24 @@ void onLeave (GumInvocationContext * ic) {
       if (Date.now() < next) return;
       next = Date.now() + 250;
       if (globalThis.__teslInBattle) return;
+      const known = [...records.values()];
+      if (known.length && known.every((r) => {
+        try {
+          return unityAlive(r.self.target) && Boolean(call(call(r.self.target, "get_gameObject"), "get_activeInHierarchy"));
+        } catch (_) {
+          return false;
+        }
+      })) {
+        schedule(0, () => {
+          for (const r of known) {
+            try {
+              scanPicker(r.self.target, call(r.self.target, "get_gameObject"), false);
+            } catch (_) {
+            }
+          }
+        }, "deck search scan");
+        return;
+      }
       schedule(0, () => {
         const live = /* @__PURE__ */ new Set();
         let scanned = false;
@@ -11203,7 +11229,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
   function createUpdateBanner() {
     const showFps = fpsMeterEnabled();
     let fps = null, fpsText = null, fpsLogAt = 0, lastFrameAt = 0;
-    let badgeShown = null, fpsTop = null, fpsShown = null, badgeCaption = null;
+    let badgeShown = null, fpsTop = null, fpsShown = null, badgeCaption = null, badgePlacedAt = 0;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
@@ -11252,6 +11278,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       fps = fpsText = null;
       root = label = canvas = panel = badge = badgeText = null;
       badgeShown = fpsTop = fpsShown = badgeCaption = null;
+      badgePlacedAt = 0;
     }
     function ensure(wanted) {
       if (disabled) return;
@@ -11388,7 +11415,8 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
             top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
           } catch (_) {
           }
-          if (versionScreen.visible) {
+          if (versionScreen.visible && Date.now() >= badgePlacedAt + 1e3) {
+            badgePlacedAt = Date.now();
             const badgeAnchor = locateLoginVersion(call(root.target, "get_transform")) || locateSplashVersion();
             uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
           }

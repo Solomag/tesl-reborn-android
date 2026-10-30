@@ -33,6 +33,7 @@ function fixture(){
     if(n==='Find')return null;
     if(n==='SetActive'){o.active=v;return;}
     if(n==='get_text')return{content:''};
+    if(n==='get_sprite'||n==='get_type'||n==='get_color')return null;
     if(n.startsWith('set_'))return;
     throw Error('Unexpected call '+n);
   }

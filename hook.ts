@@ -3592,9 +3592,12 @@ function uiComponent(go, type) {
       phase="clear button";const clear=uiLabeledButton("Clear",call(bar,"get_transform"),"X",-8,-8,100,()=>{call(input,"set_text",Il2Cpp.string(""));});uiPlace(clear,1,.5,1,.5,-8,0,76,56);
       const clearText=call(call(clear,"get_transform"),"Find",Il2Cpp.string("Label"));
       if(!isNull(clearText))call(uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI"),"set_fontSize",32);
-      // A plain "X" on no background: the close-x-icon sprite came out as a
-      // white square on the dark frame (194).
-      call(uiComponent(clear,"UnityEngine.UI.Image"),"set_color",rgba(0,0,0,0));
+      // The "X" sits on a button framed like the search field itself: the
+      // close-x-icon sprite came out as a white square (194), a bare X looked
+      // unfinished (195).
+      {const back=uiComponent(clear,"UnityEngine.UI.Image"),frame=call(image,"get_sprite");
+        if(!isNull(frame)){call(back,"set_sprite",frame);call(back,"set_type",call(image,"get_type"));}
+        call(back,"set_color",call(image,"get_color"));}
       if(!isNull(clearText))call(uiComponent(call(clearText,"get_gameObject"),"TMPro.TextMeshProUGUI"),"set_color",rgba(.85,.75,.55,1));
       // Shrink the scroll viewport, not its layout-driven content grid.
       call(gridRect,"set_offsetMax",vec2(offset.x,offset.y-82));
@@ -3623,6 +3626,8 @@ function uiComponent(go, type) {
       }
       const query=String(call(record.input.target,"get_text")?.content||"");
       if(!query&&!record.hidden.size){record.lastQuery="";return key;}
+      // Unchanged text and no refill (UpdateUi sets lastCount -1): nothing to do.
+      if(query===record.lastQuery&&record.lastCount>=0)return key;
       const tiles=go.method("GetComponentsInChildren").overload("System.Type","System.Boolean").invoke(tile.type.object,true),tilesRoot=tiles.object.ref(false);
       try{
       if(query===record.lastQuery&&tiles.length===record.lastCount)return key;
@@ -3657,6 +3662,15 @@ function uiComponent(go, type) {
       // simpleperf on 141: these scans of every DeckPickerWin were most of
       // the 6% left in FindObjectsOfType; there is no deck picker in battle.
       if(globalThis.__teslInBattle)return;
+      // Report 124: the full search for pickers every 250 ms was up to
+      // 0.8 s per 15 s with the deck list open. An open picker is checked
+      // directly, without the search.
+      // A known picker that closed falls through to the full scan (cleanup).
+      const known=[...records.values()];
+      if(known.length&&known.every(r=>{try{return unityAlive(r.self.target)&&Boolean(call(call(r.self.target,"get_gameObject"),"get_activeInHierarchy"));}catch(_){return false;}})){
+        schedule(0,()=>{for(const r of known){try{scanPicker(r.self.target,call(r.self.target,"get_gameObject"),false);}catch(_){}}},"deck search scan");
+        return;
+      }
       schedule(0,()=>{
         const live=new Set();let scanned=false;
         try {
@@ -6766,7 +6780,7 @@ const chatWindows = new Map();
   function createUpdateBanner() {
     const showFps = fpsMeterEnabled();
     let fps = null, fpsText = null, fpsLogAt = 0, lastFrameAt = 0;
-    let badgeShown = null, fpsTop = null, fpsShown = null, badgeCaption = null;
+    let badgeShown = null, fpsTop = null, fpsShown = null, badgeCaption = null, badgePlacedAt = 0;
     let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
     let disabled = false, canvasScale = 1, nested = false, hostRetryAt = 0, hostReportAt = 0;
     let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
@@ -6817,7 +6831,7 @@ const chatWindows = new Map();
       gradientTexture=gradientSprite=badgeBackground=null;
       fps = fpsText = null;
       root = label = canvas = panel = badge = badgeText = null;
-      badgeShown = fpsTop = fpsShown = badgeCaption = null;
+      badgeShown = fpsTop = fpsShown = badgeCaption = null; badgePlacedAt = 0;
     }
     function ensure(wanted) {
       if (disabled) return;
@@ -6962,7 +6976,10 @@ const chatWindows = new Map();
           // (441 -> 1042 ms per 15 s). The badge is placed by searching the
           // login and splash screens; it shows only on those, so it is placed
           // only while it shows, and switched only when that changes.
-          if (versionScreen.visible) {
+          // Report 124: still 1.2-1.4 s per 15 s on the loading screens, so
+          // the search runs once a second, not on every tick.
+          if (versionScreen.visible && Date.now() >= badgePlacedAt + 1000) {
+            badgePlacedAt = Date.now();
             const badgeAnchor=locateLoginVersion(call(root.target,"get_transform"))||locateSplashVersion();
             uiPlace(badge,badgeAnchor.x,badgeAnchor.y,0.5,1,0,0,Math.min(620,Math.max(240,width)),72);
           }

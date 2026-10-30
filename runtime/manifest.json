@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 195,
-  "version": "android-195-deck-search-clear",
-  "bytes": 504456,
-  "sha256": "12c0659c08b6865fd0e1c52d17137596cae25eabf1075e30b0477f0df2b49a6c",
+  "revision": 196,
+  "version": "android-196-deck-search-button",
+  "bytes": 505469,
+  "sha256": "5ac8422683da72aef385651cec44ece89b975be25b1accc221adba70a8894ff2",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "5ec7e0c35015083223d068f06f594e03b04f95115882b328f563674b631d932a"
+  "sourceSha256": "d73e0d83117d0595b95f3b822f1a28361a432bbdff1de6e80b7badb0e409d499"
 }
