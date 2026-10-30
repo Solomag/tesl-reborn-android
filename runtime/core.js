@@ -8384,10 +8384,9 @@ void onLeave (GumInvocationContext * ic) {
     } catch (_) {
     }
     if (oneFastest) log("graphics: automatic frame rate caps off (one fastest core)");
-    const learnedRate = (value) => !oneFastest && ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
     const modes = {
-      menu: { cap: learnedRate(auto.menu?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
-      battle: { cap: learnedRate(auto.battle?.rate ?? auto.rate), low: 0, steady: 0, best: 0 }
+      menu: { cap: 0, low: 0, steady: 0, best: 0 },
+      battle: { cap: 0, low: 0, steady: 0, best: 0 }
     };
     let msaaOff = auto.msaaOff === true, mode = "menu", boardType = null;
     globalThis.__teslRateCap = modes.menu.cap;

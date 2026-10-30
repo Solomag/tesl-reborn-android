@@ -4452,11 +4452,12 @@ void onLeave (GumInvocationContext * ic) {
       oneFastest = top > 0 && max.filter(f => f === top).length === 1;
     } catch (_) {}
     if (oneFastest) log("graphics: automatic frame rate caps off (one fastest core)");
-    const learnedRate = value => !oneFastest && ladder.includes(Number(value)) && Number(value) < ceiling ? Number(value) : 0;
-    // Patch 117 kept one rate for both.
+    // Every start begins at the chosen rate (requested after report 123): a
+    // cap learned on a hot phone held a cooled one at 50 for minutes. The
+    // governor still steps down within 30 s when the phone cannot keep up.
     const modes = {
-      menu: { cap: learnedRate(auto.menu?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
-      battle: { cap: learnedRate(auto.battle?.rate ?? auto.rate), low: 0, steady: 0, best: 0 },
+      menu: { cap: 0, low: 0, steady: 0, best: 0 },
+      battle: { cap: 0, low: 0, steady: 0, best: 0 },
     };
     let msaaOff = auto.msaaOff === true, mode = "menu", boardType = null;
     globalThis.__teslRateCap = modes.menu.cap;
