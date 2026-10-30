@@ -7158,39 +7158,10 @@ const chatWindows = new Map();
             }
           } catch(error) {report.menuError=String(error).slice(0,160);}
         });
-        steps.push(() => {
-          report.shopImages=[];
-          try {
-            const images=snapshotActive(ucls("UnityEngine.UI.Image").type.object);
-            for(let i=0;i<images.length && report.shopImages.length<40;i++) {
-              const image=images.get(i),go=call(image,"get_gameObject");
-              if(!call(go,"get_activeInHierarchy")) continue;
-              let node=call(go,"get_transform"),path="";
-              for(let depth=0;depth<10 && !isNull(node);depth++,node=call(node,"get_parent")) path=String(call(node,"get_name")?.content||"")+"/"+path;
-              if(!/shop|store|packbundle|product/i.test(path)) continue;
-              const item:any={path:path.slice(-400)};
-              try {const sprite=call(image,"get_sprite");item.sprite=isNull(sprite)?null:String(call(sprite,"get_name")?.content||"");}catch(_){}
-              try {const material=call(image,"get_material");item.material=isNull(material)?null:String(call(material,"get_name")?.content||"");
-                if(!isNull(material))item.shader=String(call(call(material,"get_shader"),"get_name")?.content||"");}catch(_){}
-              report.shopImages.push(item);
-            }
-          }catch(error){report.shopError=String(error).slice(0,160);}
-        });
-        steps.push(() => {
-          try {
-            const images=snapshotActive(ucls("UnityEngine.UI.RawImage").type.object);
-            for(let i=0;i<images.length && report.shopImages.length<64;i++) {
-              const image=images.get(i),go=call(image,"get_gameObject");if(!call(go,"get_activeInHierarchy"))continue;
-              let node=call(go,"get_transform"),path="";
-              for(let depth=0;depth<10 && !isNull(node);depth++,node=call(node,"get_parent"))path=String(call(node,"get_name")?.content||"")+"/"+path;
-              if(!/shop|store|packbundle|product/i.test(path))continue;
-              const item:any={path:path.slice(-400),type:"RawImage"},texture=call(image,"get_texture");
-              item.texture=isNull(texture)?null:String(call(texture,"get_name")?.content||"");
-              if(!isNull(texture)){item.width=Number(call(texture,"get_width"));item.height=Number(call(texture,"get_height"));}
-              report.shopImages.push(item);
-            }
-          }catch(error){report.shopRawError=String(error).slice(0,160);}
-        });
+        // OTA 199 on the Pixel: the walk over every active Image for shop
+        // paths held the main thread 986 ms with the deck list open. The
+        // shop images were checked long ago; the scans are gone.
+        report.shopImages=[];
         steps.push(() => {
           // Preserve the last actual shop snapshot when navigating to Game Data
           // to share a report; the main-menu Store shortcut is not a shop view.
