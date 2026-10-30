@@ -24,6 +24,14 @@ public final class GestureBridge {
   private static final CornerTaps TAPS = new CornerTaps();
   private static long lastChord;
   private static final WeakHashMap<Activity, Marker> MARKERS = new WeakHashMap<>();
+  private static final WeakHashMap<Activity, Boolean> IMMERSIVE_SET = new WeakHashMap<>();
+  private static final int IMMERSIVE_FLAGS =
+      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+          | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+          | View.SYSTEM_UI_FLAG_FULLSCREEN
+          | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+          | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+          | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
 
   /** Extra for LaunchActivity: stop the game and start it again. */
   static final String RESTART_EXTRA = "org.teslreborn.restart";
@@ -63,6 +71,7 @@ public final class GestureBridge {
       }
     }
     fillDisplayCutout(activity);
+    stickyImmersive(activity);
     requestRefreshRate(activity);
     View view = activity.getWindow().getDecorView();
     view.post(
@@ -100,6 +109,32 @@ public final class GestureBridge {
             status(activity, "marker-error: " + error.getClass().getSimpleName());
           }
         });
+  }
+
+  /**
+   * Report 124: dragging a card up from the hand at the bottom edge sometimes
+   * sent the game to the background. With sticky immersive mode the first edge
+   * swipe only shows the system bars. The game can reset the flags, so they
+   * are set again whenever the bars return or the window regains focus.
+   */
+  static void stickyImmersive(Activity activity) {
+    try {
+      View view = activity.getWindow().getDecorView();
+      Runnable apply = () -> view.setSystemUiVisibility(IMMERSIVE_FLAGS);
+      apply.run();
+      if (IMMERSIVE_SET.put(activity, Boolean.TRUE) != null) return;
+      view.setOnSystemUiVisibilityChangeListener(
+          flags -> {
+            if ((flags & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0) MAIN.postDelayed(apply, 1500);
+          });
+      view.getViewTreeObserver()
+          .addOnWindowFocusChangeListener(
+              focused -> {
+                if (focused) apply.run();
+              });
+    } catch (Exception ignored) {
+      // The window keeps the mode the game set.
+    }
   }
 
   /**
