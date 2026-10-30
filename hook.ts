@@ -3532,6 +3532,11 @@ function uiComponent(go, type) {
         call(hint,"set_font",call(placeholder,"get_font"));call(hint,"set_fontStyle",call(placeholder,"get_fontStyle"));
         call(hint,"set_color",call(placeholder,"get_color"));
       }else if(hint)call(hint,"set_font",call(text,"get_font"));
+      // The frame too: the deck name field's dark, gold-edged background.
+      try{const theirs=call(game,"get_targetGraphic"),mine=call(ours,"get_targetGraphic");
+        if(unityAlive(theirs)&&unityAlive(mine)&&theirs.class.type.name==="UnityEngine.UI.Image"&&!isNull(call(theirs,"get_sprite"))){
+          call(mine,"set_sprite",call(theirs,"get_sprite"));call(mine,"set_type",call(theirs,"get_type"));call(mine,"set_color",call(theirs,"get_color"));
+        }}catch(_){}
       // The keyboard as well: the login form's fields set in their prefab
       // whether Android shows its own text box over the keyboard; the deck
       // search showed it (requested after report 123).
@@ -3572,10 +3577,9 @@ function uiComponent(go, type) {
       const stale=call(parent,"Find",Il2Cpp.string("RebornDeckSearch"));
       if(!isNull(stale))ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(stale,"get_gameObject"));
       phase="create bar";bar=create("RebornDeckSearch",parent);call(bar,"SetActive",false);uiPlace(bar,.5,1,.5,1,0,-6,760,68);
+      // Dark until the game field's own frame is copied (styleLikeGameInput):
+      // the white "input-frame" sprite looked like an Android text box.
       const image=hold(uiAdd(bar,"UnityEngine.UI.Image"));call(image,"set_color",rgba(.08,.08,.08,.96));
-      loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/input-frame",image,()=>{
-        call(image,"set_type",enumBox(image.method("set_type",1).parameters[0].type.class,1));
-      });
       const viewport=create("TextViewport",call(bar,"get_transform"));uiStretch(uiRect(viewport));
       call(uiRect(viewport),"set_offsetMin",vec2(18,6));call(uiRect(viewport),"set_offsetMax",vec2(-96,-6));
       const textGO=create("Text",call(viewport,"get_transform"));uiStretch(uiRect(textGO));

@@ -7316,6 +7316,15 @@ void onLeave (GumInvocationContext * ic) {
         call(hint, "set_fontStyle", call(placeholder, "get_fontStyle"));
         call(hint, "set_color", call(placeholder, "get_color"));
       } else if (hint) call(hint, "set_font", call(text, "get_font"));
+      try {
+        const theirs = call(game, "get_targetGraphic"), mine = call(ours, "get_targetGraphic");
+        if (unityAlive(theirs) && unityAlive(mine) && theirs.class.type.name === "UnityEngine.UI.Image" && !isNull(call(theirs, "get_sprite"))) {
+          call(mine, "set_sprite", call(theirs, "get_sprite"));
+          call(mine, "set_type", call(theirs, "get_type"));
+          call(mine, "set_color", call(theirs, "get_color"));
+        }
+      } catch (_) {
+      }
       let keyboard = "";
       for (const name of ["shouldHideMobileInput", "keyboardType", "inputType", "contentType"]) {
         try {
@@ -7384,9 +7393,6 @@ void onLeave (GumInvocationContext * ic) {
         uiPlace(bar, 0.5, 1, 0.5, 1, 0, -6, 760, 68);
         const image = hold(uiAdd(bar, "UnityEngine.UI.Image"));
         call(image, "set_color", rgba(0.08, 0.08, 0.08, 0.96));
-        loadNativeUiSprite("AppBase/UI/Sprites/Core/UtilityAssets/input-frame", image, () => {
-          call(image, "set_type", enumBox(image.method("set_type", 1).parameters[0].type.class, 1));
-        });
         const viewport = create("TextViewport", call(bar, "get_transform"));
         uiStretch(uiRect(viewport));
         call(uiRect(viewport), "set_offsetMin", vec2(18, 6));
