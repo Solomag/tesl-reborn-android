@@ -657,7 +657,7 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
         ],
         log,
     )
-    files = list(signed.glob("*-debugSigned.apk"))
+    files = list(signed.glob("*.apk"))
     if len(files) != 1:
         raise ValueError("Signed APK was not produced")
     return files[0]
