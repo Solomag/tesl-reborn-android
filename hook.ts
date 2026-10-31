@@ -49,19 +49,6 @@ function atomicRename(from: string, to: string): boolean {
     return nativeRename(Memory.allocUtf8String(from), Memory.allocUtf8String(to)) === 0;
   } catch (_) { return false; }
 }
-const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-function fakeTicket(len = 32): string {      // base64 of `len` random bytes, like the plugin's Generate()
-  const b: number[] = [];
-  for (let i = 0; i < len; i++) b.push(Math.floor(Math.random() * 256));
-  let o = "";
-  for (let i = 0; i < b.length; i += 3) {
-    const n = (b[i] << 16) | ((b[i + 1] ?? 0) << 8) | (b[i + 2] ?? 0);
-    o += B64[(n >> 18) & 63] + B64[(n >> 12) & 63];
-    o += i + 1 < b.length ? B64[(n >> 6) & 63] : "=";
-    o += i + 2 < b.length ? B64[n & 63] : "=";
-  }
-  return o;
-}
 
 // Calls a managed delegate whose single parameter is a 32-bit value (e.g. Action<ResultCode>).
 function invokeDelegateInt(del: Il2Cpp.Object, value: number) {
@@ -432,39 +419,20 @@ Il2Cpp.perform(() => {
     } catch (_) {}
     log(`runtime: Frida ${Frida.version}, ${Script.runtime}, MTE ${mte}, page ${Process.pageSize}`);
   } catch (error) { log(`runtime: ${error}`); }
-  // --- shared: the Steam-style requests the server accepts ---
-  const utils = cls(img, "SparkleServices.HTTPUtils");
+  // Report 127: since 31.10 the service answers bnetSteamLogin with SteamAuthFailed
+  // (13) instead of BNETAuthUnknownAccount (17), and the game stops on that error.
+  // Nothing is sent any more: 17 from here leads to the device id and username and
+  // password login of the Battle.net client, and a session needs no native link.
   const authResult = nested(img, "AuthBase", "AuthResult");
-  const steamReq = nested(img, "AuthBase", "AuthBNETSteamRequest");
-  const linkReq = nested(img, "AuthBase", "SteamSessionLinkRequest");
-  const postGeneric = utils.methods.find(m => m.name === "Post" && m.isGeneric && m.generics.length === 2)!;
-  const postLogin = postGeneric.inflate(steamReq, authResult);
-  const postLink = postGeneric.inflate(linkReq, authResult);
-
-  function sendLogin(language: Il2Cpp.String, settings: Il2Cpp.Object | null, endpoint: Il2Cpp.String, cb: Il2Cpp.Object) {
-    const body = steamReq.new();
-    fillBase(body, channelFrom(settings));
-    body.field<Il2Cpp.String>("loginPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field<Il2Cpp.String>("bnetKeyPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field<boolean>("createAccount").value = CREATE_ACCOUNT;
-    body.field<Il2Cpp.String>("language").value = resourceLanguage() ? Il2Cpp.string(shapedLanguage(resourceLanguage(), language.content || "en")) : language;
-    body.field<Il2Cpp.String>("steamId").value = Il2Cpp.string("");
-    body.field<Il2Cpp.String>("encryptedAppTicket").value = Il2Cpp.string(fakeTicket());
-    postLogin.invoke(body, endpoint, Il2Cpp.string("bnetSteamLogin"), NULL, cb);
-  }
-  function sendLink(sessionAuth: Il2Cpp.Object, language: Il2Cpp.String, settings: Il2Cpp.Object | null, endpoint: Il2Cpp.String, cb: Il2Cpp.Object) {
-    const body = linkReq.new();
-    fillBase(body, channelFrom(settings));
-    body.field<Il2Cpp.String>("loginPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field<Il2Cpp.String>("bnetKeyPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field<Il2Cpp.String>("language").value = resourceLanguage() ? Il2Cpp.string(shapedLanguage(resourceLanguage(), language.content || "en")) : language;
-    body.field<Il2Cpp.String>("steamId").value = Il2Cpp.string("");
-    body.field<Il2Cpp.String>("encryptedAppTicket").value = Il2Cpp.string(fakeTicket());
-    postLink.invoke(body, endpoint, Il2Cpp.string("bnetSteamLinkToSession"),
-      sessionAuth.field<Il2Cpp.String>("token").value, cb);
+  const BNET_AUTH_UNKNOWN_ACCOUNT = 17;
+  function finishAuth(cb: Il2Cpp.Object, code: number) {
+    const result = authResult.new();
+    const field = result.field<any>("resultCode");
+    const boxed = field.type.class.alloc(); boxed.field("value__").value = code;
+    field.value = boxed.unbox();
+    cb.method("Invoke").invoke(result);
   }
 
-  // 1a) Auth, Windows/NSO entry points (same as the plugin)
   section("auth hooks (BNETPlatformAuthInstance)", () => {
     const bnet = cls(img, "SparkleServices.BNETPlatformAuthInstance");
     bnet.method("SignIn").implementation = function (_request, cb) {
@@ -473,15 +441,11 @@ Il2Cpp.perform(() => {
     };
     bnet.method("DoNsoAuth").implementation = function (_createAnon, request, cb) {
       log("Bypassing NSO Auth");
-      const req = request as Il2Cpp.Object;
-      sendLogin(req.field<Il2Cpp.String>("LanguageCode").value,
-        req.field<Il2Cpp.Object>("ServicesSettings").value,
-        req.field<Il2Cpp.String>("AccountEndPoint").value, cb as Il2Cpp.Object);
+      finishAuth(cb as Il2Cpp.Object, BNET_AUTH_UNKNOWN_ACCOUNT);
     };
     bnet.method("DoNsoToSessionLink").implementation = function (sessionAuth, language, _dev, settings, endpoint, cb) {
       log("Bypassing NSO To Session Link");
-      sendLink(sessionAuth as Il2Cpp.Object, language as Il2Cpp.String, settings as Il2Cpp.Object,
-        endpoint as Il2Cpp.String, cb as Il2Cpp.Object);
+      finishAuth(cb as Il2Cpp.Object, 0);
     };
   });
 
@@ -497,13 +461,12 @@ Il2Cpp.perform(() => {
       invokeDelegatePtr(cb as Il2Cpp.Object, Il2Cpp.string("").handle);
     };
     gp.method("DoAuth").implementation = function (_createAnon, language, _dev, settings, endpoint, cb) {
-      log("Google Play DoAuth -> Steam-style login");
-      sendLogin(language as Il2Cpp.String, settings as Il2Cpp.Object, endpoint as Il2Cpp.String, cb as Il2Cpp.Object);
+      log("Google Play DoAuth -> username and password login");
+      finishAuth(cb as Il2Cpp.Object, BNET_AUTH_UNKNOWN_ACCOUNT);
     };
     gp.method("LinkToSession").implementation = function (sessionAuth, language, _dev, settings, endpoint, cb) {
-      log("Google Play LinkToSession -> Steam-style link");
-      sendLink(sessionAuth as Il2Cpp.Object, language as Il2Cpp.String, settings as Il2Cpp.Object,
-        endpoint as Il2Cpp.String, cb as Il2Cpp.Object);
+      log("Google Play LinkToSession -> skipped");
+      finishAuth(cb as Il2Cpp.Object, 0);
     };
   });
 

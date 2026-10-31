@@ -3561,19 +3561,6 @@ function atomicRename(from, to) {
     return false;
   }
 }
-const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-function fakeTicket(len = 32) {
-  const b = [];
-  for (let i = 0; i < len; i++) b.push(Math.floor(Math.random() * 256));
-  let o = "";
-  for (let i = 0; i < b.length; i += 3) {
-    const n = b[i] << 16 | (b[i + 1] ?? 0) << 8 | (b[i + 2] ?? 0);
-    o += B64[n >> 18 & 63] + B64[n >> 12 & 63];
-    o += i + 1 < b.length ? B64[n >> 6 & 63] : "=";
-    o += i + 2 < b.length ? B64[n & 63] : "=";
-  }
-  return o;
-}
 function invokeDelegateInt(del, value) {
   const method = del.method("Invoke"), klass = method.parameters[0].type.class;
   if (klass.isEnum) {
@@ -3964,39 +3951,15 @@ Il2Cpp.perform(() => {
   } catch (error) {
     log(`runtime: ${error}`);
   }
-  const utils = cls(img, "SparkleServices.HTTPUtils");
   const authResult = nested(img, "AuthBase", "AuthResult");
-  const steamReq = nested(img, "AuthBase", "AuthBNETSteamRequest");
-  const linkReq = nested(img, "AuthBase", "SteamSessionLinkRequest");
-  const postGeneric = utils.methods.find((m) => m.name === "Post" && m.isGeneric && m.generics.length === 2);
-  const postLogin = postGeneric.inflate(steamReq, authResult);
-  const postLink = postGeneric.inflate(linkReq, authResult);
-  function sendLogin(language, settings, endpoint, cb) {
-    const body = steamReq.new();
-    fillBase(body, channelFrom(settings));
-    body.field("loginPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field("bnetKeyPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field("createAccount").value = CREATE_ACCOUNT;
-    body.field("language").value = resourceLanguage() ? Il2Cpp.string(shapedLanguage(resourceLanguage(), language.content || "en")) : language;
-    body.field("steamId").value = Il2Cpp.string("");
-    body.field("encryptedAppTicket").value = Il2Cpp.string(fakeTicket());
-    postLogin.invoke(body, endpoint, Il2Cpp.string("bnetSteamLogin"), NULL, cb);
-  }
-  function sendLink(sessionAuth, language, settings, endpoint, cb) {
-    const body = linkReq.new();
-    fillBase(body, channelFrom(settings));
-    body.field("loginPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field("bnetKeyPlatform").value = Il2Cpp.string(LOGIN_PLATFORM);
-    body.field("language").value = resourceLanguage() ? Il2Cpp.string(shapedLanguage(resourceLanguage(), language.content || "en")) : language;
-    body.field("steamId").value = Il2Cpp.string("");
-    body.field("encryptedAppTicket").value = Il2Cpp.string(fakeTicket());
-    postLink.invoke(
-      body,
-      endpoint,
-      Il2Cpp.string("bnetSteamLinkToSession"),
-      sessionAuth.field("token").value,
-      cb
-    );
+  const BNET_AUTH_UNKNOWN_ACCOUNT = 17;
+  function finishAuth(cb, code) {
+    const result = authResult.new();
+    const field = result.field("resultCode");
+    const boxed = field.type.class.alloc();
+    boxed.field("value__").value = code;
+    field.value = boxed.unbox();
+    cb.method("Invoke").invoke(result);
   }
   section("auth hooks (BNETPlatformAuthInstance)", () => {
     const bnet = cls(img, "SparkleServices.BNETPlatformAuthInstance");
@@ -4006,23 +3969,11 @@ Il2Cpp.perform(() => {
     };
     bnet.method("DoNsoAuth").implementation = function(_createAnon, request, cb) {
       log("Bypassing NSO Auth");
-      const req = request;
-      sendLogin(
-        req.field("LanguageCode").value,
-        req.field("ServicesSettings").value,
-        req.field("AccountEndPoint").value,
-        cb
-      );
+      finishAuth(cb, BNET_AUTH_UNKNOWN_ACCOUNT);
     };
     bnet.method("DoNsoToSessionLink").implementation = function(sessionAuth, language, _dev, settings, endpoint, cb) {
       log("Bypassing NSO To Session Link");
-      sendLink(
-        sessionAuth,
-        language,
-        settings,
-        endpoint,
-        cb
-      );
+      finishAuth(cb, 0);
     };
   });
   section("auth hooks (GooglePlayAuthUtilities)", () => {
@@ -4036,18 +3987,12 @@ Il2Cpp.perform(() => {
       invokeDelegatePtr(cb, Il2Cpp.string("").handle);
     };
     gp.method("DoAuth").implementation = function(_createAnon, language, _dev, settings, endpoint, cb) {
-      log("Google Play DoAuth -> Steam-style login");
-      sendLogin(language, settings, endpoint, cb);
+      log("Google Play DoAuth -> username and password login");
+      finishAuth(cb, BNET_AUTH_UNKNOWN_ACCOUNT);
     };
     gp.method("LinkToSession").implementation = function(sessionAuth, language, _dev, settings, endpoint, cb) {
-      log("Google Play LinkToSession -> Steam-style link");
-      sendLink(
-        sessionAuth,
-        language,
-        settings,
-        endpoint,
-        cb
-      );
+      log("Google Play LinkToSession -> skipped");
+      finishAuth(cb, 0);
     };
   });
   const overrides = loadOverrides();
