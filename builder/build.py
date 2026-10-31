@@ -628,10 +628,15 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
         shutil.copyfile(aligned, unsigned)
     signed = work / "signed"
     signed.mkdir()
+    home = work / "signer-home"
+    home.mkdir()
     run(
         [
             java,
             "-Xmx2g",
+            # An Android debug.keystore in the real home would replace the
+            # signer's embedded key, and the APK could no longer update the game.
+            "-Duser.home=" + str(home),
             "-jar",
             vendor / "uber-apk-signer.jar",
             "-a",
