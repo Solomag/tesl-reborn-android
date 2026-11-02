@@ -3916,13 +3916,21 @@ function section(name, fn) {
     currentSection = "later";
   }
 }
-function checkedClass(img, full, walk = true) {
+function checkedClass(img, full, rounds = 20) {
   const short = full.split(".").pop(), space = full.slice(0, Math.max(0, full.length - short.length - 1));
   const fits = (k) => !!k && k.name === short && (!space || k.namespace === space);
   let c = img.tryClass(full);
-  if (fits(c) || !walk) return fits(c) ? c : null;
-  const walked = img.classes.filter((k) => fits(k) && k.declaringClass == null);
-  classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
+  if (fits(c) || !rounds) return fits(c) ? c : null;
+  let walked = [];
+  for (let round = 0; !walked.length && round < rounds; round++) {
+    if (round) Thread.sleep(0.1);
+    const count = Il2Cpp.exports.imageGetClassCount(img);
+    for (let i = 0; i < count; i++) {
+      const k = new Il2Cpp.Class(Il2Cpp.exports.imageGetClass(img, i));
+      if (!k.isNull() && fits(k) && k.declaringClass == null) walked.push(k);
+    }
+  }
+  if (walked.length || rounds > 1) classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
   return walked[0] ?? null;
 }
 const classMisses = [];
@@ -4640,8 +4648,13 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map((a) => a.image);
     let found = null;
-    for (const image of allImages) if (found = checkedClass(image, name, false)) break;
-    for (const image of allImages) if (!found && (found = checkedClass(image, name))) break;
+    for (const image of allImages) if (found = checkedClass(image, name, 0)) break;
+    const looked = !!found;
+    for (let round = 0; !found && round < 20; round++) {
+      if (round) Thread.sleep(0.1);
+      for (const image of allImages) if (found = checkedClass(image, name, 1)) break;
+    }
+    if (found && !looked) classMisses.push(`${name}: found by walk`);
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;

@@ -384,15 +384,26 @@ function section(name: string, fn: () => void) {
 // BestHTTP DigestStore, PlayerInfoPanel -> Cast5Engine) and random features
 // failed, versions.json among them. A result whose name differs is asked
 // for again.
-function checkedClass(img: Il2Cpp.Image, full: string, walk = true): Il2Cpp.Class | null {
+function checkedClass(img: Il2Cpp.Image, full: string, rounds = 20): Il2Cpp.Class | null {
   const short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
   // A class outside any namespace is matched by its name alone.
   const fits = (k: Il2Cpp.Class | null) => !!k && k.name === short && (!space || k.namespace === space);
   let c = img.tryClass(full);
   // Wrong or missing: the classes are walked by index instead.
-    if (fits(c) || !walk) return fits(c) ? c : null;
-  const walked = img.classes.filter(k => fits(k) && k.declaringClass == null);
-  classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
+    if (fits(c) || !rounds) return fits(c) ? c : null;
+  // The bridge keeps the first list it read (Image.classes is lazy), and a
+  // list read mid-race stays wrong; this reads the classes afresh, a few
+  // times over two seconds while the game finishes setting them up.
+  let walked: Il2Cpp.Class[] = [];
+  for (let round = 0; !walked.length && round < rounds; round++) {
+    if (round) Thread.sleep(0.1);
+    const count = Il2Cpp.exports.imageGetClassCount(img) as number;
+    for (let i = 0; i < count; i++) {
+      const k = new Il2Cpp.Class(Il2Cpp.exports.imageGetClass(img, i));
+      if (!k.isNull() && fits(k) && k.declaringClass == null) walked.push(k);
+    }
+  }
+  if (walked.length || rounds > 1) classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
   return walked[0] ?? null;
 }
 const classMisses: string[] = [];
@@ -1098,8 +1109,14 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map(a => a.image);
     let found: Il2Cpp.Class | null = null;
-    for (const image of allImages) if ((found = checkedClass(image, name, false))) break;
-    for (const image of allImages) if (!found && (found = checkedClass(image, name))) break;
+    // Lookups first; then fresh walks over every image, up to 20 rounds.
+    for (const image of allImages) if ((found = checkedClass(image, name, 0))) break;
+    const looked = !!found;
+    for (let round = 0; !found && round < 20; round++) {
+      if (round) Thread.sleep(0.1);
+      for (const image of allImages) if ((found = checkedClass(image, name, 1))) break;
+    }
+    if (found && !looked) classMisses.push(`${name}: found by walk`);
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;
