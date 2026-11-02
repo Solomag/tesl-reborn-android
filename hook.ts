@@ -388,9 +388,28 @@ function checkedClass(img: Il2Cpp.Image, full: string, tries = 5): Il2Cpp.Class 
   const short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
   // A class outside any namespace is matched by its name alone.
   const fits = (k: Il2Cpp.Class | null) => !!k && k.name === short && (!space || k.namespace === space);
-  let c = img.tryClass(full);
-  for (let n = 1; c && !fits(c) && n < tries; n++) { Thread.sleep(0.05); c = img.tryClass(full); }
-  if (c && !fits(c)) classMisses.push(`${full}: lookup gave ${c.namespace}.${c.name}`);
+  // The names are passed in buffers kept alive here (the bridge's own
+  // tryClass lets them go to the garbage collector), and read back after the
+  // call to see whether they changed under it.
+  const ask = () => {
+    const ns = Memory.allocUtf8String(space), nm = Memory.allocUtf8String(short);
+    const handle = Il2Cpp.exports.classFromName(img, ns, nm) as NativePointer;
+    const intact = ns.readUtf8String() === space && nm.readUtf8String() === short;
+    const k = handle.isNull() ? null : new Il2Cpp.Class(handle);
+    if (!intact) classMisses.push(`${full}: name buffers changed during the lookup`);
+    return k;
+  };
+  let c = ask();
+  for (let n = 1; c && !fits(c) && n < tries; n++) { Thread.sleep(0.05); c = ask(); }
+  if (c && !fits(c)) {
+    let types = -1, hits = 0; const wrong = `${c.namespace}.${c.name}`;
+    try {
+      const all = img.assembly.object.method("GetTypes").invoke(false) as any;
+      types = all.length;
+      for (const t of Array.from(all) as Il2Cpp.Object[]) { const k = new Il2Cpp.Class(Il2Cpp.exports.classFromObject(t)); if (fits(k)) { hits++; c = k; } }
+    } catch (error) { classMisses.push(`${full}: types not read: ${error}`); }
+    classMisses.push(`${full}: lookup gave ${wrong}; ${types} types, ${hits} with the name`);
+  }
   return fits(c) ? c : null;
 }
 const classMisses: string[] = [];
