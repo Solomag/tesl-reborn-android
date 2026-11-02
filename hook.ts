@@ -42,6 +42,18 @@ const log = (m: string) => {
   console.log(`${TAG} ${m}`);
   try { androidLogWrite?.(4, tagPtr, Memory.allocUtf8String(m.length > 900 ? m.slice(0, 900) + "..." : m)); } catch (_) {}
 };
+// Detailed diagnostics (per-hook timing, the 15 s CPU/GPU/thread report,
+// every request, every asset load, render snapshots, thread dumps after a
+// return) cost the main thread time on every frame. They are on for the test
+// channel and off for stable; tesl-reborn-verbose-logs.json {"enabled": true
+// or false} next to the updater settings overrides that either way.
+const verboseLogs = (() => {
+  const files = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/";
+  const read = (name: string) => { try { return JSON.parse(String((File as any).readAllText(files + name))); } catch (_) { return null; } };
+  const forced = read("tesl-reborn-verbose-logs.json");
+  if (forced && typeof forced.enabled === "boolean") return forced.enabled;
+  return String(read("tesl-reborn-updater.json")?.feedUrl ?? "/updates/test/").includes("/updates/test/");
+})();
 let nativeRename = null;
 function atomicRename(from: string, to: string): boolean {
   try {
@@ -270,6 +282,7 @@ const cpuReport = (() => {
   } catch (_) { return null; }
 })();
 const hookTimer = (() => {
+  if (!verboseLogs) return null;
   try {
     const spent = new Map<string, { us: number; calls: number }>();
     const now = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("clock_gettime"), "int", ["int", "pointer"]);
@@ -410,7 +423,7 @@ Il2Cpp.perform(() => {
     if (resourceTrace.length > 128) resourceTrace.shift();
   }
   // END android-ui: resource-events
-  log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}, ${verboseLogs ? "detailed" : "basic"} logs`);
   // Report 9: the same hook code ran 4-13 times slower on a Pixel 8 Pro than
   // on a Pixel 6 Pro. Record what could explain it: the Frida build and its
   // JavaScript runtime, and memory tagging (MTE), which the Pixel 8 has.
@@ -596,7 +609,7 @@ Il2Cpp.perform(() => {
           const uri = pinRequestLanguage(req);
           captureLogin(req, uri);
           rewriteAuthBody(req, uri);
-          if (seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
+          if (verboseLogs && seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
         } catch (e) { log(`header hook error: ${e}`); }
       },
     });
@@ -661,7 +674,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
     let seen = 0;
     hookAttach(cls(img, "BestHTTP.HTTPRequest").method("CallCallback").virtualAddress, {
       onEnter(args) {
-        try { reportHttpResult(new Il2Cpp.Object(args[0]), seen++ < 80); }
+        try { reportHttpResult(new Il2Cpp.Object(args[0]), verboseLogs && seen++ < 80); }
         catch (error) { log(`trace error: ${error}`); }
       }
     });
@@ -1523,7 +1536,7 @@ void onLeave (GumInvocationContext * ic) {
       return `${state} ${read(`/proc/self/task/${id}/syscall`).split(" ")[0] || "?"} ${read(`/proc/self/task/${id}/wchan`) || "-"}`;
     };
     let timer: any = null;
-    (globalThis.__teslOnResume ??= []).push(() => {
+    if (verboseLogs) (globalThis.__teslOnResume ??= []).push(() => {
       if (timer) clearInterval(timer);
       log("resume watch: started");
       const started = Date.now();
@@ -3212,7 +3225,7 @@ void onLeave (GumInvocationContext * ic) {
           if (this.replacement) this.replacement.free();
           recordResourceEvent(ret.isNull() ? "asset-null" : "asset-operation", this.path);
           const path = this.path ?? "";
-          if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
+          if ((!verboseLogs || path.toLowerCase().indexOf("localization") < 0) && !ret.isNull()) return;
           // The twin hook reports the same lookup a moment later: collapsing
           // the repeat keeps the port log readable without losing a failure.
           if (path === lastLoggedPath && Date.now() - lastLoggedAt < 100) return;
@@ -3230,6 +3243,8 @@ void onLeave (GumInvocationContext * ic) {
   // be renamed to match.
   // BEGIN android-ui: bundle-hashes
   section("bundle hash report", () => {
+    // About 0.7 s of main thread time on a OnePlus 7 Pro at every start.
+    if (!verboseLogs) return;
     const mgr = cls(img, "AssetBundles.AssetBundleManager");
     const catalog = cls(img, "AssetCatalog");
     const target = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/tesl-bundle-hashes.txt";
@@ -5036,7 +5051,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         state.low = 0; state.steady = 0;
         globalThis.__teslRateCap = state.cap;
         log(`graphics: ${mode}, frame rate ${state.cap || ceiling}`);
-        if (mode === "battle") for (const at of [8000, 60000, 120000]) schedule(at, () => { try { if (inBattle()) renderSnapshot(); } catch (error) { log(`render: snapshot failed: ${error}`); } }, "graphics render snapshot");
+        if (mode === "battle" && verboseLogs) for (const at of [8000, 60000, 120000]) schedule(at, () => { try { if (inBattle()) renderSnapshot(); } catch (error) { log(`render: snapshot failed: ${error}`); } }, "graphics render snapshot");
         // Reports 85 and 101: games crashed 3-30 s after this attached its 175
         // listeners at a battle start, as attaching the camera probe froze one.
         // Its numbers are in; it runs only as an experiment now.

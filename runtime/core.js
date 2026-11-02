@@ -3554,6 +3554,19 @@ const log = (m) => {
   } catch (_) {
   }
 };
+const verboseLogs = (() => {
+  const files = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/";
+  const read = (name) => {
+    try {
+      return JSON.parse(String(File.readAllText(files + name)));
+    } catch (_) {
+      return null;
+    }
+  };
+  const forced = read("tesl-reborn-verbose-logs.json");
+  if (forced && typeof forced.enabled === "boolean") return forced.enabled;
+  return String(read("tesl-reborn-updater.json")?.feedUrl ?? "/updates/test/").includes("/updates/test/");
+})();
 let nativeRename = null;
 function atomicRename(from, to) {
   try {
@@ -3768,6 +3781,7 @@ const cpuReport = (() => {
   }
 })();
 const hookTimer = (() => {
+  if (!verboseLogs) return null;
   try {
     const spent = /* @__PURE__ */ new Map();
     const now = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("clock_gettime"), "int", ["int", "pointer"]);
@@ -3940,7 +3954,7 @@ Il2Cpp.perform(() => {
     resourceTrace.push({ at: Date.now(), kind, path: String(path).replace(/[?#].*$/, "").slice(0, 240), status });
     if (resourceTrace.length > 128) resourceTrace.shift();
   }
-  log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}`);
+  log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}, ${verboseLogs ? "detailed" : "basic"} logs`);
   try {
     let mte = "unknown";
     try {
@@ -4131,7 +4145,7 @@ Il2Cpp.perform(() => {
           const uri = pinRequestLanguage(req);
           captureLogin(req, uri);
           rewriteAuthBody(req, uri);
-          if (seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
+          if (verboseLogs && seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
         } catch (e) {
           log(`header hook error: ${e}`);
         }
@@ -4199,7 +4213,7 @@ Il2Cpp.perform(() => {
     hookAttach(cls(img, "BestHTTP.HTTPRequest").method("CallCallback").virtualAddress, {
       onEnter(args) {
         try {
-          reportHttpResult(new Il2Cpp.Object(args[0]), seen++ < 80);
+          reportHttpResult(new Il2Cpp.Object(args[0]), verboseLogs && seen++ < 80);
         } catch (error) {
           log(`trace error: ${error}`);
         }
@@ -5080,7 +5094,7 @@ void onLeave (GumInvocationContext * ic) {
       return `${state} ${read(`/proc/self/task/${id}/syscall`).split(" ")[0] || "?"} ${read(`/proc/self/task/${id}/wchan`) || "-"}`;
     };
     let timer = null;
-    (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
+    if (verboseLogs) (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
       if (timer) clearInterval(timer);
       log("resume watch: started");
       const started = Date.now();
@@ -6866,7 +6880,7 @@ void onLeave (GumInvocationContext * ic) {
           if (this.replacement) this.replacement.free();
           recordResourceEvent(ret.isNull() ? "asset-null" : "asset-operation", this.path);
           const path = this.path ?? "";
-          if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
+          if ((!verboseLogs || path.toLowerCase().indexOf("localization") < 0) && !ret.isNull()) return;
           if (path === lastLoggedPath && Date.now() - lastLoggedAt < 100) return;
           lastLoggedPath = path;
           lastLoggedAt = Date.now();
@@ -6876,6 +6890,7 @@ void onLeave (GumInvocationContext * ic) {
     }
   });
   section("bundle hash report", () => {
+    if (!verboseLogs) return;
     const mgr = cls(img, "AssetBundles.AssetBundleManager");
     const catalog = cls(img, "AssetCatalog");
     const target = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/tesl-bundle-hashes.txt";
@@ -9072,7 +9087,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         state2.steady = 0;
         globalThis.__teslRateCap = state2.cap;
         log(`graphics: ${mode}, frame rate ${state2.cap || ceiling}`);
-        if (mode === "battle") for (const at of [8e3, 6e4, 12e4]) schedule(at, () => {
+        if (mode === "battle" && verboseLogs) for (const at of [8e3, 6e4, 12e4]) schedule(at, () => {
           try {
             if (inBattle()) renderSnapshot();
           } catch (error) {

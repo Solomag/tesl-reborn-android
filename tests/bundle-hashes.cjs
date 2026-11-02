@@ -5,7 +5,7 @@ function manifestOf(names){return {method:name=>name==='GetAllAssetBundles'
   :{invoke:value=>({method:()=>({invoke:()=>({content:`hash-${value}`})})})}};}
 function boot(){
   const session={clock:0,hook:null,state:{value:null},writes:[],logs:[]};
-  const c={section:(_,fn)=>fn(),img:{},cls:(_,name)=>name==='AssetBundles.AssetBundleManager'?{field:()=>({value:session.state.value})}:{method:()=>({virtualAddress:'SetCacheExpiration'})},
+  const c={section:(_,fn)=>fn(),verboseLogs:true,img:{},cls:(_,name)=>name==='AssetBundles.AssetBundleManager'?{field:()=>({value:session.state.value})}:{method:()=>({virtualAddress:'SetCacheExpiration'})},
     Interceptor:{attach:(_,handlers)=>{session.hook=handlers;}},isNull:x=>x==null,
     Date:class extends Date{static now(){return session.clock;}},
     Il2Cpp:{string:x=>x,corlib:{class:()=>({method:()=>({invoke:(path,text)=>session.writes.push({path,text})})})}},
