@@ -5074,6 +5074,7 @@ void onLeave (GumInvocationContext * ic) {
     let timer = null;
     (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
       if (timer) clearInterval(timer);
+      log("resume watch: started");
       const started = Date.now();
       timer = setInterval(() => {
         try {
