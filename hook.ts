@@ -386,8 +386,10 @@ function section(name: string, fn: () => void) {
 // away for a walk over the image's classes, which reads them by index.
 function checkedClass(img: Il2Cpp.Image, full: string): Il2Cpp.Class | null {
   const c = img.tryClass(full), short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
-  if (!c || (c.name === short && c.namespace === space)) return c;
-  return img.classes.find(k => k.name === short && k.namespace === space && k.declaringClass == null) ?? null;
+  // A class outside any namespace is matched by its name alone.
+  const fits = (k: Il2Cpp.Class) => k.name === short && (!space || k.namespace === space);
+  if (!c || fits(c)) return c;
+  return img.classes.find(k => fits(k) && k.declaringClass == null) ?? null;
 }
 function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
   const c = checkedClass(img, full);
@@ -669,8 +671,10 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   const strOf = (p: NativePointer) => { try { return p.isNull() ? "" : String(new Il2Cpp.String(p).content ?? ""); } catch (_) { return "?"; } };
   const msgOf = (p: NativePointer) => { try { return p.isNull() ? "" : String(call(new Il2Cpp.Object(p), "get_Message")); } catch (_) { return "?"; } };
   const byName = (full: string, suffix: string, minParams = 0) => {
-    const k = cls(img, full);
-    const m = k.methods.find(x => x.name.endsWith(suffix) && x.parameterCount >= minParams);
+    const k = cls(img, full), pick = (c: Il2Cpp.Class) => c.methods.find(x => x.name.endsWith(suffix) && x.parameterCount >= minParams);
+    // The method list can be read half-built while the game sets the class
+    // up (the race in checkedClass): a miss reads it again, fresh.
+    const m = pick(k) ?? pick(new Il2Cpp.Class(k.handle));
     if (!m) throw new Error(`${full}::${suffix} not found`);
     return m;
   };

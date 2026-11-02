@@ -3918,8 +3918,9 @@ function section(name, fn) {
 }
 function checkedClass(img, full) {
   const c = img.tryClass(full), short = full.split(".").pop(), space = full.slice(0, Math.max(0, full.length - short.length - 1));
-  if (!c || c.name === short && c.namespace === space) return c;
-  return img.classes.find((k) => k.name === short && k.namespace === space && k.declaringClass == null) ?? null;
+  const fits = (k) => k.name === short && (!space || k.namespace === space);
+  if (!c || fits(c)) return c;
+  return img.classes.find((k) => fits(k) && k.declaringClass == null) ?? null;
 }
 function cls(img, full) {
   const c = checkedClass(img, full);
@@ -4218,8 +4219,8 @@ Il2Cpp.perform(() => {
     }
   };
   const byName = (full, suffix, minParams = 0) => {
-    const k = cls(img, full);
-    const m = k.methods.find((x) => x.name.endsWith(suffix) && x.parameterCount >= minParams);
+    const k = cls(img, full), pick = (c) => c.methods.find((x) => x.name.endsWith(suffix) && x.parameterCount >= minParams);
+    const m = pick(k) ?? pick(new Il2Cpp.Class(k.handle));
     if (!m) throw new Error(`${full}::${suffix} not found`);
     return m;
   };
