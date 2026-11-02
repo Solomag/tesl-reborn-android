@@ -4,9 +4,9 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 208,
-  "version": "android-208-account-fingerprint",
-  "bytes": 505051,
-  "sha256": "f8b3c4312a1e854eb72783b20fa82a584a328fcc27315ef7e03c8cde8f13cefd",
-  "url": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/f8b3c4312a1e854eb72783b20fa82a584a328fcc27315ef7e03c8cde8f13cefd.js"
+  "revision": 209,
+  "version": "android-209-resume-watch",
+  "bytes": 502841,
+  "sha256": "03960e0fa50f1b25330372b2064e83f9ef7d12f988fe2b7b40e6bc7a954d3353",
+  "url": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/03960e0fa50f1b25330372b2064e83f9ef7d12f988fe2b7b40e6bc7a954d3353.js"
 }
