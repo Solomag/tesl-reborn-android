@@ -4,8 +4,8 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 203,
-  "version": "android-203-resume-watch",
+  "revision": 204,
+  "version": "android-204-resume-watch",
   "bytes": 502805,
   "sha256": "9dd2a2cad0f428b636fe516477ba9d21307bb4902d4e860d71bddef43ff481f5",
   "resources": [
