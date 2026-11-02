@@ -1564,6 +1564,11 @@ void onLeave (GumInvocationContext * ic) {
     // thread writes with Frida's File, not through Unity.
     const loadingFile = `${persistentPath()}/tesl-reborn-loading.json`;
     const mark = (loaded: boolean) => (File as any).writeAllText(loadingFile, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
+    // GestureBridge (APK) checks, some seconds after a return, whether a
+    // frame ran since: this file says when the last one ran, for this
+    // process. Written only while frames come, every two seconds at most.
+    const framesFile = `${persistentPath()}/tesl-reborn-frames.json`;
+    let framesWritten = 0;
     let hung = false, seenAdj = "";
     setInterval(() => {
       try {
@@ -1571,6 +1576,10 @@ void onLeave (GumInvocationContext * ic) {
         if (adj !== seenAdj) { seenAdj = adj; if (hung || adj === "0") log(`hang watch: oom_score_adj ${adj}`); }
         if (!lastFrame) return;
         const gap = Date.now() - lastFrame;
+        if (lastFrame !== framesWritten && gap < 3000) {
+          framesWritten = lastFrame;
+          (File as any).writeAllText(framesFile, JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
+        }
         if (hung && gap < 5000) {
           hung = false; log("hang watch: frames are back"); mark(true);
         } else if (adj === "0" && gap > 20000) {

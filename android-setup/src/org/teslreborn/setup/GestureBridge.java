@@ -36,6 +36,8 @@ public final class GestureBridge {
   /** Extra for LaunchActivity: stop the game and start it again. */
   static final String RESTART_EXTRA = "org.teslreborn.restart";
   private static boolean leftWhileLoading;
+  private static long pausedAt;
+  private static int returnCheck;
 
   /**
    * Leaving the game during its first load breaks the load: it never gets
@@ -46,6 +48,8 @@ public final class GestureBridge {
    * older patch) nothing changes.
    */
   public static void onPause(Activity activity) {
+    pausedAt = System.currentTimeMillis();
+    returnCheck++;
     try {
       JSONObject state = PackInstaller.json(new File(activity.getExternalFilesDir(null), "tesl-reborn-loading.json"));
       // A load takes well under three minutes; an older "still loading" is
@@ -57,19 +61,54 @@ public final class GestureBridge {
     }
   }
 
+  private static boolean restart(Activity activity) {
+    try {
+      Intent restart = new Intent(activity, LaunchActivity.class).putExtra(RESTART_EXTRA, true)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+      activity.startActivity(restart);
+      return true;
+    } catch (Exception error) {
+      status(activity, "restart-error: " + error.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /**
+   * Reports 128 and 130: back after a long time in the background the game
+   * sometimes draws no frame again and stays frozen. The hook writes
+   * tesl-reborn-frames.json (pid, lastFrameAt) while frames come. Back after
+   * more than 30 s away, the file is read 20 s later: no frame of this
+   * process since the return restarts the game. Without the file (an older
+   * patch) or with another process in it nothing happens.
+   */
+  private static void watchReturn(Activity activity) {
+    long now = System.currentTimeMillis();
+    if (pausedAt == 0 || now - pausedAt < 30_000) return;
+    final int check = ++returnCheck;
+    final long resumedAt = now;
+    MAIN.postDelayed(
+        () -> {
+          if (check != returnCheck || activity.isFinishing()) return;
+          try {
+            JSONObject frames =
+                PackInstaller.json(new File(activity.getExternalFilesDir(null), "tesl-reborn-frames.json"));
+            if (frames.optInt("pid", -1) != android.os.Process.myPid()) return;
+            if (frames.optLong("lastFrameAt", Long.MAX_VALUE) > resumedAt) return;
+            status(activity, "frozen-after-return-restart");
+            restart(activity);
+          } catch (Exception missing) {
+          }
+        },
+        20_000);
+  }
+
   /** Temporary diagnostic overlay. Drawable overlays never receive/consume touch. */
   public static void onResume(Activity activity) {
     if (leftWhileLoading) {
       leftWhileLoading = false;
-      try {
-        Intent restart = new Intent(activity, LaunchActivity.class).putExtra(RESTART_EXTRA, true)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-        activity.startActivity(restart);
-        return;
-      } catch (Exception error) {
-        status(activity, "restart-error: " + error.getClass().getSimpleName());
-      }
+      if (restart(activity)) return;
     }
+    watchReturn(activity);
     fillDisplayCutout(activity);
     stickyImmersive(activity);
     requestRefreshRate(activity);

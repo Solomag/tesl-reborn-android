@@ -5122,6 +5122,8 @@ void onLeave (GumInvocationContext * ic) {
     });
     const loadingFile = `${persistentPath()}/tesl-reborn-loading.json`;
     const mark = (loaded) => File.writeAllText(loadingFile, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
+    const framesFile = `${persistentPath()}/tesl-reborn-frames.json`;
+    let framesWritten = 0;
     let hung = false, seenAdj = "";
     setInterval(() => {
       try {
@@ -5132,6 +5134,10 @@ void onLeave (GumInvocationContext * ic) {
         }
         if (!lastFrame) return;
         const gap = Date.now() - lastFrame;
+        if (lastFrame !== framesWritten && gap < 3e3) {
+          framesWritten = lastFrame;
+          File.writeAllText(framesFile, JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
+        }
         if (hung && gap < 5e3) {
           hung = false;
           log("hang watch: frames are back");
