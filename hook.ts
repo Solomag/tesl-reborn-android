@@ -59,8 +59,12 @@ function invokeDelegateInt(del: Il2Cpp.Object, value: number) {
   } else method.invoke(value);
 }
 
+// Through the outer class: image.classes reads every type of the image
+// (Assembly.GetTypes), and that first read, early in the setup, sometimes
+// never came back on a OnePlus 7 Pro.
 function nested(image: Il2Cpp.Image, outer: string, inner: string): Il2Cpp.Class {
-  const c = image.classes.find(k => k.name === inner && k.declaringClass?.name === outer);
+  const c = image.tryClass(outer)?.nestedClasses.find(k => k.name === inner)
+    ?? image.classes.find(k => k.name === inner && k.declaringClass?.name === outer);
   if (!c) throw new Error(`class ${outer}/${inner} not found`);
   return c;
 }
@@ -378,34 +382,8 @@ function section(name: string, fn: () => void) {
   catch (e) { log(`FAIL ${name}: ${e}`); }
   finally { currentSection = "later"; }
 }
-// Report 130 (Pixel, restart after leaving a load): il2cpp_class_from_name
-// fills its name table lazily and the hook thread races the game for it, so
-// a lookup now and then returned an unrelated class (BundleVersionInfo ->
-// BestHTTP DigestStore, PlayerInfoPanel -> Cast5Engine) and random features
-// failed, versions.json among them. A result whose name differs is asked
-// for again.
-function checkedClass(img: Il2Cpp.Image, full: string, rounds = 20): Il2Cpp.Class | null {
-  const short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
-  // A class outside any namespace is matched by its name alone.
-  const fits = (k: Il2Cpp.Class | null) => !!k && k.name === short && (!space || k.namespace === space);
-  let c = img.tryClass(full);
-  // Wrong or missing: the classes are walked by index instead.
-    if (fits(c) || !rounds) return fits(c) ? c : null;
-  // The bridge keeps the first list it read (Image.classes is lazy), and a
-  // list read mid-race stays wrong; this reads the classes afresh, a few
-  // times over two seconds while the game finishes setting them up.
-  let walked: Il2Cpp.Class[] = [];
-  for (let round = 0; !walked.length && round < rounds; round++) {
-    if (round) Thread.sleep(0.1);
-    // A new Image object has its own, still empty cache.
-    for (const k of new Il2Cpp.Image(img.handle).classes) if (!k.isNull() && fits(k) && k.declaringClass == null) walked.push(k);
-  }
-  if (walked.length || rounds > 1) classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
-  return walked[0] ?? null;
-}
-const classMisses: string[] = [];
 function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
-  const c = checkedClass(img, full);
+  const c = img.tryClass(full);
   if (c) return c;
   const short = full.split(".").pop()!;
   const alt = img.classes.find(k => k.name === short && k.declaringClass == null);
@@ -421,34 +399,7 @@ function invokeDelegatePtr(del: Il2Cpp.Object, value: NativePointer) {
 
 const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true if the server says "account not found"
 
-// Report 130: the hook thread set up its hooks while the game started on its
-// own main thread, and il2cpp's name lookups raced: now and then a class
-// came back as an unrelated one and a random feature failed. The setup runs
-// instead inside the first il2cpp_runtime_invoke the Unity main thread makes
-// (every Awake and Update goes through it): the game waits for it, so no
-// lookup of the game's runs at the same time.
-function onUnityMainThread(body: () => void) {
-  const mainId = Il2Cpp.mainThread.id;
-  if (Process.getCurrentThreadId() === mainId) { body(); return; }
-  let done = false;
-  const listener = Interceptor.attach(Il2Cpp.module.getExportByName("il2cpp_runtime_invoke"), {
-    onEnter() {
-      if (done || Process.getCurrentThreadId() !== mainId) return;
-      done = true; listener.detach();
-      const at = Date.now();
-      try { body(); } catch (error) { log(`setup on the main thread failed: ${error}`); }
-      log(`setup ran on the Unity main thread in ${Date.now() - at} ms`);
-    }
-  });
-}
-
-Il2Cpp.perform(() => onUnityMainThread(() => {
-  // The first name lookup in an image builds its name table; built by two
-  // threads at once it comes out broken for the rest of the run (see
-  // checkedClass). Build every table now, before the game loads its scripts.
-  const warmStart = Date.now();
-  for (const assembly of Il2Cpp.domain.assemblies) { try { assembly.image.tryClass("<Module>"); } catch (_) {} }
-  const warmMs = Date.now() - warmStart;
+Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
   // BEGIN android-ui: resource-events
   // Bounded startup trace, without request/response bodies or credentials.
@@ -476,7 +427,16 @@ Il2Cpp.perform(() => onUnityMainThread(() => {
   // (13) instead of BNETAuthUnknownAccount (17), and the game stops on that error.
   // Nothing is sent any more: 17 from here leads to the device id and username and
   // password login of the Battle.net client, and a session needs no native link.
-  const authResult = nested(img, "AuthBase", "AuthResult");
+  // Looked up on first use, so a failure here cannot stop the whole setup.
+  let authResultClass: Il2Cpp.Class | null = null;
+  const authResult = { new: () => (authResultClass ??= nested(img, "AuthBase", "AuthResult")).new() };
+  // The first read of every type (later sections filter img.classes) is
+  // timed here, so a start that stops in it shows where.
+  section("type list", () => {
+    log("type list: reading");
+    const at = Date.now(), count = img.classes.length;
+    log(`type list: ${count} types in ${Date.now() - at} ms`);
+  });
   const BNET_AUTH_UNKNOWN_ACCOUNT = 17;
   function finishAuth(cb: Il2Cpp.Object, code: number) {
     const result = authResult.new();
@@ -711,10 +671,8 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
   const strOf = (p: NativePointer) => { try { return p.isNull() ? "" : String(new Il2Cpp.String(p).content ?? ""); } catch (_) { return "?"; } };
   const msgOf = (p: NativePointer) => { try { return p.isNull() ? "" : String(call(new Il2Cpp.Object(p), "get_Message")); } catch (_) { return "?"; } };
   const byName = (full: string, suffix: string, minParams = 0) => {
-    const k = cls(img, full), pick = (c: Il2Cpp.Class) => c.methods.find(x => x.name.endsWith(suffix) && x.parameterCount >= minParams);
-    // The method list can be read half-built while the game sets the class
-    // up (the race in checkedClass): a miss reads it again, fresh.
-    const m = pick(k) ?? pick(new Il2Cpp.Class(k.handle));
+    const k = cls(img, full);
+    const m = k.methods.find(x => x.name.endsWith(suffix) && x.parameterCount >= minParams);
     if (!m) throw new Error(`${full}::${suffix} not found`);
     return m;
   };
@@ -1126,16 +1084,9 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     const cached = classCache[name];
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map(a => a.image);
-    let found: Il2Cpp.Class | null = null;
-    // Lookups first; then fresh walks over every image, up to 20 rounds.
-    for (const image of allImages) if ((found = checkedClass(image, name, 0))) break;
-    const looked = !!found;
-    for (let round = 0; !found && round < 20; round++) {
-      if (round) Thread.sleep(0.1);
-      for (const image of allImages) if ((found = checkedClass(image, name, 1))) break;
-    }
-    if (found && !looked) classMisses.push(`${name}: found by walk`);
-    if (!found) throw new Error(`class ${name} not found in any assembly`);
+    const image = allImages.find(i => i.tryClass(name) != null);
+    if (!image) throw new Error(`class ${name} not found in any assembly`);
+    const found = image.tryClass(name)!;
     classCache[name] = found;
     return found;
   }
@@ -7465,11 +7416,5 @@ const chatWindows = new Map();
     }
   });
 
-  // Lookups made later (timers, scheduled work) take these from the cache
-  // filled here, on the main thread, instead of racing the game again.
-  const prefetchMissing: string[] = [];
-  for (const name of ["System.Uri", "TMPro.TMP_FontAsset", "TMPro.TMP_Sprite", "TMPro.TMP_SpriteAsset", "TMPro.TextAlignmentOptions", "TMPro.TextMeshProUGUI", "UIResourceManager", "UnityEngine.Animator", "UnityEngine.Application", "UnityEngine.Camera", "UnityEngine.Canvas", "UnityEngine.EventSystems.EventSystem", "UnityEngine.Events.UnityAction", "UnityEngine.Font", "UnityEngine.GameObject", "UnityEngine.ImageConversion", "UnityEngine.Input", "UnityEngine.LayerMask", "UnityEngine.Material", "UnityEngine.Object", "UnityEngine.PlayerPrefs", "UnityEngine.QualitySettings", "UnityEngine.RectTransform", "UnityEngine.RectTransformUtility", "UnityEngine.Renderer", "UnityEngine.Resources", "UnityEngine.SceneManagement.SceneManager", "UnityEngine.Screen", "UnityEngine.ScriptableObject", "UnityEngine.Shader", "UnityEngine.Sprite", "UnityEngine.SystemInfo", "UnityEngine.TextAnchor", "UnityEngine.Texture2D", "UnityEngine.TextureFormat", "UnityEngine.Time", "UnityEngine.UI.Button", "UnityEngine.UI.GraphicRaycaster", "UnityEngine.UI.InputField", "UnityEngine.UI.LayoutRebuilder", "UnityEngine.UI.RectMask2D", "UnityEngine.UI.ScrollRect", "UnityEngine.UI.Text"]) { try { ucls(name); } catch (_) { prefetchMissing.push(name); } }
-  if (prefetchMissing.length) log(`classes not prefetched: ${prefetchMissing.join(", ")}`);
-  log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
   log("setup finished");
-}));
+});

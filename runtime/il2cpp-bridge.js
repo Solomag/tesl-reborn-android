@@ -804,7 +804,9 @@ function recycle(Class) {
   return new Proxy(Class, {
     cache: /* @__PURE__ */ new Map(),
     construct(Target, argArray) {
-      const handle = argArray[0].toUInt32();
+      // TESL Reborn: the full address, not its low 32 bits (toUInt32): on arm64
+      // two classes could share the low half and one came back as the other.
+      const handle = argArray[0].toString();
       if (!this.cache.has(handle)) {
         this.cache.set(handle, new Target(argArray[0]));
       }

@@ -857,7 +857,9 @@ function recycle(Class) {
   return new Proxy(Class, {
     cache: /* @__PURE__ */ new Map(),
     construct(Target, argArray) {
-      const handle = argArray[0].toUInt32();
+      // TESL Reborn: the full address, not its low 32 bits (toUInt32): on arm64
+      // two classes could share the low half and one came back as the other.
+      const handle = argArray[0].toString();
       if (!this.cache.has(handle)) {
         this.cache.set(handle, new Target(argArray[0]));
       }
@@ -3570,7 +3572,7 @@ function invokeDelegateInt(del, value) {
   } else method.invoke(value);
 }
 function nested(image, outer, inner) {
-  const c = image.classes.find((k) => k.name === inner && k.declaringClass?.name === outer);
+  const c = image.tryClass(outer)?.nestedClasses.find((k) => k.name === inner) ?? image.classes.find((k) => k.name === inner && k.declaringClass?.name === outer);
   if (!c) throw new Error(`class ${outer}/${inner} not found`);
   return c;
 }
@@ -3916,22 +3918,8 @@ function section(name, fn) {
     currentSection = "later";
   }
 }
-function checkedClass(img, full, rounds = 20) {
-  const short = full.split(".").pop(), space = full.slice(0, Math.max(0, full.length - short.length - 1));
-  const fits = (k) => !!k && k.name === short && (!space || k.namespace === space);
-  let c = img.tryClass(full);
-  if (fits(c) || !rounds) return fits(c) ? c : null;
-  let walked = [];
-  for (let round = 0; !walked.length && round < rounds; round++) {
-    if (round) Thread.sleep(0.1);
-    for (const k of new Il2Cpp.Image(img.handle).classes) if (!k.isNull() && fits(k) && k.declaringClass == null) walked.push(k);
-  }
-  if (walked.length || rounds > 1) classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
-  return walked[0] ?? null;
-}
-const classMisses = [];
 function cls(img, full) {
-  const c = checkedClass(img, full);
+  const c = img.tryClass(full);
   if (c) return c;
   const short = full.split(".").pop();
   const alt = img.classes.find((k) => k.name === short && k.declaringClass == null);
@@ -3944,37 +3932,7 @@ function invokeDelegatePtr(del, value) {
   method.invoke(argument);
 }
 const CREATE_ACCOUNT = false;
-function onUnityMainThread(body) {
-  const mainId = Il2Cpp.mainThread.id;
-  if (Process.getCurrentThreadId() === mainId) {
-    body();
-    return;
-  }
-  let done = false;
-  const listener = Interceptor.attach(Il2Cpp.module.getExportByName("il2cpp_runtime_invoke"), {
-    onEnter() {
-      if (done || Process.getCurrentThreadId() !== mainId) return;
-      done = true;
-      listener.detach();
-      const at = Date.now();
-      try {
-        body();
-      } catch (error) {
-        log(`setup on the main thread failed: ${error}`);
-      }
-      log(`setup ran on the Unity main thread in ${Date.now() - at} ms`);
-    }
-  });
-}
-Il2Cpp.perform(() => onUnityMainThread(() => {
-  const warmStart = Date.now();
-  for (const assembly of Il2Cpp.domain.assemblies) {
-    try {
-      assembly.image.tryClass("<Module>");
-    } catch (_) {
-    }
-  }
-  const warmMs = Date.now() - warmStart;
+Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
   const resourceTrace = [], resourceTraceStarted = Date.now();
   function recordResourceEvent(kind, path, status = 0) {
@@ -3995,7 +3953,13 @@ Il2Cpp.perform(() => onUnityMainThread(() => {
   } catch (error) {
     log(`runtime: ${error}`);
   }
-  const authResult = nested(img, "AuthBase", "AuthResult");
+  let authResultClass = null;
+  const authResult = { new: () => (authResultClass ?? (authResultClass = nested(img, "AuthBase", "AuthResult"))).new() };
+  section("type list", () => {
+    log("type list: reading");
+    const at = Date.now(), count = img.classes.length;
+    log(`type list: ${count} types in ${Date.now() - at} ms`);
+  });
   const BNET_AUTH_UNKNOWN_ACCOUNT = 17;
   function finishAuth(cb, code) {
     const result = authResult.new();
@@ -4257,8 +4221,8 @@ Il2Cpp.perform(() => onUnityMainThread(() => {
     }
   };
   const byName = (full, suffix, minParams = 0) => {
-    const k = cls(img, full), pick = (c) => c.methods.find((x) => x.name.endsWith(suffix) && x.parameterCount >= minParams);
-    const m = pick(k) ?? pick(new Il2Cpp.Class(k.handle));
+    const k = cls(img, full);
+    const m = k.methods.find((x) => x.name.endsWith(suffix) && x.parameterCount >= minParams);
     if (!m) throw new Error(`${full}::${suffix} not found`);
     return m;
   };
@@ -4665,15 +4629,9 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     const cached = classCache[name];
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map((a) => a.image);
-    let found = null;
-    for (const image of allImages) if (found = checkedClass(image, name, 0)) break;
-    const looked = !!found;
-    for (let round = 0; !found && round < 20; round++) {
-      if (round) Thread.sleep(0.1);
-      for (const image of allImages) if (found = checkedClass(image, name, 1)) break;
-    }
-    if (found && !looked) classMisses.push(`${name}: found by walk`);
-    if (!found) throw new Error(`class ${name} not found in any assembly`);
+    const image = allImages.find((i) => i.tryClass(name) != null);
+    if (!image) throw new Error(`class ${name} not found in any assembly`);
+    const found = image.tryClass(name);
     classCache[name] = found;
     return found;
   }
@@ -11952,15 +11910,5 @@ ${stack}`);
       }
     }
   });
-  const prefetchMissing = [];
-  for (const name of ["System.Uri", "TMPro.TMP_FontAsset", "TMPro.TMP_Sprite", "TMPro.TMP_SpriteAsset", "TMPro.TextAlignmentOptions", "TMPro.TextMeshProUGUI", "UIResourceManager", "UnityEngine.Animator", "UnityEngine.Application", "UnityEngine.Camera", "UnityEngine.Canvas", "UnityEngine.EventSystems.EventSystem", "UnityEngine.Events.UnityAction", "UnityEngine.Font", "UnityEngine.GameObject", "UnityEngine.ImageConversion", "UnityEngine.Input", "UnityEngine.LayerMask", "UnityEngine.Material", "UnityEngine.Object", "UnityEngine.PlayerPrefs", "UnityEngine.QualitySettings", "UnityEngine.RectTransform", "UnityEngine.RectTransformUtility", "UnityEngine.Renderer", "UnityEngine.Resources", "UnityEngine.SceneManagement.SceneManager", "UnityEngine.Screen", "UnityEngine.ScriptableObject", "UnityEngine.Shader", "UnityEngine.Sprite", "UnityEngine.SystemInfo", "UnityEngine.TextAnchor", "UnityEngine.Texture2D", "UnityEngine.TextureFormat", "UnityEngine.Time", "UnityEngine.UI.Button", "UnityEngine.UI.GraphicRaycaster", "UnityEngine.UI.InputField", "UnityEngine.UI.LayoutRebuilder", "UnityEngine.UI.RectMask2D", "UnityEngine.UI.ScrollRect", "UnityEngine.UI.Text"]) {
-    try {
-      ucls(name);
-    } catch (_) {
-      prefetchMissing.push(name);
-    }
-  }
-  if (prefetchMissing.length) log(`classes not prefetched: ${prefetchMissing.join(", ")}`);
-  log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
   log("setup finished");
-}));
+});
