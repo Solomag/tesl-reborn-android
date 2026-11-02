@@ -3916,11 +3916,15 @@ function section(name, fn) {
     currentSection = "later";
   }
 }
-function checkedClass(img, full) {
-  const c = img.tryClass(full), short = full.split(".").pop(), space = full.slice(0, Math.max(0, full.length - short.length - 1));
-  const fits = (k) => k.name === short && (!space || k.namespace === space);
-  if (!c || fits(c)) return c;
-  return img.classes.find((k) => fits(k) && k.declaringClass == null) ?? null;
+function checkedClass(img, full, waits = 20) {
+  const short = full.split(".").pop(), space = full.slice(0, Math.max(0, full.length - short.length - 1));
+  const fits = (k) => !!k && k.name === short && (!space || k.namespace === space);
+  let c = img.tryClass(full);
+  for (let tries = 0; !fits(c) && tries < waits; tries++) {
+    Thread.sleep(0.05);
+    c = img.tryClass(full);
+  }
+  return fits(c) ? c : null;
 }
 function cls(img, full) {
   const c = checkedClass(img, full);
@@ -4628,7 +4632,10 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map((a) => a.image);
     let found = null;
-    for (const image of allImages) if (found = checkedClass(image, name)) break;
+    for (let round = 0; !found && round < 20; round++) {
+      if (round) Thread.sleep(0.05);
+      for (const image of allImages) if (found = checkedClass(image, name, 0)) break;
+    }
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;

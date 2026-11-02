@@ -382,14 +382,17 @@ function section(name: string, fn: () => void) {
 // fills its name table lazily and the hook thread races the game for it, so
 // a lookup now and then returned an unrelated class (BundleVersionInfo ->
 // BestHTTP DigestStore, PlayerInfoPanel -> Cast5Engine) and random features
-// failed, versions.json among them. A result whose name differs is thrown
-// away for a walk over the image's classes, which reads them by index.
-function checkedClass(img: Il2Cpp.Image, full: string): Il2Cpp.Class | null {
-  const c = img.tryClass(full), short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
+// failed, versions.json among them. A result whose name differs is asked
+// for again.
+function checkedClass(img: Il2Cpp.Image, full: string, waits = 20): Il2Cpp.Class | null {
+  const short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
   // A class outside any namespace is matched by its name alone.
-  const fits = (k: Il2Cpp.Class) => k.name === short && (!space || k.namespace === space);
-  if (!c || fits(c)) return c;
-  return img.classes.find(k => fits(k) && k.declaringClass == null) ?? null;
+  const fits = (k: Il2Cpp.Class | null) => !!k && k.name === short && (!space || k.namespace === space);
+  let c = img.tryClass(full);
+  // Wrong or missing while the table is half-built: ask again for up to a
+  // second. A class that really is absent costs that second once.
+  for (let tries = 0; !fits(c) && tries < waits; tries++) { Thread.sleep(0.05); c = img.tryClass(full); }
+  return fits(c) ? c : null;
 }
 function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
   const c = checkedClass(img, full);
@@ -1086,8 +1089,12 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     const cached = classCache[name];
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map(a => a.image);
+    // Each image is asked once per round; up to 20 rounds as in checkedClass.
     let found: Il2Cpp.Class | null = null;
-    for (const image of allImages) if ((found = checkedClass(image, name))) break;
+    for (let round = 0; !found && round < 20; round++) {
+      if (round) Thread.sleep(0.05);
+      for (const image of allImages) if ((found = checkedClass(image, name, 0))) break;
+    }
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;
