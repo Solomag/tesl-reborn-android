@@ -4054,9 +4054,15 @@ Il2Cpp.perform(() => {
           changed.push(k);
         }
       }
-      if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
-        obj.fingerprint = freshFingerprint();
-        if (changed.indexOf("fingerprint") < 0) changed.push("fingerprint");
+      if (typeof obj.deviceId === "string" && obj.deviceId) authDeviceId = obj.deviceId;
+      if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0 && typeof obj.username === "string" && obj.username) authLogin = obj.username;
+      if ("fingerprint" in obj && authDeviceId) {
+        const login = authLogin || (readSavedLogin()?.username ?? "");
+        const fingerprint = accountFingerprint(authDeviceId, login);
+        if (obj.fingerprint !== fingerprint) {
+          obj.fingerprint = fingerprint;
+          changed.push("fingerprint");
+        }
       }
       if (changed.length === 0) {
         log(`normalizer: ${uri.split("/").pop()} needs no change`);
@@ -4588,10 +4594,47 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
       return false;
     }
   }
-  function freshFingerprint() {
-    let hex = "";
-    for (let i = 0; i < 16; i++) hex += Math.floor(Math.random() * 256).toString(16).padStart(2, "0");
-    return hex;
+  let authLogin = "", authDeviceId = "";
+  function accountFingerprint(deviceId, login) {
+    return sha1Hex(login ? `${deviceId}
+${login.trim().toLowerCase()}` : deviceId);
+  }
+  function sha1Hex(text) {
+    const bytes = [];
+    encodeURIComponent(text).replace(/%([0-9A-F]{2})|[^%]/g, (ch, hex) => {
+      bytes.push(hex ? parseInt(hex, 16) : ch.charCodeAt(0));
+      return "";
+    });
+    const bits = bytes.length * 8;
+    bytes.push(128);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : bits >>> i * 8 & 255);
+    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+    const w = new Array(80);
+    for (let off = 0; off < bytes.length; off += 64) {
+      for (let i = 0; i < 16; i++) w[i] = bytes[off + i * 4] << 24 | bytes[off + i * 4 + 1] << 16 | bytes[off + i * 4 + 2] << 8 | bytes[off + i * 4 + 3];
+      for (let i = 16; i < 80; i++) {
+        const x = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
+        w[i] = x << 1 | x >>> 31;
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        const f = i < 20 ? b & c | ~b & d : i < 40 ? b ^ c ^ d : i < 60 ? b & c | b & d | c & d : b ^ c ^ d;
+        const k = i < 20 ? 1518500249 : i < 40 ? 1859775393 : i < 60 ? 2400959708 : 3395469782;
+        const t = (a << 5 | a >>> 27) + f + e + k + w[i] | 0;
+        e = d;
+        d = c;
+        c = b << 30 | b >>> 2;
+        b = a;
+        a = t;
+      }
+      h0 = h0 + a | 0;
+      h1 = h1 + b | 0;
+      h2 = h2 + c | 0;
+      h3 = h3 + d | 0;
+      h4 = h4 + e | 0;
+    }
+    return [h0, h1, h2, h3, h4].map((v) => (v >>> 0).toString(16).padStart(8, "0")).join("");
   }
   function newWith(klass, ...args) {
     const o = klass.alloc(), root = o.ref(false);

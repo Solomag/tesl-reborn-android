@@ -521,11 +521,17 @@ Il2Cpp.perform(() => {
       for (const k of Object.keys(overrides)) {
         if (k in obj && obj[k] !== overrides[k]) { obj[k] = overrides[k]; changed.push(k); }
       }
-      // The service registers the source fingerprint instead of updating it, so a fingerprint can only be
-      // used once. Every login therefore needs a new one (the Linux rebuild retries with a fresh one too).
-      if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
-        obj.fingerprint = freshFingerprint();
-        if (changed.indexOf("fingerprint") < 0) changed.push("fingerprint");
+      // A fingerprint stands for one account on one device: the service binds
+      // it to the account of the first username and password login and later
+      // signs that device in by it alone, so one fingerprint cannot serve two
+      // accounts (HTTP 500). It is sha1(game device id + login), stable for
+      // each account on a phone; without a known login, sha1(device id).
+      if (typeof obj.deviceId === "string" && obj.deviceId) authDeviceId = obj.deviceId;
+      if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0 && typeof obj.username === "string" && obj.username) authLogin = obj.username;
+      if ("fingerprint" in obj && authDeviceId) {
+        const login = authLogin || (readSavedLogin()?.username ?? "");
+        const fingerprint = accountFingerprint(authDeviceId, login);
+        if (obj.fingerprint !== fingerprint) { obj.fingerprint = fingerprint; changed.push("fingerprint"); }
       }
       if (changed.length === 0) { log(`normalizer: ${uri.split("/").pop()} needs no change`); return; }
       const out = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
@@ -1030,12 +1036,35 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     } catch (e) { return false; }
   }
 
-  // A new source fingerprint: 32 hex digits without dashes, the way the game
-  // generates it (Guid.NewGuid().ToString("N")).
-  function freshFingerprint(): string {
-    let hex = "";
-    for (let i = 0; i < 16; i++) hex += Math.floor(Math.random() * 256).toString(16).padStart(2, "0");
-    return hex;
+  // The login being used in this process and the game's device id, for the
+  // account fingerprint (see the auth normalizer).
+  let authLogin = "", authDeviceId = "";
+  function accountFingerprint(deviceId: string, login: string): string {
+    return sha1Hex(login ? `${deviceId}
+${login.trim().toLowerCase()}` : deviceId);
+  }
+  function sha1Hex(text: string): string {
+    const bytes: number[] = [];
+    encodeURIComponent(text).replace(/%([0-9A-F]{2})|[^%]/g, (ch, hex) => { bytes.push(hex ? parseInt(hex, 16) : ch.charCodeAt(0)); return ""; });
+    const bits = bytes.length * 8;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : (bits >>> (i * 8)) & 255);
+    let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0;
+    const w = new Array(80);
+    for (let off = 0; off < bytes.length; off += 64) {
+      for (let i = 0; i < 16; i++) w[i] = (bytes[off + i * 4] << 24) | (bytes[off + i * 4 + 1] << 16) | (bytes[off + i * 4 + 2] << 8) | bytes[off + i * 4 + 3];
+      for (let i = 16; i < 80; i++) { const x = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]; w[i] = (x << 1) | (x >>> 31); }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        const f = i < 20 ? (b & c) | (~b & d) : i < 40 ? b ^ c ^ d : i < 60 ? (b & c) | (b & d) | (c & d) : b ^ c ^ d;
+        const k = i < 20 ? 0x5a827999 : i < 40 ? 0x6ed9eba1 : i < 60 ? 0x8f1bbcdc : 0xca62c1d6;
+        const t = (((a << 5) | (a >>> 27)) + f + e + k + w[i]) | 0;
+        e = d; d = c; c = (b << 30) | (b >>> 2); b = a; a = t;
+      }
+      h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0; h4 = (h4 + e) | 0;
+    }
+    return [h0, h1, h2, h3, h4].map(v => (v >>> 0).toString(16).padStart(8, "0")).join("");
   }
 
   // Allocates an object and runs its constructor with the given arguments.

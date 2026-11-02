@@ -59,12 +59,15 @@ assert.equal(vm.runInContext('pendingLogin.password',captured),'сложный"�
 console.log('PASS: UTF-8 login capture without legacy escape() global');
 
 let rewritten;
-const request=Buffer.from(JSON.stringify({componentType:'android',language:'en',password:'сложный"пароль',fingerprint:'old'}),'utf8');
-const normalizer={escape:undefined,unescape:undefined,byteClass:{},overrides:{componentType:'win'},resourceLanguage:()=>"ru_ru",shapedLanguage:()=>"ru",freshFingerprint:()=>"fresh",log:()=>{},
+const request=Buffer.from(JSON.stringify({componentType:'android',language:'en',username:'Соло_Mag',password:'сложный"пароль',deviceId:'device-1',fingerprint:'old'}),'utf8');
+const normalizer={escape:undefined,unescape:undefined,byteClass:{},overrides:{componentType:'win'},resourceLanguage:()=>"ru_ru",shapedLanguage:()=>"ru",readSavedLogin:()=>null,log:()=>{},
  call:(_,method,value)=>method==='get_RawData'?{handle:{isNull:()=>false},length:request.length,get:i=>request[i]}:(rewritten=value),
  Il2Cpp:{array:(_,length)=>{const bytes=new Uint8Array(length);bytes.set=(index,value)=>{bytes[index]=value};return bytes}}};
-vm.createContext(normalizer);vm.runInContext(extract('  function rewriteAuthBody(', '  // The credentials of the login'),normalizer);
+vm.createContext(normalizer);vm.runInContext(extract('  let authLogin', '  // Allocates an object')+extract('  function rewriteAuthBody(', '  // The credentials of the login'),normalizer);
 normalizer.rewriteAuthBody({},'https://tesl-reborn.com/api/account/bnetUsernameAndPasswordLogin');
 const normalized=JSON.parse(Buffer.from(rewritten).toString('utf8'));
-assert.equal(normalized.password,'сложный"пароль');assert.equal(normalized.componentType,'win');assert.equal(normalized.language,'ru');assert.equal(normalized.fingerprint,'fresh');
-console.log('PASS: Unicode auth normalization, selected game language and fresh fingerprint without deprecated JS globals');
+assert.equal(normalized.password,'сложный"пароль');assert.equal(normalized.componentType,'win');assert.equal(normalized.language,'ru');const sha1=x=>require('node:crypto').createHash('sha1').update(x,'utf8').digest('hex');
+assert.equal(normalized.fingerprint,sha1('device-1'+String.fromCharCode(10)+'соло_mag'));
+assert.equal(normalizer.sha1Hex(''),sha1(''));assert.equal(normalizer.sha1Hex('a'.repeat(200)),sha1('a'.repeat(200)));
+assert.equal(normalizer.accountFingerprint('device-1',''),sha1('device-1'));
+console.log('PASS: Unicode auth normalization, selected game language and per-account sha1 fingerprint without deprecated JS globals');
