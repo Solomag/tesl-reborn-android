@@ -3916,41 +3916,18 @@ function section(name, fn) {
     currentSection = "later";
   }
 }
-function checkedClass(img, full, tries = 5) {
+function checkedClass(img, full, rounds = 20) {
   const short = full.split(".").pop(), space = full.slice(0, Math.max(0, full.length - short.length - 1));
   const fits = (k) => !!k && k.name === short && (!space || k.namespace === space);
-  const ask = () => {
-    const ns = Memory.allocUtf8String(space), nm = Memory.allocUtf8String(short);
-    const handle = Il2Cpp.exports.classFromName(img, ns, nm);
-    const intact = ns.readUtf8String() === space && nm.readUtf8String() === short;
-    const k = handle.isNull() ? null : new Il2Cpp.Class(handle);
-    if (!intact) classMisses.push(`${full}: name buffers changed during the lookup`);
-    return k;
-  };
-  let c = ask();
-  for (let n = 1; c && !fits(c) && n < tries; n++) {
-    Thread.sleep(0.05);
-    c = ask();
+  let c = img.tryClass(full);
+  if (fits(c) || !rounds) return fits(c) ? c : null;
+  let walked = [];
+  for (let round = 0; !walked.length && round < rounds; round++) {
+    if (round) Thread.sleep(0.1);
+    for (const k of new Il2Cpp.Image(img.handle).classes) if (!k.isNull() && fits(k) && k.declaringClass == null) walked.push(k);
   }
-  if (c && !fits(c)) {
-    let types = -1, hits = 0;
-    const wrong = `${c.namespace}.${c.name}`;
-    try {
-      const all = img.assembly.object.method("GetTypes").invoke(false);
-      types = all.length;
-      for (const t of Array.from(all)) {
-        const k = new Il2Cpp.Class(Il2Cpp.exports.classFromObject(t));
-        if (fits(k)) {
-          hits++;
-          c = k;
-        }
-      }
-    } catch (error) {
-      classMisses.push(`${full}: types not read: ${error}`);
-    }
-    classMisses.push(`${full}: lookup gave ${wrong}; ${types} types, ${hits} with the name`);
-  }
-  return fits(c) ? c : null;
+  if (walked.length || rounds > 1) classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
+  return walked[0] ?? null;
 }
 const classMisses = [];
 function cls(img, full) {
@@ -3989,911 +3966,886 @@ function onUnityMainThread(body) {
     }
   });
 }
-function serializeClassFromName() {
-  const lock = Memory.alloc(64), libc = Process.getModuleByName("libc.so");
-  const cm = new CModule(`
-#include <gum/guminterceptor.h>
-extern char lock[];
-extern int pthread_mutex_lock (void * m);
-extern int pthread_mutex_unlock (void * m);
-void onEnter (GumInvocationContext * ic) { pthread_mutex_lock (lock); }
-void onLeave (GumInvocationContext * ic) { pthread_mutex_unlock (lock); }
-`, { lock, pthread_mutex_lock: libc.getExportByName("pthread_mutex_lock"), pthread_mutex_unlock: libc.getExportByName("pthread_mutex_unlock") });
-  Interceptor.attach(Il2Cpp.module.getExportByName("il2cpp_class_from_name"), cm);
-  globalThis.__teslClassLock = [cm, lock];
-}
-Il2Cpp.perform(() => {
-  try {
-    serializeClassFromName();
-  } catch (error) {
-    log(`class lookup lock: ${error}`);
-  }
-  onUnityMainThread(() => {
-    const warmStart = Date.now();
-    for (const assembly of Il2Cpp.domain.assemblies) {
-      try {
-        assembly.image.tryClass("<Module>");
-      } catch (_) {
-      }
-    }
-    const warmMs = Date.now() - warmStart;
-    const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
-    const resourceTrace = [], resourceTraceStarted = Date.now();
-    function recordResourceEvent(kind, path, status = 0) {
-      if (Date.now() - resourceTraceStarted > 9e5) return;
-      resourceTrace.push({ at: Date.now(), kind, path: String(path).replace(/[?#].*$/, "").slice(0, 240), status });
-      if (resourceTrace.length > 128) resourceTrace.shift();
-    }
-    log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}`);
+Il2Cpp.perform(() => onUnityMainThread(() => {
+  const warmStart = Date.now();
+  for (const assembly of Il2Cpp.domain.assemblies) {
     try {
-      let mte = "unknown";
+      assembly.image.tryClass("<Module>");
+    } catch (_) {
+    }
+  }
+  const warmMs = Date.now() - warmStart;
+  const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
+  const resourceTrace = [], resourceTraceStarted = Date.now();
+  function recordResourceEvent(kind, path, status = 0) {
+    if (Date.now() - resourceTraceStarted > 9e5) return;
+    resourceTrace.push({ at: Date.now(), kind, path: String(path).replace(/[?#].*$/, "").slice(0, 240), status });
+    if (resourceTrace.length > 128) resourceTrace.shift();
+  }
+  log(`attached, Unity ${Il2Cpp.unityVersion}, Android patch ${globalThis.TeslRebornUpdater?.current()?.revision ?? "embedded"}`);
+  try {
+    let mte = "unknown";
+    try {
+      const prctl = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("prctl"), "int", ["int", "ulong", "ulong", "ulong", "ulong"]);
+      const flags = prctl(56, 0, 0, 0, 0);
+      mte = flags < 0 ? "unsupported" : flags & 2 ? "sync" : flags & 4 ? "async" : "off";
+    } catch (_) {
+    }
+    log(`runtime: Frida ${Frida.version}, ${Script.runtime}, MTE ${mte}, page ${Process.pageSize}`);
+  } catch (error) {
+    log(`runtime: ${error}`);
+  }
+  const authResult = nested(img, "AuthBase", "AuthResult");
+  const BNET_AUTH_UNKNOWN_ACCOUNT = 17;
+  function finishAuth(cb, code) {
+    const result = authResult.new();
+    const field = result.field("resultCode");
+    const boxed = field.type.class.alloc();
+    boxed.field("value__").value = code;
+    field.value = boxed.unbox();
+    cb.method("Invoke").invoke(result);
+  }
+  section("auth hooks (BNETPlatformAuthInstance)", () => {
+    const bnet = cls(img, "SparkleServices.BNETPlatformAuthInstance");
+    bnet.method("SignIn").implementation = function(_request, cb) {
+      log("Bypassing BNET SignIn");
+      invokeDelegateInt(cb, 0);
+    };
+    bnet.method("DoNsoAuth").implementation = function(_createAnon, request, cb) {
+      log("Bypassing NSO Auth");
+      finishAuth(cb, BNET_AUTH_UNKNOWN_ACCOUNT);
+    };
+    bnet.method("DoNsoToSessionLink").implementation = function(sessionAuth, language, _dev, settings, endpoint, cb) {
+      log("Bypassing NSO To Session Link");
+      finishAuth(cb, 0);
+    };
+  });
+  section("auth hooks (GooglePlayAuthUtilities)", () => {
+    const gp = cls(img, "SparkleServices.GooglePlayAuthUtilities");
+    gp.method("SignOn").implementation = function(cb) {
+      log("Bypassing Google Play SignOn");
+      invokeDelegateInt(cb, 0);
+    };
+    gp.method("RequestGooglePlayServerAuthCode").implementation = function(cb) {
+      log("Bypassing Google Play server auth code");
+      invokeDelegatePtr(cb, Il2Cpp.string("").handle);
+    };
+    gp.method("DoAuth").implementation = function(_createAnon, language, _dev, settings, endpoint, cb) {
+      log("Google Play DoAuth -> username and password login");
+      finishAuth(cb, BNET_AUTH_UNKNOWN_ACCOUNT);
+    };
+    gp.method("LinkToSession").implementation = function(sessionAuth, language, _dev, settings, endpoint, cb) {
+      log("Google Play LinkToSession -> skipped");
+      finishAuth(cb, 0);
+    };
+  });
+  const overrides = loadOverrides();
+  const byteClass = Il2Cpp.corlib.class("System.Byte");
+  function pinRequestLanguage(req) {
+    let uri = String(call(req, "get_Uri"));
+    const chosen = resourceLanguage(), next = localizedGameUri(uri, chosen);
+    if (next !== uri) {
+      const value = newWith(ucls("System.Uri"), Il2Cpp.string(next));
       try {
-        const prctl = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("prctl"), "int", ["int", "ulong", "ulong", "ulong", "ulong"]);
-        const flags = prctl(56, 0, 0, 0, 0);
-        mte = flags < 0 ? "unsupported" : flags & 2 ? "sync" : flags & 4 ? "async" : "off";
+        call(req, "set_Uri", value);
       } catch (_) {
+        req.field("<Uri>k__BackingField").value = value;
       }
-      log(`runtime: Frida ${Frida.version}, ${Script.runtime}, MTE ${mte}, page ${Process.pageSize}`);
-    } catch (error) {
-      log(`runtime: ${error}`);
+      uri = next;
     }
-    const authResult = nested(img, "AuthBase", "AuthResult");
-    const BNET_AUTH_UNKNOWN_ACCOUNT = 17;
-    function finishAuth(cb, code) {
-      const result = authResult.new();
-      const field = result.field("resultCode");
-      const boxed = field.type.class.alloc();
-      boxed.field("value__").value = code;
-      field.value = boxed.unbox();
-      cb.method("Invoke").invoke(result);
-    }
-    section("auth hooks (BNETPlatformAuthInstance)", () => {
-      const bnet = cls(img, "SparkleServices.BNETPlatformAuthInstance");
-      bnet.method("SignIn").implementation = function(_request, cb) {
-        log("Bypassing BNET SignIn");
-        invokeDelegateInt(cb, 0);
-      };
-      bnet.method("DoNsoAuth").implementation = function(_createAnon, request, cb) {
-        log("Bypassing NSO Auth");
-        finishAuth(cb, BNET_AUTH_UNKNOWN_ACCOUNT);
-      };
-      bnet.method("DoNsoToSessionLink").implementation = function(sessionAuth, language, _dev, settings, endpoint, cb) {
-        log("Bypassing NSO To Session Link");
-        finishAuth(cb, 0);
-      };
-    });
-    section("auth hooks (GooglePlayAuthUtilities)", () => {
-      const gp = cls(img, "SparkleServices.GooglePlayAuthUtilities");
-      gp.method("SignOn").implementation = function(cb) {
-        log("Bypassing Google Play SignOn");
-        invokeDelegateInt(cb, 0);
-      };
-      gp.method("RequestGooglePlayServerAuthCode").implementation = function(cb) {
-        log("Bypassing Google Play server auth code");
-        invokeDelegatePtr(cb, Il2Cpp.string("").handle);
-      };
-      gp.method("DoAuth").implementation = function(_createAnon, language, _dev, settings, endpoint, cb) {
-        log("Google Play DoAuth -> username and password login");
-        finishAuth(cb, BNET_AUTH_UNKNOWN_ACCOUNT);
-      };
-      gp.method("LinkToSession").implementation = function(sessionAuth, language, _dev, settings, endpoint, cb) {
-        log("Google Play LinkToSession -> skipped");
-        finishAuth(cb, 0);
-      };
-    });
-    const overrides = loadOverrides();
-    const byteClass = Il2Cpp.corlib.class("System.Byte");
-    function pinRequestLanguage(req) {
-      let uri = String(call(req, "get_Uri"));
-      const chosen = resourceLanguage(), next = localizedGameUri(uri, chosen);
-      if (next !== uri) {
-        const value = newWith(ucls("System.Uri"), Il2Cpp.string(next));
+    return uri;
+  }
+  section("request language before send", () => {
+    const send = cls(img, "BestHTTP.HTTPRequest").tryMethod("Send", 0);
+    if (send && !send.virtualAddress.isNull()) hookAttach(send.virtualAddress, {
+      onEnter(args) {
         try {
-          call(req, "set_Uri", value);
-        } catch (_) {
-          req.field("<Uri>k__BackingField").value = value;
-        }
-        uri = next;
-      }
-      return uri;
-    }
-    section("request language before send", () => {
-      const send = cls(img, "BestHTTP.HTTPRequest").tryMethod("Send", 0);
-      if (send && !send.virtualAddress.isNull()) hookAttach(send.virtualAddress, {
-        onEnter(args) {
-          try {
-            pinRequestLanguage(new Il2Cpp.Object(args[0]));
-          } catch (error) {
-            log(`request language: ${error}`);
-          }
-        }
-      });
-    });
-    function rewriteAuthBody(req, uri) {
-      try {
-        if (uri.indexOf("/api/account/") < 0) return;
-        const raw = call(req, "get_RawData");
-        if (!raw || raw.handle.isNull()) {
-          log(`normalizer: ${uri.split("/").pop()} has no body`);
-          return;
-        }
-        const len = Number(raw.length);
-        let bin = "";
-        for (let i = 0; i < len; i++) bin += String.fromCharCode(Number(raw.get(i)));
-        const obj = JSON.parse(decodeURIComponent(Array.from(bin, (ch) => "%" + ch.charCodeAt(0).toString(16).padStart(2, "0")).join("")));
-        if (typeof obj !== "object" || obj === null || !("componentType" in obj)) {
-          log(`normalizer: ${uri.split("/").pop()} has no componentType`);
-          return;
-        }
-        const changed = [];
-        const language = resourceLanguage();
-        if (language && typeof obj.language === "string") {
-          const selected = shapedLanguage(language, obj.language);
-          if (obj.language !== selected) {
-            obj.language = selected;
-            changed.push("language");
-          }
-        }
-        for (const k of Object.keys(overrides)) {
-          if (k in obj && obj[k] !== overrides[k]) {
-            obj[k] = overrides[k];
-            changed.push(k);
-          }
-        }
-        if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
-          obj.fingerprint = freshFingerprint();
-          if (changed.indexOf("fingerprint") < 0) changed.push("fingerprint");
-        }
-        if (changed.length === 0) {
-          log(`normalizer: ${uri.split("/").pop()} needs no change`);
-          return;
-        }
-        const out = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-        const arr = Il2Cpp.array(byteClass, out.length);
-        for (let i = 0; i < out.length; i++) arr.set(i, out.charCodeAt(i));
-        call(req, "set_RawData", arr);
-        log(`rewrote ${uri.split("/").pop()}: ${changed.join(",")}`);
-      } catch (e) {
-        log(`normalizer error: ${e}`);
-      }
-    }
-    let pendingLogin = null;
-    function captureLogin(req, uri) {
-      try {
-        if (uri.indexOf("bnetUsernameAndPasswordLogin") < 0) return;
-        const raw = call(req, "get_RawData");
-        if (!raw || raw.handle.isNull()) return;
-        const length = Number(raw.length);
-        if (length > 65536) {
-          log("login request exceeds capture limit");
-          return;
-        }
-        let text = "";
-        for (let i = 0; i < length; i++) text += "%" + Number(raw.get(i)).toString(16).padStart(2, "0");
-        const body = JSON.parse(decodeURIComponent(text));
-        if (body && body.username) pendingLogin = { username: String(body.username), password: String(body.password ?? "") };
-      } catch (e) {
-        log("could not read login credentials from request body");
-      }
-    }
-    section("config redirect", () => {
-      hookAttach(cls(img, "SparkleServices.FetchConfig").method("StartProcess").virtualAddress, {
-        onEnter(args) {
-          args[1] = Il2Cpp.string(CONFIG_LOCAL).handle;
-          args[2] = Il2Cpp.string(CONFIG_URL).handle;
-          args[3] = ptr(1);
-          log("FetchConfig.StartProcess redirected");
-        }
-      });
-    });
-    section("http caching", () => {
-      hookAttach(cls(img, "BestHTTP.HTTPManager").method("get_IsCachingDisabled").virtualAddress, {
-        onLeave(ret) {
-          ret.replace(ptr(0));
-        }
-      });
-    });
-    section("http header", () => {
-      let seen = 0;
-      const m = cls(img, "BestHTTP.HTTPRequest").method("EnumerateHeaders", 2);
-      hookAttach(m.virtualAddress, {
-        onEnter(args) {
-          try {
-            const req = new Il2Cpp.Object(args[0]);
-            let hasVersion = false;
-            try {
-              hasVersion = Boolean(call(req, "HasHeader", Il2Cpp.string("X-TeslRebornPlugin-Version")));
-            } catch (_) {
-            }
-            if (!hasVersion) req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
-            const uri = pinRequestLanguage(req);
-            captureLogin(req, uri);
-            rewriteAuthBody(req, uri);
-            if (seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
-          } catch (e) {
-            log(`header hook error: ${e}`);
-          }
-        }
-      });
-    });
-    function loginOutcome(status, body) {
-      if (status !== 200) return "unknown";
-      try {
-        const json = JSON.parse(body), code = json?.resultCode;
-        const token = json?.data?.token ?? json?.token;
-        if (typeof token === "string" && token.length > 0 && (code === 0 || code == null)) return "success";
-        if (code === 15 || code === 17) return "rejected";
-      } catch (_) {
-      }
-      return "unknown";
-    }
-    function diagnosticUri(uri) {
-      return String(uri).replace(/[?#].*$/, "");
-    }
-    function reportHttpResult(req, ordinaryBudget) {
-      const uri = String(call(req, "get_Uri"));
-      const state = String(call(req, "get_State"));
-      const response = call(req, "get_Response");
-      let status = 0, info = "no response";
-      if (!isNull(response)) {
-        status = Number(call(response, "get_StatusCode"));
-        info = `status ${status}`;
-      } else {
-        try {
-          const exception = call(req, "get_Exception");
-          if (!isNull(exception)) info = `exception: ${String(exception)}`;
-        } catch (_) {
-        }
-      }
-      if (ordinaryBudget || status === 0 || status >= 400 || /\/api\/account\//.test(uri))
-        log(`<- ${state} ${diagnosticUri(uri)} ${info}`);
-      if (status >= 400 && /\/api\/account\//.test(uri)) {
-        try {
-          const text = String(call(response, "get_DataAsText")?.content ?? "").replace(/("(?:username|userName|email|accountName|displayName|name)"\s*:\s*")(?:[^"\\]|\\[\s\S])*"/gi, '$1[omitted]"').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]");
-          log(`account error body (${diagnosticUri(uri).split("/").pop()}): ${text ? text.slice(0, 600) : "(empty)"}`);
+          pinRequestLanguage(new Il2Cpp.Object(args[0]));
         } catch (error) {
-          log(`account error body unreadable: ${error}`);
+          log(`request language: ${error}`);
         }
       }
-      if (typeof recordResourceEvent === "function") recordResourceEvent("http-" + state, diagnosticUri(uri), status);
-      if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
-        let body = "";
-        try {
-          body = String(call(response, "get_DataAsText")?.content ?? "");
-        } catch (_) {
+    });
+  });
+  function rewriteAuthBody(req, uri) {
+    try {
+      if (uri.indexOf("/api/account/") < 0) return;
+      const raw = call(req, "get_RawData");
+      if (!raw || raw.handle.isNull()) {
+        log(`normalizer: ${uri.split("/").pop()} has no body`);
+        return;
+      }
+      const len = Number(raw.length);
+      let bin = "";
+      for (let i = 0; i < len; i++) bin += String.fromCharCode(Number(raw.get(i)));
+      const obj = JSON.parse(decodeURIComponent(Array.from(bin, (ch) => "%" + ch.charCodeAt(0).toString(16).padStart(2, "0")).join("")));
+      if (typeof obj !== "object" || obj === null || !("componentType" in obj)) {
+        log(`normalizer: ${uri.split("/").pop()} has no componentType`);
+        return;
+      }
+      const changed = [];
+      const language = resourceLanguage();
+      if (language && typeof obj.language === "string") {
+        const selected = shapedLanguage(language, obj.language);
+        if (obj.language !== selected) {
+          obj.language = selected;
+          changed.push("language");
         }
-        const outcome = loginOutcome(status, body);
-        if (outcome === "success") writeSavedLogin(pendingLogin.username, pendingLogin.password);
-        else if (outcome === "rejected") {
-          const saved = readSavedLogin();
-          if (!saved?.password) writeSavedLogin(pendingLogin.username, "");
-          log("login: refused; previous successful credentials retained");
-        } else log(`login: HTTP ${status}; saved credentials unchanged`);
-        pendingLogin = null;
+      }
+      for (const k of Object.keys(overrides)) {
+        if (k in obj && obj[k] !== overrides[k]) {
+          obj[k] = overrides[k];
+          changed.push(k);
+        }
+      }
+      if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
+        obj.fingerprint = freshFingerprint();
+        if (changed.indexOf("fingerprint") < 0) changed.push("fingerprint");
+      }
+      if (changed.length === 0) {
+        log(`normalizer: ${uri.split("/").pop()} needs no change`);
+        return;
+      }
+      const out = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+      const arr = Il2Cpp.array(byteClass, out.length);
+      for (let i = 0; i < out.length; i++) arr.set(i, out.charCodeAt(i));
+      call(req, "set_RawData", arr);
+      log(`rewrote ${uri.split("/").pop()}: ${changed.join(",")}`);
+    } catch (e) {
+      log(`normalizer error: ${e}`);
+    }
+  }
+  let pendingLogin = null;
+  function captureLogin(req, uri) {
+    try {
+      if (uri.indexOf("bnetUsernameAndPasswordLogin") < 0) return;
+      const raw = call(req, "get_RawData");
+      if (!raw || raw.handle.isNull()) return;
+      const length = Number(raw.length);
+      if (length > 65536) {
+        log("login request exceeds capture limit");
+        return;
+      }
+      let text = "";
+      for (let i = 0; i < length; i++) text += "%" + Number(raw.get(i)).toString(16).padStart(2, "0");
+      const body = JSON.parse(decodeURIComponent(text));
+      if (body && body.username) pendingLogin = { username: String(body.username), password: String(body.password ?? "") };
+    } catch (e) {
+      log("could not read login credentials from request body");
+    }
+  }
+  section("config redirect", () => {
+    hookAttach(cls(img, "SparkleServices.FetchConfig").method("StartProcess").virtualAddress, {
+      onEnter(args) {
+        args[1] = Il2Cpp.string(CONFIG_LOCAL).handle;
+        args[2] = Il2Cpp.string(CONFIG_URL).handle;
+        args[3] = ptr(1);
+        log("FetchConfig.StartProcess redirected");
+      }
+    });
+  });
+  section("http caching", () => {
+    hookAttach(cls(img, "BestHTTP.HTTPManager").method("get_IsCachingDisabled").virtualAddress, {
+      onLeave(ret) {
+        ret.replace(ptr(0));
+      }
+    });
+  });
+  section("http header", () => {
+    let seen = 0;
+    const m = cls(img, "BestHTTP.HTTPRequest").method("EnumerateHeaders", 2);
+    hookAttach(m.virtualAddress, {
+      onEnter(args) {
+        try {
+          const req = new Il2Cpp.Object(args[0]);
+          let hasVersion = false;
+          try {
+            hasVersion = Boolean(call(req, "HasHeader", Il2Cpp.string("X-TeslRebornPlugin-Version")));
+          } catch (_) {
+          }
+          if (!hasVersion) req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
+          const uri = pinRequestLanguage(req);
+          captureLogin(req, uri);
+          rewriteAuthBody(req, uri);
+          if (seen++ < 60) log(`-> ${diagnosticUri(uri)} body: ${bodyOf(req)}`);
+        } catch (e) {
+          log(`header hook error: ${e}`);
+        }
+      }
+    });
+  });
+  function loginOutcome(status, body) {
+    if (status !== 200) return "unknown";
+    try {
+      const json = JSON.parse(body), code = json?.resultCode;
+      const token = json?.data?.token ?? json?.token;
+      if (typeof token === "string" && token.length > 0 && (code === 0 || code == null)) return "success";
+      if (code === 15 || code === 17) return "rejected";
+    } catch (_) {
+    }
+    return "unknown";
+  }
+  function diagnosticUri(uri) {
+    return String(uri).replace(/[?#].*$/, "");
+  }
+  function reportHttpResult(req, ordinaryBudget) {
+    const uri = String(call(req, "get_Uri"));
+    const state = String(call(req, "get_State"));
+    const response = call(req, "get_Response");
+    let status = 0, info = "no response";
+    if (!isNull(response)) {
+      status = Number(call(response, "get_StatusCode"));
+      info = `status ${status}`;
+    } else {
+      try {
+        const exception = call(req, "get_Exception");
+        if (!isNull(exception)) info = `exception: ${String(exception)}`;
+      } catch (_) {
       }
     }
-    section("http trace", () => {
-      let seen = 0;
-      hookAttach(cls(img, "BestHTTP.HTTPRequest").method("CallCallback").virtualAddress, {
-        onEnter(args) {
-          try {
-            reportHttpResult(new Il2Cpp.Object(args[0]), seen++ < 80);
-          } catch (error) {
-            log(`trace error: ${error}`);
-          }
-        }
-      });
-    });
-    const strOf = (p) => {
+    if (ordinaryBudget || status === 0 || status >= 400 || /\/api\/account\//.test(uri))
+      log(`<- ${state} ${diagnosticUri(uri)} ${info}`);
+    if (status >= 400 && /\/api\/account\//.test(uri)) {
       try {
-        return p.isNull() ? "" : String(new Il2Cpp.String(p).content ?? "");
-      } catch (_) {
-        return "?";
+        const text = String(call(response, "get_DataAsText")?.content ?? "").replace(/("(?:username|userName|email|accountName|displayName|name)"\s*:\s*")(?:[^"\\]|\\[\s\S])*"/gi, '$1[omitted]"').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]");
+        log(`account error body (${diagnosticUri(uri).split("/").pop()}): ${text ? text.slice(0, 600) : "(empty)"}`);
+      } catch (error) {
+        log(`account error body unreadable: ${error}`);
       }
-    };
-    const msgOf = (p) => {
+    }
+    if (typeof recordResourceEvent === "function") recordResourceEvent("http-" + state, diagnosticUri(uri), status);
+    if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
+      let body = "";
       try {
-        return p.isNull() ? "" : String(call(new Il2Cpp.Object(p), "get_Message"));
+        body = String(call(response, "get_DataAsText")?.content ?? "");
       } catch (_) {
-        return "?";
       }
-    };
-    const byName = (full, suffix, minParams = 0) => {
-      const k = cls(img, full), pick = (c) => c.methods.find((x) => x.name.endsWith(suffix) && x.parameterCount >= minParams);
-      const m = pick(k) ?? pick(new Il2Cpp.Class(k.handle));
-      if (!m) throw new Error(`${full}::${suffix} not found`);
-      return m;
-    };
-    section("error tracing: ErrorHandler.OnError", () => {
-      hookAttach(byName("ErrorHandler", "OnError", 4).virtualAddress, {
-        onEnter(args) {
-          log(`ErrorHandler.OnError code=${args[1].toInt32()} endpoint=${strOf(args[2])}`);
+      const outcome = loginOutcome(status, body);
+      if (outcome === "success") writeSavedLogin(pendingLogin.username, pendingLogin.password);
+      else if (outcome === "rejected") {
+        const saved = readSavedLogin();
+        if (!saved?.password) writeSavedLogin(pendingLogin.username, "");
+        log("login: refused; previous successful credentials retained");
+      } else log(`login: HTTP ${status}; saved credentials unchanged`);
+      pendingLogin = null;
+    }
+  }
+  section("http trace", () => {
+    let seen = 0;
+    hookAttach(cls(img, "BestHTTP.HTTPRequest").method("CallCallback").virtualAddress, {
+      onEnter(args) {
+        try {
+          reportHttpResult(new Il2Cpp.Object(args[0]), seen++ < 80);
+        } catch (error) {
+          log(`trace error: ${error}`);
         }
-      });
-    });
-    section("error tracing: websocket transport", () => {
-      const wt = "BestHTTP.SocketIO.Transports.WebSocketTransport";
-      hookAttach(byName(wt, "OnOpen").virtualAddress, { onEnter() {
-        log("ws transport: open");
-      } });
-      hookAttach(byName(wt, "OnError").virtualAddress, { onEnter(args) {
-        log(`ws transport: ERROR ${msgOf(args[2])}`);
-      } });
-      hookAttach(byName(wt, "OnClosed").virtualAddress, {
-        onEnter(args) {
-          log(`ws transport: closed code=${args[2].toInt32() & 65535} msg=${strOf(args[3])}`);
-        }
-      });
-    });
-    section("error tracing: socket.io manager", () => {
-      const sm = "BestHTTP.SocketIO.SocketManager";
-      hookAttach(byName(sm, "OnTransportConnected").virtualAddress, { onEnter() {
-        log("socket.io: transport connected");
-      } });
-      hookAttach(byName(sm, "OnTransportError").virtualAddress, { onEnter(args) {
-        log(`socket.io: transport error ${strOf(args[2])}`);
-      } });
-      hookAttach(byName(sm, "EmitError").virtualAddress, { onEnter(args) {
-        log(`socket.io: EmitError code=${args[1].toInt32()} msg=${strOf(args[2])}`);
-      } });
-    });
-    const rawStr = (q) => {
-      try {
-        if (q.isNull()) return "(null)";
-        const n = q.add(16).readS32();
-        return n >= 0 && n < 512 ? q.add(20).readUtf16String(n) ?? "" : `(bad length ${n})`;
-      } catch (_) {
-        return "(unreadable)";
       }
-    };
-    section("bundles: desktop behaviour", () => {
-      const load = byName("AssetBundles.AssetBundleManager", "LoadAssetBundleInternal").virtualAddress;
-      const platform = byName("PlatformUtils", "PlatformDownloadsBundles").virtualAddress;
-      const catalog = byName("AssetCatalog", "PlatformDownloadsBundles").virtualAddress;
-      const depth = Memory.alloc(4);
-      try {
-        const cm = new CModule(`
+    });
+  });
+  const strOf = (p) => {
+    try {
+      return p.isNull() ? "" : String(new Il2Cpp.String(p).content ?? "");
+    } catch (_) {
+      return "?";
+    }
+  };
+  const msgOf = (p) => {
+    try {
+      return p.isNull() ? "" : String(call(new Il2Cpp.Object(p), "get_Message"));
+    } catch (_) {
+      return "?";
+    }
+  };
+  const byName = (full, suffix, minParams = 0) => {
+    const k = cls(img, full), pick = (c) => c.methods.find((x) => x.name.endsWith(suffix) && x.parameterCount >= minParams);
+    const m = pick(k) ?? pick(new Il2Cpp.Class(k.handle));
+    if (!m) throw new Error(`${full}::${suffix} not found`);
+    return m;
+  };
+  section("error tracing: ErrorHandler.OnError", () => {
+    hookAttach(byName("ErrorHandler", "OnError", 4).virtualAddress, {
+      onEnter(args) {
+        log(`ErrorHandler.OnError code=${args[1].toInt32()} endpoint=${strOf(args[2])}`);
+      }
+    });
+  });
+  section("error tracing: websocket transport", () => {
+    const wt = "BestHTTP.SocketIO.Transports.WebSocketTransport";
+    hookAttach(byName(wt, "OnOpen").virtualAddress, { onEnter() {
+      log("ws transport: open");
+    } });
+    hookAttach(byName(wt, "OnError").virtualAddress, { onEnter(args) {
+      log(`ws transport: ERROR ${msgOf(args[2])}`);
+    } });
+    hookAttach(byName(wt, "OnClosed").virtualAddress, {
+      onEnter(args) {
+        log(`ws transport: closed code=${args[2].toInt32() & 65535} msg=${strOf(args[3])}`);
+      }
+    });
+  });
+  section("error tracing: socket.io manager", () => {
+    const sm = "BestHTTP.SocketIO.SocketManager";
+    hookAttach(byName(sm, "OnTransportConnected").virtualAddress, { onEnter() {
+      log("socket.io: transport connected");
+    } });
+    hookAttach(byName(sm, "OnTransportError").virtualAddress, { onEnter(args) {
+      log(`socket.io: transport error ${strOf(args[2])}`);
+    } });
+    hookAttach(byName(sm, "EmitError").virtualAddress, { onEnter(args) {
+      log(`socket.io: EmitError code=${args[1].toInt32()} msg=${strOf(args[2])}`);
+    } });
+  });
+  const rawStr = (q) => {
+    try {
+      if (q.isNull()) return "(null)";
+      const n = q.add(16).readS32();
+      return n >= 0 && n < 512 ? q.add(20).readUtf16String(n) ?? "" : `(bad length ${n})`;
+    } catch (_) {
+      return "(unreadable)";
+    }
+  };
+  section("bundles: desktop behaviour", () => {
+    const load = byName("AssetBundles.AssetBundleManager", "LoadAssetBundleInternal").virtualAddress;
+    const platform = byName("PlatformUtils", "PlatformDownloadsBundles").virtualAddress;
+    const catalog = byName("AssetCatalog", "PlatformDownloadsBundles").virtualAddress;
+    const depth = Memory.alloc(4);
+    try {
+      const cm = new CModule(`
 #include <gum/guminterceptor.h>
 extern int depth;
 void load_enter (GumInvocationContext * ic) { depth++; }
 void load_leave (GumInvocationContext * ic) { if (depth > 0) depth--; }
 void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_context_replace_return_value (ic, (gpointer) 0); }
 `, { depth });
-        Interceptor.attach(load, { onEnter: cm.load_enter, onLeave: cm.load_leave });
-        Interceptor.attach(platform, { onLeave: cm.platform_leave });
-        globalThis.__teslBundlesKeep = cm;
-        log("PlatformUtils.PlatformDownloadsBundles -> false while loading bundles (manifest from OBB, native)");
-      } catch (error) {
-        let inLoad = false;
-        hookAttach(load, { onEnter() {
-          inLoad = true;
-        }, onLeave() {
-          inLoad = false;
-        } });
-        hookAttach(platform, { onLeave(ret) {
-          if (inLoad) ret.replace(ptr(0));
-        } });
-        log(`PlatformUtils.PlatformDownloadsBundles -> false while loading bundles (JS: ${error})`);
-      }
-      Memory.patchCode(catalog, 8, (code) => {
-        code.writeU32(1384120320);
-        code.add(4).writeU32(3596551104);
-      });
-      log("AssetCatalog.PlatformDownloadsBundles -> false (no CDN download, patched)");
-      try {
-        let seenLocal = 0;
-        const mgr = cls(img, "AssetBundles.AssetBundleManager");
-        hookAttach(mgr.method("SetSourceAssetBundleURL").virtualAddress, {
-          onEnter(args) {
-            log(`AssetBundleManager.SetSourceAssetBundleURL("${rawStr(args[1])}")`);
-          }
-        });
-        const local = cls(img, "AssetBundles.AssetBundleLoadFromLocalOperation");
-        hookAttach(local.method(".ctor", 1).virtualAddress, {
-          onEnter(args) {
-            if (seenLocal++ < 4) log(`AssetBundleLoadFromLocalOperation("${rawStr(args[1])}")`);
-          }
-        });
-      } catch (e) {
-        log(`obb trace failed: ${e}`);
-      }
+      Interceptor.attach(load, { onEnter: cm.load_enter, onLeave: cm.load_leave });
+      Interceptor.attach(platform, { onLeave: cm.platform_leave });
+      globalThis.__teslBundlesKeep = cm;
+      log("PlatformUtils.PlatformDownloadsBundles -> false while loading bundles (manifest from OBB, native)");
+    } catch (error) {
+      let inLoad = false;
+      hookAttach(load, { onEnter() {
+        inLoad = true;
+      }, onLeave() {
+        inLoad = false;
+      } });
+      hookAttach(platform, { onLeave(ret) {
+        if (inLoad) ret.replace(ptr(0));
+      } });
+      log(`PlatformUtils.PlatformDownloadsBundles -> false while loading bundles (JS: ${error})`);
+    }
+    Memory.patchCode(catalog, 8, (code) => {
+      code.writeU32(1384120320);
+      code.add(4).writeU32(3596551104);
     });
-    section("storage modes from local versions.json", () => {
-      const catalog = cls(img, "AssetCatalog");
+    log("AssetCatalog.PlatformDownloadsBundles -> false (no CDN download, patched)");
+    try {
+      let seenLocal = 0;
       const mgr = cls(img, "AssetBundles.AssetBundleManager");
-      const init = mgr.methods.find((x) => x.name === "Initialize");
-      if (!init) throw new Error("AssetBundleManager.Initialize not found");
-      const className = (o) => {
-        try {
-          return isNull(o) ? "(null)" : o.class.name;
-        } catch (_) {
-          return "(?)";
-        }
-      };
-      hookAttach(init.virtualAddress, {
+      hookAttach(mgr.method("SetSourceAssetBundleURL").virtualAddress, {
         onEnter(args) {
-          try {
-            let versionInfo = null;
-            for (const arg of [args[0], args[1], args[2]]) {
-              if (className(arg) === "BundleVersionInfo") {
-                versionInfo = new Il2Cpp.Object(arg);
-                break;
-              }
-            }
-            if (!versionInfo) {
-              const remote = catalog.field("_remoteBundleVersionInfo").value;
-              if (className(remote) === "BundleVersionInfo") versionInfo = remote;
-            }
-            if (!versionInfo) {
-              log(`storage modes: no version info found (args: ${className(args[0])}, ${className(args[1])})`);
-              return;
-            }
-            const count = () => Number(call(versionInfo.field("_entries").value, "get_Count"));
-            const before = count();
-            if (before === 0) {
-              const path = String(catalog.method("GetVersionJsonPath").invoke()?.content ?? "");
-              log(`storage modes: loading ${path}`);
-              call(versionInfo, "Load", Il2Cpp.string(path));
-              if (count() === 0) {
-                try {
-                  const fileClass = Il2Cpp.corlib.class("System.IO.File");
-                  const exists = fileClass.method("Exists").invoke(Il2Cpp.string(path));
-                  if (Boolean(exists)) {
-                    const text = String(fileClass.method("ReadAllText").invoke(Il2Cpp.string(path))?.content ?? "");
-                    if (text.length > 0) {
-                      versionInfo.method("LoadFromMemory").invoke(Il2Cpp.string(text));
-                      log(`storage modes: LoadFromMemory added ${count()} entries (path failed)`);
-                    }
-                  }
-                } catch (e) {
-                  log(`storage modes: recovery failed: ${e}`);
-                }
-              }
-            }
-            log(`AssetBundleManager.Initialize: version info entries ${before} -> ${count()}`);
-          } catch (e) {
-            log(`storage mode fill error: ${e}`);
-          }
+          log(`AssetBundleManager.SetSourceAssetBundleURL("${rawStr(args[1])}")`);
         }
       });
-    });
-    section("versions.json load", () => {
-      const m = cls(img, "BundleVersionInfo").methods.find((x) => x.name === "Load");
-      if (!m) throw new Error("BundleVersionInfo.Load not found");
-      let path = "";
-      hookAttach(m.virtualAddress, {
+      const local = cls(img, "AssetBundles.AssetBundleLoadFromLocalOperation");
+      hookAttach(local.method(".ctor", 1).virtualAddress, {
         onEnter(args) {
-          path = rawStr(args[1]);
-        },
-        // instance: args[0] = this, args[1] = path
-        onLeave(ret) {
-          log(`BundleVersionInfo.Load("${path}") -> ${ret.toInt32() & 255 ? "ok" : "FAILED"}`);
+          if (seenLocal++ < 4) log(`AssetBundleLoadFromLocalOperation("${rawStr(args[1])}")`);
         }
       });
-    });
-    section("cache never expires", () => {
-      const core = Il2Cpp.domain.assembly("UnityEngine.CoreModule").image;
-      const cache = core.class("UnityEngine.Cache");
-      const caching = core.class("UnityEngine.Caching");
-      const MAX_DELAY = 1296e4;
-      const setDelay = cache.method("Cache_SetExpirationDelay", 2);
-      hookAttach(setDelay.virtualAddress, {
-        onEnter(args) {
-          const delay = args[2].toInt32();
-          if (delay < MAX_DELAY) {
-            log(`Cache.expirationDelay ${delay} -> ${MAX_DELAY}`);
-            args[2] = ptr(MAX_DELAY);
-          }
-        }
-      });
-      let cleared = 0;
-      hookAttach(caching.method("ClearCachedVersion", 2).virtualAddress, {
-        onEnter() {
-          if (cleared++ < 5) log("Caching.ClearCachedVersion -> ignored");
-        },
-        onLeave(ret) {
-          ret.replace(ptr(1));
-        }
-      });
-    });
-    const NEWS_URL = "https://tesl-reborn.com/news.json";
-    const ENDPOINT_INVENTORY = 6;
-    const ENDPOINT_STATS = 11;
-    const RARITY_LEGENDARY = 3;
-    const CREDIT_GROUP = 1, CREDIT_TITLE = 2, CREDIT_NAME = 3;
-    const TRANSLATIONS = {
-      en: {
-        "reborn.titles.keeper.description": "Awarded to Alpha testers of TESL Reborn.",
-        "reborn.titles.keeper.title": "The Keeper of TESL Reborn",
-        "reborn.titles.founder.title": "The Founder of TESL Reborn",
-        "reborn.titles.founder.description": "Awarded to developers of TESL Reborn.",
-        "reborn.chat.doinker.description": "Use Ctrl + Mouse Wheel or Ctrl + +/- to adjust chat font size. Your preference will be saved for future sessions."
-      },
-      de: {
-        "reborn.titles.keeper.description": "Verliehen an Alpha-Tester von TESL Reborn.",
-        "reborn.titles.keeper.title": "Der H\xFCter von TESL Reborn",
-        "reborn.titles.founder.title": "Der Gr\xFCnder von TESL Reborn",
-        "reborn.titles.founder.description": "Verliehen an Entwickler von TESL Reborn."
-      },
-      es: {
-        "reborn.titles.keeper.description": "Otorgado a los testers alfa de TESL Reborn.",
-        "reborn.titles.keeper.title": "El Guardi\xE1n de TESL Reborn",
-        "reborn.titles.founder.title": "El Fundador de TESL Reborn",
-        "reborn.titles.founder.description": "Otorgado a los desarrolladores de TESL Reborn."
-      },
-      fr: {
-        "reborn.titles.keeper.description": "D\xE9cern\xE9 aux testeurs alpha de TESL Reborn.",
-        "reborn.titles.keeper.title": "Le Gardien de TESL Reborn",
-        "reborn.titles.founder.title": "Le Fondateur de TESL Reborn",
-        "reborn.titles.founder.description": "D\xE9cern\xE9 aux d\xE9veloppeurs de TESL Reborn."
-      },
-      it: {
-        "reborn.titles.keeper.description": "Assegnato ai tester alpha di TESL Reborn.",
-        "reborn.titles.keeper.title": "Il Custode di TESL Reborn",
-        "reborn.titles.founder.title": "Il Fondatore di TESL Reborn",
-        "reborn.titles.founder.description": "Assegnato agli sviluppatori di TESL Reborn."
-      },
-      pl: {
-        "reborn.titles.keeper.description": "Przyznane testerom alpha TESL Reborn.",
-        "reborn.titles.keeper.title": "Stra\u017Cnik TESL Reborn",
-        "reborn.titles.founder.title": "Za\u0142o\u017Cyciel TESL Reborn",
-        "reborn.titles.founder.description": "Przyznane tw\xF3rcom TESL Reborn."
-      },
-      pt: {
-        "reborn.titles.keeper.description": "Concedido aos testadores alpha do TESL Reborn.",
-        "reborn.titles.keeper.title": "O Guardi\xE3o do TESL Reborn",
-        "reborn.titles.founder.title": "O Fundador do TESL Reborn",
-        "reborn.titles.founder.description": "Concedido aos desenvolvedores do TESL Reborn."
-      },
-      ru: {
-        "reborn.titles.keeper.description": "\u0412\u0440\u0443\u0447\u0430\u0435\u0442\u0441\u044F \u0430\u043B\u044C\u0444\u0430-\u0442\u0435\u0441\u0442\u0438\u0440\u043E\u0432\u0449\u0438\u043A\u0430\u043C TESL Reborn.",
-        "reborn.titles.keeper.title": "\u0425\u0440\u0430\u043D\u0438\u0442\u0435\u043B\u044C TESL Reborn",
-        "reborn.titles.founder.title": "\u041E\u0441\u043D\u043E\u0432\u0430\u0442\u0435\u043B\u044C TESL Reborn",
-        "reborn.titles.founder.description": "\u0412\u0440\u0443\u0447\u0430\u0435\u0442\u0441\u044F \u0440\u0430\u0437\u0440\u0430\u0431\u043E\u0442\u0447\u0438\u043A\u0430\u043C TESL Reborn."
-      },
-      tr: {
-        "reborn.titles.keeper.description": "TESL Reborn alfa test\xE7ilerine verilmi\u015Ftir.",
-        "reborn.titles.keeper.title": "TESL Reborn'\u0131n Bek\xE7isi",
-        "reborn.titles.founder.title": "TESL Reborn'\u0131n Kurucusu",
-        "reborn.titles.founder.description": "TESL Reborn geli\u015Ftiricilerine verilmi\u015Ftir."
+    } catch (e) {
+      log(`obb trace failed: ${e}`);
+    }
+  });
+  section("storage modes from local versions.json", () => {
+    const catalog = cls(img, "AssetCatalog");
+    const mgr = cls(img, "AssetBundles.AssetBundleManager");
+    const init = mgr.methods.find((x) => x.name === "Initialize");
+    if (!init) throw new Error("AssetBundleManager.Initialize not found");
+    const className = (o) => {
+      try {
+        return isNull(o) ? "(null)" : o.class.name;
+      } catch (_) {
+        return "(?)";
       }
     };
-    function persistentPath() {
-      try {
-        const path = ucls("UnityEngine.Application").method("get_persistentDataPath").invoke();
-        return String(path?.content ?? "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files");
-      } catch (e) {
-        return "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files";
-      }
-    }
-    let experiments = null;
-    function experiment(name) {
-      if (experiments === null) {
-        experiments = {};
+    hookAttach(init.virtualAddress, {
+      onEnter(args) {
         try {
-          experiments = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-experiments.json`) || "{}") || {};
-        } catch (_) {
-        }
-        const on = Object.keys(experiments).filter((key) => experiments[key] === true);
-        if (on.length) log(`experiments on: ${on.join(", ")}`);
-      }
-      return experiments[name] === true;
-    }
-    try {
-      experiment("safeInvoke");
-      if (experiments.safeInvoke !== false) installSafeInvoke();
-    } catch (error) {
-      log(`safe invoke unavailable: ${error}`);
-    }
-    function installSafeInvoke() {
-      const exports = Il2Cpp.module;
-      const runtimeInvoke = new NativeFunction(
-        exports.getExportByName("il2cpp_runtime_invoke"),
-        "pointer",
-        ["pointer", "pointer", "pointer", "pointer"],
-        { exceptions: "propagate" }
-      );
-      const unbox = new NativeFunction(exports.getExportByName("il2cpp_object_unbox"), "pointer", ["pointer"]);
-      const proto = Il2Cpp.Method.prototype, direct = proto.invokeRaw;
-      const VOID = Il2Cpp.Type.Enum.VOID;
-      let calls = 0, caught = 0, fallbacks = 0;
-      proto.invokeRaw = function(instance, ...parameters) {
-        let args, keep = [];
-        try {
-          const params = this.parameters;
-          if (params.length !== parameters.length || this.class.isValueType) {
-            fallbacks++;
-            return direct.call(this, instance, ...parameters);
-          }
-          args = Memory.alloc(Math.max(1, params.length) * Process.pointerSize);
-          for (let i = 0; i < params.length; i++) {
-            const type2 = params[i].type, value = parameters[i];
-            if (type2.isByReference) {
-              fallbacks++;
-              return direct.call(this, instance, ...parameters);
+          let versionInfo = null;
+          for (const arg of [args[0], args[1], args[2]]) {
+            if (className(arg) === "BundleVersionInfo") {
+              versionInfo = new Il2Cpp.Object(arg);
+              break;
             }
-            let slot;
-            if (type2.class.isValueType) {
-              const size = Math.max(8, type2.class.valueTypeSize);
-              slot = Memory.alloc(size);
-              keep.push(slot);
-              if (value instanceof Il2Cpp.ValueType) Memory.copy(slot, value.handle, type2.class.valueTypeSize);
-              else if (type2.class.isEnum && (typeof value === "number" || typeof value === "boolean")) slot.writeS32(Number(value));
-              else if (typeof value === "number" || typeof value === "boolean" || value instanceof Int64 || value instanceof UInt64 || value instanceof NativePointer) Il2Cpp.write(slot, typeof value === "boolean" ? value : value, type2);
-              else {
-                fallbacks++;
-                return direct.call(this, instance, ...parameters);
-              }
-            } else slot = value?.handle ?? (value instanceof NativePointer ? value : NULL);
-            args.add(i * Process.pointerSize).writePointer(slot);
           }
-        } catch (_) {
+          if (!versionInfo) {
+            const remote = catalog.field("_remoteBundleVersionInfo").value;
+            if (className(remote) === "BundleVersionInfo") versionInfo = remote;
+          }
+          if (!versionInfo) {
+            log(`storage modes: no version info found (args: ${className(args[0])}, ${className(args[1])})`);
+            return;
+          }
+          const count = () => Number(call(versionInfo.field("_entries").value, "get_Count"));
+          const before = count();
+          if (before === 0) {
+            const path = String(catalog.method("GetVersionJsonPath").invoke()?.content ?? "");
+            log(`storage modes: loading ${path}`);
+            call(versionInfo, "Load", Il2Cpp.string(path));
+            if (count() === 0) {
+              try {
+                const fileClass = Il2Cpp.corlib.class("System.IO.File");
+                const exists = fileClass.method("Exists").invoke(Il2Cpp.string(path));
+                if (Boolean(exists)) {
+                  const text = String(fileClass.method("ReadAllText").invoke(Il2Cpp.string(path))?.content ?? "");
+                  if (text.length > 0) {
+                    versionInfo.method("LoadFromMemory").invoke(Il2Cpp.string(text));
+                    log(`storage modes: LoadFromMemory added ${count()} entries (path failed)`);
+                  }
+                }
+              } catch (e) {
+                log(`storage modes: recovery failed: ${e}`);
+              }
+            }
+          }
+          log(`AssetBundleManager.Initialize: version info entries ${before} -> ${count()}`);
+        } catch (e) {
+          log(`storage mode fill error: ${e}`);
+        }
+      }
+    });
+  });
+  section("versions.json load", () => {
+    const m = cls(img, "BundleVersionInfo").methods.find((x) => x.name === "Load");
+    if (!m) throw new Error("BundleVersionInfo.Load not found");
+    let path = "";
+    hookAttach(m.virtualAddress, {
+      onEnter(args) {
+        path = rawStr(args[1]);
+      },
+      // instance: args[0] = this, args[1] = path
+      onLeave(ret) {
+        log(`BundleVersionInfo.Load("${path}") -> ${ret.toInt32() & 255 ? "ok" : "FAILED"}`);
+      }
+    });
+  });
+  section("cache never expires", () => {
+    const core = Il2Cpp.domain.assembly("UnityEngine.CoreModule").image;
+    const cache = core.class("UnityEngine.Cache");
+    const caching = core.class("UnityEngine.Caching");
+    const MAX_DELAY = 1296e4;
+    const setDelay = cache.method("Cache_SetExpirationDelay", 2);
+    hookAttach(setDelay.virtualAddress, {
+      onEnter(args) {
+        const delay = args[2].toInt32();
+        if (delay < MAX_DELAY) {
+          log(`Cache.expirationDelay ${delay} -> ${MAX_DELAY}`);
+          args[2] = ptr(MAX_DELAY);
+        }
+      }
+    });
+    let cleared = 0;
+    hookAttach(caching.method("ClearCachedVersion", 2).virtualAddress, {
+      onEnter() {
+        if (cleared++ < 5) log("Caching.ClearCachedVersion -> ignored");
+      },
+      onLeave(ret) {
+        ret.replace(ptr(1));
+      }
+    });
+  });
+  const NEWS_URL = "https://tesl-reborn.com/news.json";
+  const ENDPOINT_INVENTORY = 6;
+  const ENDPOINT_STATS = 11;
+  const RARITY_LEGENDARY = 3;
+  const CREDIT_GROUP = 1, CREDIT_TITLE = 2, CREDIT_NAME = 3;
+  const TRANSLATIONS = {
+    en: {
+      "reborn.titles.keeper.description": "Awarded to Alpha testers of TESL Reborn.",
+      "reborn.titles.keeper.title": "The Keeper of TESL Reborn",
+      "reborn.titles.founder.title": "The Founder of TESL Reborn",
+      "reborn.titles.founder.description": "Awarded to developers of TESL Reborn.",
+      "reborn.chat.doinker.description": "Use Ctrl + Mouse Wheel or Ctrl + +/- to adjust chat font size. Your preference will be saved for future sessions."
+    },
+    de: {
+      "reborn.titles.keeper.description": "Verliehen an Alpha-Tester von TESL Reborn.",
+      "reborn.titles.keeper.title": "Der H\xFCter von TESL Reborn",
+      "reborn.titles.founder.title": "Der Gr\xFCnder von TESL Reborn",
+      "reborn.titles.founder.description": "Verliehen an Entwickler von TESL Reborn."
+    },
+    es: {
+      "reborn.titles.keeper.description": "Otorgado a los testers alfa de TESL Reborn.",
+      "reborn.titles.keeper.title": "El Guardi\xE1n de TESL Reborn",
+      "reborn.titles.founder.title": "El Fundador de TESL Reborn",
+      "reborn.titles.founder.description": "Otorgado a los desarrolladores de TESL Reborn."
+    },
+    fr: {
+      "reborn.titles.keeper.description": "D\xE9cern\xE9 aux testeurs alpha de TESL Reborn.",
+      "reborn.titles.keeper.title": "Le Gardien de TESL Reborn",
+      "reborn.titles.founder.title": "Le Fondateur de TESL Reborn",
+      "reborn.titles.founder.description": "D\xE9cern\xE9 aux d\xE9veloppeurs de TESL Reborn."
+    },
+    it: {
+      "reborn.titles.keeper.description": "Assegnato ai tester alpha di TESL Reborn.",
+      "reborn.titles.keeper.title": "Il Custode di TESL Reborn",
+      "reborn.titles.founder.title": "Il Fondatore di TESL Reborn",
+      "reborn.titles.founder.description": "Assegnato agli sviluppatori di TESL Reborn."
+    },
+    pl: {
+      "reborn.titles.keeper.description": "Przyznane testerom alpha TESL Reborn.",
+      "reborn.titles.keeper.title": "Stra\u017Cnik TESL Reborn",
+      "reborn.titles.founder.title": "Za\u0142o\u017Cyciel TESL Reborn",
+      "reborn.titles.founder.description": "Przyznane tw\xF3rcom TESL Reborn."
+    },
+    pt: {
+      "reborn.titles.keeper.description": "Concedido aos testadores alpha do TESL Reborn.",
+      "reborn.titles.keeper.title": "O Guardi\xE3o do TESL Reborn",
+      "reborn.titles.founder.title": "O Fundador do TESL Reborn",
+      "reborn.titles.founder.description": "Concedido aos desenvolvedores do TESL Reborn."
+    },
+    ru: {
+      "reborn.titles.keeper.description": "\u0412\u0440\u0443\u0447\u0430\u0435\u0442\u0441\u044F \u0430\u043B\u044C\u0444\u0430-\u0442\u0435\u0441\u0442\u0438\u0440\u043E\u0432\u0449\u0438\u043A\u0430\u043C TESL Reborn.",
+      "reborn.titles.keeper.title": "\u0425\u0440\u0430\u043D\u0438\u0442\u0435\u043B\u044C TESL Reborn",
+      "reborn.titles.founder.title": "\u041E\u0441\u043D\u043E\u0432\u0430\u0442\u0435\u043B\u044C TESL Reborn",
+      "reborn.titles.founder.description": "\u0412\u0440\u0443\u0447\u0430\u0435\u0442\u0441\u044F \u0440\u0430\u0437\u0440\u0430\u0431\u043E\u0442\u0447\u0438\u043A\u0430\u043C TESL Reborn."
+    },
+    tr: {
+      "reborn.titles.keeper.description": "TESL Reborn alfa test\xE7ilerine verilmi\u015Ftir.",
+      "reborn.titles.keeper.title": "TESL Reborn'\u0131n Bek\xE7isi",
+      "reborn.titles.founder.title": "TESL Reborn'\u0131n Kurucusu",
+      "reborn.titles.founder.description": "TESL Reborn geli\u015Ftiricilerine verilmi\u015Ftir."
+    }
+  };
+  function persistentPath() {
+    try {
+      const path = ucls("UnityEngine.Application").method("get_persistentDataPath").invoke();
+      return String(path?.content ?? "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files");
+    } catch (e) {
+      return "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files";
+    }
+  }
+  let experiments = null;
+  function experiment(name) {
+    if (experiments === null) {
+      experiments = {};
+      try {
+        experiments = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-experiments.json`) || "{}") || {};
+      } catch (_) {
+      }
+      const on = Object.keys(experiments).filter((key) => experiments[key] === true);
+      if (on.length) log(`experiments on: ${on.join(", ")}`);
+    }
+    return experiments[name] === true;
+  }
+  try {
+    experiment("safeInvoke");
+    if (experiments.safeInvoke !== false) installSafeInvoke();
+  } catch (error) {
+    log(`safe invoke unavailable: ${error}`);
+  }
+  function installSafeInvoke() {
+    const exports = Il2Cpp.module;
+    const runtimeInvoke = new NativeFunction(
+      exports.getExportByName("il2cpp_runtime_invoke"),
+      "pointer",
+      ["pointer", "pointer", "pointer", "pointer"],
+      { exceptions: "propagate" }
+    );
+    const unbox = new NativeFunction(exports.getExportByName("il2cpp_object_unbox"), "pointer", ["pointer"]);
+    const proto = Il2Cpp.Method.prototype, direct = proto.invokeRaw;
+    const VOID = Il2Cpp.Type.Enum.VOID;
+    let calls = 0, caught = 0, fallbacks = 0;
+    proto.invokeRaw = function(instance, ...parameters) {
+      let args, keep = [];
+      try {
+        const params = this.parameters;
+        if (params.length !== parameters.length || this.class.isValueType) {
           fallbacks++;
           return direct.call(this, instance, ...parameters);
         }
-        calls++;
-        const exception = Memory.alloc(Process.pointerSize);
-        exception.writePointer(NULL);
-        const self = instance?.handle ?? (instance instanceof NativePointer ? instance : NULL);
-        const result = runtimeInvoke(this.handle, self, args, exception);
-        const thrown = exception.readPointer();
-        if (!thrown.isNull()) {
-          caught++;
-          let kind = "exception";
-          try {
-            kind = new Il2Cpp.Object(thrown).class.name;
-          } catch (_) {
+        args = Memory.alloc(Math.max(1, params.length) * Process.pointerSize);
+        for (let i = 0; i < params.length; i++) {
+          const type2 = params[i].type, value = parameters[i];
+          if (type2.isByReference) {
+            fallbacks++;
+            return direct.call(this, instance, ...parameters);
           }
-          throw new Error(`${kind} in ${this.class.name}.${this.name} (caught by IL2CPP)`);
+          let slot;
+          if (type2.class.isValueType) {
+            const size = Math.max(8, type2.class.valueTypeSize);
+            slot = Memory.alloc(size);
+            keep.push(slot);
+            if (value instanceof Il2Cpp.ValueType) Memory.copy(slot, value.handle, type2.class.valueTypeSize);
+            else if (type2.class.isEnum && (typeof value === "number" || typeof value === "boolean")) slot.writeS32(Number(value));
+            else if (typeof value === "number" || typeof value === "boolean" || value instanceof Int64 || value instanceof UInt64 || value instanceof NativePointer) Il2Cpp.write(slot, typeof value === "boolean" ? value : value, type2);
+            else {
+              fallbacks++;
+              return direct.call(this, instance, ...parameters);
+            }
+          } else slot = value?.handle ?? (value instanceof NativePointer ? value : NULL);
+          args.add(i * Process.pointerSize).writePointer(slot);
         }
-        const type = this.returnType;
-        if (type.enumValue === VOID) return void 0;
-        if (type.class.isValueType) return result.isNull() ? void 0 : Il2Cpp.read(unbox(result), type);
-        return Il2Cpp.fromFridaValue(result, type);
-      };
-      setInterval(() => {
-        if (caught) log(`safe invoke: ${caught} game exceptions caught in ${calls} calls (${fallbacks} direct)`);
-        caught = 0;
-      }, 6e4);
-      log("safe invoke: managed calls go through il2cpp_runtime_invoke");
-    }
-    function readTextFile(path) {
-      try {
-        const file = Il2Cpp.corlib.class("System.IO.File");
-        if (!Boolean(file.method("Exists").invoke(Il2Cpp.string(path)))) return "";
-        return String(file.method("ReadAllText").invoke(Il2Cpp.string(path))?.content ?? "");
-      } catch (e) {
-        return "";
-      }
-    }
-    function writeTextFile(path, text) {
-      try {
-        Il2Cpp.corlib.class("System.IO.File").method("WriteAllText").invoke(Il2Cpp.string(path), Il2Cpp.string(text));
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-    function freshFingerprint() {
-      let hex = "";
-      for (let i = 0; i < 16; i++) hex += Math.floor(Math.random() * 256).toString(16).padStart(2, "0");
-      return hex;
-    }
-    function newWith(klass, ...args) {
-      const o = klass.alloc(), root = o.ref(false);
-      try {
-        o.method(".ctor", args.length).invoke(...args);
-        return o;
-      } finally {
-        root.free();
-      }
-    }
-    function isNull(o) {
-      return !o || !o.handle || o.handle.isNull();
-    }
-    let unityEquality = null;
-    function unityAlive(o) {
-      if (isNull(o)) return false;
-      try {
-        if (!unityEquality) unityEquality = ucls("UnityEngine.Object").method("op_Equality");
-        return !unityEquality.invoke(o, NULL);
       } catch (_) {
-        return false;
+        fallbacks++;
+        return direct.call(this, instance, ...parameters);
       }
-    }
-    const classCache = {};
-    let allImages = null;
-    function ucls(name) {
-      const cached = classCache[name];
-      if (cached) return cached;
-      if (!allImages) allImages = Il2Cpp.domain.assemblies.map((a) => a.image);
-      let found = null;
-      for (const image of allImages) if (found = checkedClass(image, name, 1)) break;
-      if (!found) {
-        const before = allImages.length;
+      calls++;
+      const exception = Memory.alloc(Process.pointerSize);
+      exception.writePointer(NULL);
+      const self = instance?.handle ?? (instance instanceof NativePointer ? instance : NULL);
+      const result = runtimeInvoke(this.handle, self, args, exception);
+      const thrown = exception.readPointer();
+      if (!thrown.isNull()) {
+        caught++;
+        let kind = "exception";
         try {
-          const objects = Il2Cpp.corlib.class("System.AppDomain").method("get_CurrentDomain").invoke().method("GetAssemblies").overload().invoke();
-          allImages = Array.from(objects).map((o) => new Il2Cpp.Assembly(o.field("_mono_assembly").value).image);
-        } catch (error) {
-          classMisses.push(`assemblies not reread: ${error}`);
+          kind = new Il2Cpp.Object(thrown).class.name;
+        } catch (_) {
         }
-        if (allImages.length !== before) classMisses.push(`assemblies ${before} -> ${allImages.length}`);
-        for (const image of allImages) if (found = checkedClass(image, name, 1)) break;
+        throw new Error(`${kind} in ${this.class.name}.${this.name} (caught by IL2CPP)`);
       }
-      if (!found) classMisses.push(`${name}: not in ${allImages.length} assemblies`);
-      if (!found) throw new Error(`class ${name} not found in any assembly`);
-      classCache[name] = found;
-      return found;
+      const type = this.returnType;
+      if (type.enumValue === VOID) return void 0;
+      if (type.class.isValueType) return result.isNull() ? void 0 : Il2Cpp.read(unbox(result), type);
+      return Il2Cpp.fromFridaValue(result, type);
+    };
+    setInterval(() => {
+      if (caught) log(`safe invoke: ${caught} game exceptions caught in ${calls} calls (${fallbacks} direct)`);
+      caught = 0;
+    }, 6e4);
+    log("safe invoke: managed calls go through il2cpp_runtime_invoke");
+  }
+  function readTextFile(path) {
+    try {
+      const file = Il2Cpp.corlib.class("System.IO.File");
+      if (!Boolean(file.method("Exists").invoke(Il2Cpp.string(path)))) return "";
+      return String(file.method("ReadAllText").invoke(Il2Cpp.string(path))?.content ?? "");
+    } catch (e) {
+      return "";
     }
-    function unityStruct(name, fields) {
-      const boxed = ucls(name).alloc();
-      for (const key of Object.keys(fields)) boxed.field(key).value = fields[key];
-      return boxed.unbox();
+  }
+  function writeTextFile(path, text) {
+    try {
+      Il2Cpp.corlib.class("System.IO.File").method("WriteAllText").invoke(Il2Cpp.string(path), Il2Cpp.string(text));
+      return true;
+    } catch (e) {
+      return false;
     }
-    function vec2(x, y) {
-      return unityStruct("UnityEngine.Vector2", { x, y });
+  }
+  function freshFingerprint() {
+    let hex = "";
+    for (let i = 0; i < 16; i++) hex += Math.floor(Math.random() * 256).toString(16).padStart(2, "0");
+    return hex;
+  }
+  function newWith(klass, ...args) {
+    const o = klass.alloc(), root = o.ref(false);
+    try {
+      o.method(".ctor", args.length).invoke(...args);
+      return o;
+    } finally {
+      root.free();
     }
-    function rgba(r, g, b, a) {
-      return unityStruct("UnityEngine.Color", { r, g, b, a });
+  }
+  function isNull(o) {
+    return !o || !o.handle || o.handle.isNull();
+  }
+  let unityEquality = null;
+  function unityAlive(o) {
+    if (isNull(o)) return false;
+    try {
+      if (!unityEquality) unityEquality = ucls("UnityEngine.Object").method("op_Equality");
+      return !unityEquality.invoke(o, NULL);
+    } catch (_) {
+      return false;
     }
-    function enumBox(enumClass, n) {
-      const boxed = enumClass.alloc();
-      boxed.field("value__").value = n;
-      return boxed.unbox();
+  }
+  const classCache = {};
+  let allImages = null;
+  function ucls(name) {
+    const cached = classCache[name];
+    if (cached) return cached;
+    if (!allImages) allImages = Il2Cpp.domain.assemblies.map((a) => a.image);
+    let found = null;
+    for (const image of allImages) if (found = checkedClass(image, name, 0)) break;
+    const looked = !!found;
+    for (let round = 0; !found && round < 20; round++) {
+      if (round) Thread.sleep(0.1);
+      for (const image of allImages) if (found = checkedClass(image, name, 1)) break;
     }
-    function endpointUrl(kind) {
+    if (found && !looked) classMisses.push(`${name}: found by walk`);
+    if (!found) throw new Error(`class ${name} not found in any assembly`);
+    classCache[name] = found;
+    return found;
+  }
+  function unityStruct(name, fields) {
+    const boxed = ucls(name).alloc();
+    for (const key of Object.keys(fields)) boxed.field(key).value = fields[key];
+    return boxed.unbox();
+  }
+  function vec2(x, y) {
+    return unityStruct("UnityEngine.Vector2", { x, y });
+  }
+  function rgba(r, g, b, a) {
+    return unityStruct("UnityEngine.Color", { r, g, b, a });
+  }
+  function enumBox(enumClass, n) {
+    const boxed = enumClass.alloc();
+    boxed.field("value__").value = n;
+    return boxed.unbox();
+  }
+  function endpointUrl(kind) {
+    try {
+      const sm = cls(img, "SparkleServices.ServicesManager").method("get_Instance").invoke();
+      if (isNull(sm)) return "";
+      const eps = call(sm, "get_Endpoints");
+      if (isNull(eps)) return "";
+      return String(call(eps, "Get", kind)?.content ?? "");
+    } catch (e) {
+      return "";
+    }
+  }
+  function authToken() {
+    try {
+      const sm = cls(img, "SparkleServices.ServicesManager").method("get_Instance").invoke();
+      if (isNull(sm)) return "";
+      const data = call(sm, "get_AuthData");
+      if (isNull(data)) return "";
+      return String(data.field("token").value?.content ?? "");
+    } catch (e) {
+      return "";
+    }
+  }
+  function httpGet(url, withAuth, cb, updateRequest = false) {
+    schedule(0, () => {
+      let stage = "URI constructor";
       try {
-        const sm = cls(img, "SparkleServices.ServicesManager").method("get_Instance").invoke();
-        if (isNull(sm)) return "";
-        const eps = call(sm, "get_Endpoints");
-        if (isNull(eps)) return "";
-        return String(call(eps, "Get", kind)?.content ?? "");
-      } catch (e) {
-        return "";
-      }
-    }
-    function authToken() {
-      try {
-        const sm = cls(img, "SparkleServices.ServicesManager").method("get_Instance").invoke();
-        if (isNull(sm)) return "";
-        const data = call(sm, "get_AuthData");
-        if (isNull(data)) return "";
-        return String(data.field("token").value?.content ?? "");
-      } catch (e) {
-        return "";
-      }
-    }
-    function httpGet(url, withAuth, cb, updateRequest = false) {
-      schedule(0, () => {
-        let stage = "URI constructor";
-        try {
-          const uri = ucls("System.Uri").alloc();
-          uri.method(".ctor").overload("System.String").invoke(Il2Cpp.string(url));
-          stage = "callback delegate";
-          const del = Il2Cpp.delegate(cls(img, "BestHTTP.OnRequestFinishedDelegate"), (req2, resp) => {
-            try {
-              if (isNull(resp)) {
-                let detail = "response is null";
-                try {
-                  detail += `, state=${call(req2, "get_State")}, exception=${call(req2, "get_Exception")}`;
-                } catch (_) {
-                }
-                log(`GET ${url} failed: ${detail}`);
-                cb(-1, detail);
-                return;
-              }
-              const status = Number(call(resp, "get_StatusCode"));
-              let body = "";
+        const uri = ucls("System.Uri").alloc();
+        uri.method(".ctor").overload("System.String").invoke(Il2Cpp.string(url));
+        stage = "callback delegate";
+        const del = Il2Cpp.delegate(cls(img, "BestHTTP.OnRequestFinishedDelegate"), (req2, resp) => {
+          try {
+            if (isNull(resp)) {
+              let detail = "response is null";
               try {
-                body = String(call(resp, "get_DataAsText")?.content ?? "");
+                detail += `, state=${call(req2, "get_State")}, exception=${call(req2, "get_Exception")}`;
               } catch (_) {
               }
-              log(`GET ${url} completed: HTTP ${status}`);
-              const cachedBody = status === 304 && body.trim().length > 0;
-              if (cachedBody) log(`GET ${url}: cached response body accepted`);
-              cb(cachedBody ? 200 : status, body);
-            } catch (e) {
-              log(`GET ${url} callback failed: ${e}`);
-              cb(-1, String(e));
+              log(`GET ${url} failed: ${detail}`);
+              cb(-1, detail);
+              return;
             }
-          });
-          stage = "HTTPRequest(Uri, OnRequestFinishedDelegate) constructor";
-          const req = cls(img, "BestHTTP.HTTPRequest").alloc();
-          req.method(".ctor").overload("System.Uri", "BestHTTP.OnRequestFinishedDelegate").invoke(uri, del);
-          stage = "update request constraints";
-          if (updateRequest) {
-            req.method("set_MaxRedirects").invoke(0);
-          }
-          stage = "headers";
-          req.method("AddHeader").invoke(Il2Cpp.string("Accept"), Il2Cpp.string("application/json"));
-          req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
-          if (withAuth) {
-            const token = authToken();
-            if (!token) throw new Error("session token unavailable in ServicesManager.AuthData");
-            req.method("AddHeader").invoke(Il2Cpp.string("Authorization"), Il2Cpp.string("Bearer " + token));
-          }
-          stage = "Send";
-          req.method("Send").invoke();
-          log(`GET ${url} queued`);
-        } catch (e) {
-          log(`GET ${url} setup failed at ${stage}: ${e}`);
-          cb(-1, String(e));
-        }
-      });
-    }
-    section("rewards refresh", () => {
-      const pubSub = cls(img, "SparkleServices.PubSub");
-      const createPush = pubSub.method("CreatePushNotification");
-      const gameNetwork = cls(img, "SPTESL.GameNetworkManager");
-      hookAttach(cls(img, "EndGameState").method("OnEnable").virtualAddress, {
-        onEnter() {
-          try {
-            const instance = gameNetwork.method("get_Instance").invoke();
-            const matchId = isNull(instance) ? "" : String(call(instance, "get_MatchId")?.content ?? "");
-            const payload = JSON.stringify({ receivedRewards: true, matchId });
-            createPush.invoke(Il2Cpp.string("matchrewards"), Il2Cpp.string(payload));
-            log(`EndGameState: pushed matchrewards (${matchId || "no match id"})`);
+            const status = Number(call(resp, "get_StatusCode"));
+            let body = "";
+            try {
+              body = String(call(resp, "get_DataAsText")?.content ?? "");
+            } catch (_) {
+            }
+            log(`GET ${url} completed: HTTP ${status}`);
+            const cachedBody = status === 304 && body.trim().length > 0;
+            if (cachedBody) log(`GET ${url}: cached response body accepted`);
+            cb(cachedBody ? 200 : status, body);
           } catch (e) {
-            log(`matchrewards push failed: ${e}`);
+            log(`GET ${url} callback failed: ${e}`);
+            cb(-1, String(e));
           }
+        });
+        stage = "HTTPRequest(Uri, OnRequestFinishedDelegate) constructor";
+        const req = cls(img, "BestHTTP.HTTPRequest").alloc();
+        req.method(".ctor").overload("System.Uri", "BestHTTP.OnRequestFinishedDelegate").invoke(uri, del);
+        stage = "update request constraints";
+        if (updateRequest) {
+          req.method("set_MaxRedirects").invoke(0);
         }
-      });
-      hookAttach(cls(img, "SoloArena").method("SoloArenaEndSequence").virtualAddress, {
-        onEnter() {
-          try {
-            createPush.invoke(Il2Cpp.string("rewards"), Il2Cpp.string("{}"));
-            log("SoloArena: pushed rewards");
-          } catch (e) {
-            log(`rewards push failed: ${e}`);
-          }
+        stage = "headers";
+        req.method("AddHeader").invoke(Il2Cpp.string("Accept"), Il2Cpp.string("application/json"));
+        req.method("AddHeader").invoke(Il2Cpp.string("X-TeslRebornPlugin-Version"), Il2Cpp.string(PLUGIN_VERSION));
+        if (withAuth) {
+          const token = authToken();
+          if (!token) throw new Error("session token unavailable in ServicesManager.AuthData");
+          req.method("AddHeader").invoke(Il2Cpp.string("Authorization"), Il2Cpp.string("Bearer " + token));
         }
-      });
-    });
-    const deckStats = /* @__PURE__ */ new Map();
-    let matchEntryData = [];
-    let statsFinishedLoading = false;
-    let statsLoadingSince = 0;
-    const frameBus = (() => {
-      const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress;
-      const state = Memory.alloc(96);
-      state.writeDouble(Infinity);
-      state.add(8).writeDouble(0);
-      const due = [], touch = [], leave = [];
-      const run = (list) => {
-        for (let i = 0; i < list.length; i++) {
-          try {
-            list[i]();
-          } catch (_) {
-          }
-        }
-      };
-      const dispatch = (flags) => {
-        if (flags & 1) run(due);
-        if (flags & 2) run(touch);
-        if (flags & 4) {
-          state.add(8).writeDouble(Date.now() + 250);
-          run(leave);
-        }
-      };
-      const wake = new NativeCallback(dispatch, "void", ["int"]);
-      let touchCount = NULL;
-      try {
-        const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
-        for (const name of ["UnityEngine.Input::get_touchCount()", "UnityEngine.Input::get_touchCount"]) {
-          const at = resolve(Memory.allocUtf8String(name));
-          if (!at.isNull()) {
-            touchCount = at;
-            break;
-          }
-        }
-      } catch (_) {
+        stage = "Send";
+        req.method("Send").invoke();
+        log(`GET ${url} queued`);
+      } catch (e) {
+        log(`GET ${url} setup failed at ${stage}: ${e}`);
+        cb(-1, String(e));
       }
-      const noTouch = new NativeCallback(() => 0, "int", []);
-      state.add(52).writeS32(touchCount.isNull() ? 0 : 1);
-      const libc = Process.getModuleByName("libc.so");
-      let cm = null, adpfTarget = null;
-      try {
-        cm = new CModule(`
+    });
+  }
+  section("rewards refresh", () => {
+    const pubSub = cls(img, "SparkleServices.PubSub");
+    const createPush = pubSub.method("CreatePushNotification");
+    const gameNetwork = cls(img, "SPTESL.GameNetworkManager");
+    hookAttach(cls(img, "EndGameState").method("OnEnable").virtualAddress, {
+      onEnter() {
+        try {
+          const instance = gameNetwork.method("get_Instance").invoke();
+          const matchId = isNull(instance) ? "" : String(call(instance, "get_MatchId")?.content ?? "");
+          const payload = JSON.stringify({ receivedRewards: true, matchId });
+          createPush.invoke(Il2Cpp.string("matchrewards"), Il2Cpp.string(payload));
+          log(`EndGameState: pushed matchrewards (${matchId || "no match id"})`);
+        } catch (e) {
+          log(`matchrewards push failed: ${e}`);
+        }
+      }
+    });
+    hookAttach(cls(img, "SoloArena").method("SoloArenaEndSequence").virtualAddress, {
+      onEnter() {
+        try {
+          createPush.invoke(Il2Cpp.string("rewards"), Il2Cpp.string("{}"));
+          log("SoloArena: pushed rewards");
+        } catch (e) {
+          log(`rewards push failed: ${e}`);
+        }
+      }
+    });
+  });
+  const deckStats = /* @__PURE__ */ new Map();
+  let matchEntryData = [];
+  let statsFinishedLoading = false;
+  let statsLoadingSince = 0;
+  const frameBus = (() => {
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress;
+    const state = Memory.alloc(96);
+    state.writeDouble(Infinity);
+    state.add(8).writeDouble(0);
+    const due = [], touch = [], leave = [];
+    const run = (list) => {
+      for (let i = 0; i < list.length; i++) {
+        try {
+          list[i]();
+        } catch (_) {
+        }
+      }
+    };
+    const dispatch = (flags) => {
+      if (flags & 1) run(due);
+      if (flags & 2) run(touch);
+      if (flags & 4) {
+        state.add(8).writeDouble(Date.now() + 250);
+        run(leave);
+      }
+    };
+    const wake = new NativeCallback(dispatch, "void", ["int"]);
+    let touchCount = NULL;
+    try {
+      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+      for (const name of ["UnityEngine.Input::get_touchCount()", "UnityEngine.Input::get_touchCount"]) {
+        const at = resolve(Memory.allocUtf8String(name));
+        if (!at.isNull()) {
+          touchCount = at;
+          break;
+        }
+      }
+    } catch (_) {
+    }
+    const noTouch = new NativeCallback(() => 0, "int", []);
+    state.add(52).writeS32(touchCount.isNull() ? 0 : 1);
+    const libc = Process.getModuleByName("libc.so");
+    let cm = null, adpfTarget = null;
+    try {
+      cm = new CModule(`
 #include <gum/guminterceptor.h>
 typedef struct { long s; long ns; } ts_t;
 typedef struct { double next_due; double next_leave; long long frame_us; unsigned frames; unsigned max_gap;
@@ -4930,3041 +4882,3041 @@ void onLeave (GumInvocationContext * ic) {
   if ((double) (now_us () / 1000) >= state.next_leave) wake (4);
 }
 `, { clock_gettime: libc.getExportByName("clock_gettime"), usleep: libc.getExportByName("usleep"), wake, touch_count: touchCount.isNull() ? noTouch : touchCount, state });
-        Interceptor.attach(update, cm);
-        log("frame bus: native");
-        try {
-          let oneFastest = false;
-          const max = [];
-          for (let cpu = 0; cpu < 16; cpu++) {
-            try {
-              max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
-            } catch (_) {
-            }
-          }
-          const top = Math.max(...max);
-          oneFastest = top > 0 && max.filter((f) => f === top).length === 1;
-          if (oneFastest || experiment("workerNice")) {
-            const setpriority = new NativeFunction(libc.getExportByName("setpriority"), "int", ["int", "int", "int"]);
-            let changed = 0, failed = 0;
-            for (const id of listThreadIds()) {
-              let name = "";
-              try {
-                name = String(File.readAllText(`/proc/self/task/${id}/comm`)).trim();
-              } catch (_) {
-              }
-              if (!/^Worker Thread/.test(name)) continue;
-              if (setpriority(0, id, 10) === 0) changed++;
-              else failed++;
-            }
-            log(`frame bus: ${changed} job workers at nice 10${failed ? `, ${failed} refused` : ""}`);
-          }
-        } catch (error) {
-          log(`frame bus: worker priority unchanged: ${error}`);
-        }
-        try {
-          const android = Process.getModuleByName("libandroid.so");
-          const getManager = new NativeFunction(android.getExportByName("APerformanceHint_getManager"), "pointer", []);
-          const createSession = new NativeFunction(android.getExportByName("APerformanceHint_createSession"), "pointer", ["pointer", "pointer", "size_t", "int64"]);
-          const updateTarget = new NativeFunction(android.getExportByName("APerformanceHint_updateTargetWorkDuration"), "int", ["pointer", "int64"]);
-          const report = android.getExportByName("APerformanceHint_reportActualWorkDuration");
-          const tids = [];
-          for (const thread of listThreadIds().map((id) => ({ id }))) {
-            let name = "";
-            try {
-              name = String(File.readAllText(`/proc/self/task/${thread.id}/comm`)).trim();
-            } catch (_) {
-            }
-            if (/^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(name)) tids.push(thread.id);
-          }
-          const manager = getManager();
-          if (!manager.isNull() && tids.length) {
-            const list = Memory.alloc(4 * tids.length);
-            tids.forEach((tid, i) => list.add(4 * i).writeS32(tid));
-            const session = createSession(manager, list, tids.length, 16666667);
-            if (!session.isNull()) {
-              state.add(64).writePointer(session);
-              state.add(72).writePointer(report);
-              adpfTarget = (us) => updateTarget(session, Math.round(us * 1e3));
-              log(`frame bus: performance hints for ${tids.length} game threads`);
-            } else log("frame bus: performance hints refused");
-          }
-        } catch (error) {
-          log(`frame bus: performance hints unavailable: ${error}`);
-        }
-      } catch (error) {
-        log(`frame bus: native unavailable, JS fallback: ${error}`);
-        const usleep = new NativeFunction(libc.getExportByName("usleep"), "int", ["uint"]);
-        const touches = touchCount.isNull() ? null : new NativeFunction(touchCount, "int", []);
-        let last = 0, nextFrame = 0, prevTouch = false;
-        Interceptor.attach(update, {
-          onEnter() {
-            const t = Date.now();
-            if (last && t - last > state.add(28).readU32()) state.add(28).writeU32(t - last);
-            last = t;
-            const frameMs = state.add(16).readS64().toNumber() / 1e3;
-            if (frameMs > 0) {
-              if (nextFrame > t && nextFrame - t <= frameMs) usleep(Math.round((nextFrame - t) * 1e3));
-              nextFrame = Math.max(nextFrame + frameMs, Date.now());
-            } else nextFrame = 0;
-            state.add(24).writeU32(state.add(24).readU32() + 1 >>> 0);
-            let flags = 0;
-            if (t >= state.readDouble()) flags |= 1;
-            if (touch.length) {
-              const c = touches ? touches() : 1;
-              if (c > 0 || prevTouch) flags |= 2;
-              prevTouch = c > 0;
-            }
-            if (flags) dispatch(flags);
-          },
-          onLeave() {
-            if (Date.now() >= state.add(8).readDouble()) dispatch(4);
-          }
-        });
-      }
-      globalThis.__teslFrameBusKeep = [cm, wake, noTouch];
-      const timed = (fn) => hookTimer ? hookTimer(currentSection, fn) : fn;
-      return {
-        update,
-        onDue(fn) {
-          due.push(timed(fn));
-        },
-        setDue(at) {
-          state.writeDouble(at);
-        },
-        onTouch(fn) {
-          touch.push(timed(fn));
-          state.add(56).writeS32(touch.length);
-          return { detach() {
-          } };
-        },
-        onLeave(fn) {
-          const call2 = timed(fn);
-          leave.push(call2);
-          return { detach() {
-            const i = leave.indexOf(call2);
-            if (i >= 0) leave.splice(i, 1);
-          } };
-        },
-        frames: () => state.add(24).readU32(),
-        takeMaxGap() {
-          const gap = state.add(28).readU32();
-          state.add(28).writeU32(0);
-          return gap;
-        },
-        setFrameUs(us) {
-          state.add(16).writeS64(Math.round(us));
+      Interceptor.attach(update, cm);
+      log("frame bus: native");
+      try {
+        let oneFastest = false;
+        const max = [];
+        for (let cpu = 0; cpu < 16; cpu++) {
           try {
-            adpfTarget?.(us > 0 ? us : 1e6 / 120);
+            max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
           } catch (_) {
           }
         }
-      };
-    })();
-    frameLeaves = frameBus;
-    globalThis.__teslFrameBus = frameBus;
-    const pending = [];
-    const taskTime = /* @__PURE__ */ new Map();
-    globalThis.__teslTaskTime = () => {
-      const top = Array.from(taskTime.entries()).sort((a, b) => b[1].ms - a[1].ms).slice(0, 6).map(([tag, e]) => `${tag} ${e.ms} ms/${e.runs}`);
-      taskTime.clear();
-      return top.join("; ");
-    };
-    let nextDue = Infinity;
-    function schedule(delayMs, fn, tag) {
-      const at = delayMs >= 100 ? Math.ceil((Date.now() + delayMs) / 50) * 50 : Date.now() + delayMs;
-      pending.push({ at, fn, tag });
-      if (at < nextDue) {
-        nextDue = at;
-        frameBus.setDue(nextDue);
-      }
-    }
-    function runPending() {
-      const now = Date.now();
-      if (now < nextDue) return;
-      const due = [];
-      nextDue = Infinity;
-      for (let i = pending.length - 1; i >= 0; i--) {
-        if (pending[i].at <= now) due.push(pending.splice(i, 1)[0]);
-        else if (pending[i].at < nextDue) nextDue = pending[i].at;
-      }
-      frameBus.setDue(nextDue);
-      if (!due.length) return;
-      try {
-        Il2Cpp.mainThread.schedule(() => {
-          for (const task of due) {
-            const started = Date.now();
+        const top = Math.max(...max);
+        oneFastest = top > 0 && max.filter((f) => f === top).length === 1;
+        if (oneFastest || experiment("workerNice")) {
+          const setpriority = new NativeFunction(libc.getExportByName("setpriority"), "int", ["int", "int", "int"]);
+          let changed = 0, failed = 0;
+          for (const id of listThreadIds()) {
+            let name = "";
             try {
-              task.fn();
-            } catch (e) {
-              log(`scheduled task failed: ${e}`);
-            }
-            const took = Date.now() - started;
-            const tag = task.tag || "untagged";
-            const entry = taskTime.get(tag) || { ms: 0, runs: 0 };
-            entry.ms += took;
-            entry.runs++;
-            taskTime.set(tag, entry);
-            const probe = globalThis.__teslRebornStallProbe;
-            if (probe) probe.tasks++;
-            if (took >= 100) log(`scheduled task slow ${took}ms (${task.tag || "untagged"})`);
-          }
-        });
-      } catch (e) {
-        log(`could not schedule a task: ${e}`);
-      }
-    }
-    section("main thread scheduler", () => {
-      frameBus.onDue(runPending);
-    });
-    section("device diagnostics", () => {
-      const libc = Process.getModuleByName("libc.so");
-      let mte = "unknown";
-      try {
-        const prctl = new NativeFunction(libc.getExportByName("prctl"), "int", ["int", "ulong", "ulong", "ulong", "ulong"]);
-        const getauxval = new NativeFunction(libc.getExportByName("getauxval"), "ulong", ["ulong"]);
-        const hardware = (Number(getauxval(26)) & 1 << 18) !== 0;
-        const control = prctl(56, 0, 0, 0, 0);
-        const mode = control < 0 ? "?" : control & 2 ? "sync" : control & 4 ? "async" : "off";
-        mte = `${hardware ? "supported" : "not supported"}, ${control < 0 ? "control unreadable" : "tagged addresses " + (control & 1 ? "on" : "off") + ", checks " + mode}`;
-      } catch (error) {
-        mte = `unreadable: ${error}`;
-      }
-      log(`device: MTE ${mte}`);
-      schedule(2e3, () => {
-        try {
-          const info = ucls("UnityEngine.SystemInfo"), read = (name) => {
-            try {
-              return String(info.method(name, 0).invoke()?.content ?? info.method(name, 0).invoke());
+              name = String(File.readAllText(`/proc/self/task/${id}/comm`)).trim();
             } catch (_) {
-              return "?";
             }
-          };
-          log(`device: GPU ${read("get_graphicsDeviceName")}; ${read("get_graphicsDeviceVersion")}; CPU ${read("get_processorType")} x${read("get_processorCount")}`);
-        } catch (error) {
-          log(`device: GPU unreadable: ${error}`);
+            if (!/^Worker Thread/.test(name)) continue;
+            if (setpriority(0, id, 10) === 0) changed++;
+            else failed++;
+          }
+          log(`frame bus: ${changed} job workers at nice 10${failed ? `, ${failed} refused` : ""}`);
         }
-      }, "device diagnostics");
-    });
-    section("main loop stall probe", () => {
-      const probe = globalThis.__teslRebornStallProbe = { loads: 0, tasks: 0 };
-      setInterval(() => {
-        const gap = globalThis.__teslFrameBus.takeMaxGap();
-        const loads = probe.loads, tasks = probe.tasks;
-        probe.loads = 0;
-        probe.tasks = 0;
-        if (gap >= 200 && gap < 6e4)
-          log(`main loop stalled ${gap}ms` + (loads || tasks ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
-      }, 1e3);
-    });
-    section("resume watch", () => {
-      const read = (path) => {
-        try {
-          return String(File.readAllText(path)).trim();
-        } catch (_) {
-          return "";
-        }
-      };
-      const describe = (id) => {
-        const stat = read(`/proc/self/task/${id}/stat`), close = stat.lastIndexOf(")");
-        const state = close < 0 ? "?" : stat.slice(close + 2).split(" ")[0];
-        return `${state} ${read(`/proc/self/task/${id}/syscall`).split(" ")[0] || "?"} ${read(`/proc/self/task/${id}/wchan`) || "-"}`;
-      };
-      let timer = null;
-      (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
-        if (timer) clearInterval(timer);
-        log("resume watch: started");
-        const started = Date.now();
-        timer = setInterval(() => {
+      } catch (error) {
+        log(`frame bus: worker priority unchanged: ${error}`);
+      }
+      try {
+        const android = Process.getModuleByName("libandroid.so");
+        const getManager = new NativeFunction(android.getExportByName("APerformanceHint_getManager"), "pointer", []);
+        const createSession = new NativeFunction(android.getExportByName("APerformanceHint_createSession"), "pointer", ["pointer", "pointer", "size_t", "int64"]);
+        const updateTarget = new NativeFunction(android.getExportByName("APerformanceHint_updateTargetWorkDuration"), "int", ["pointer", "int64"]);
+        const report = android.getExportByName("APerformanceHint_reportActualWorkDuration");
+        const tids = [];
+        for (const thread of listThreadIds().map((id) => ({ id }))) {
+          let name = "";
           try {
-            const since = Date.now() - started, gap = Date.now() - (globalThis.__teslLastFrameAt || started);
-            if (gap > 1e3 || since % 1e4 < 2e3) {
-              const parts = [];
-              for (const thread of Process.enumerateThreads()) {
-                const name = read(`/proc/self/task/${thread.id}/comm`);
-                if (/^(UnityMain|UnityGfxDeviceW|UnityChoreograp|Thread-|AudioTrack|FMOD)/.test(name) || thread.id === Process.id) parts.push(`${name || thread.id} ${describe(thread.id)}`);
-              }
-              log(`resume +${Math.round(since / 1e3)} s: last frame ${gap} ms ago; ${parts.slice(0, 12).join("; ")}`);
+            name = String(File.readAllText(`/proc/self/task/${thread.id}/comm`)).trim();
+          } catch (_) {
+          }
+          if (/^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(name)) tids.push(thread.id);
+        }
+        const manager = getManager();
+        if (!manager.isNull() && tids.length) {
+          const list = Memory.alloc(4 * tids.length);
+          tids.forEach((tid, i) => list.add(4 * i).writeS32(tid));
+          const session = createSession(manager, list, tids.length, 16666667);
+          if (!session.isNull()) {
+            state.add(64).writePointer(session);
+            state.add(72).writePointer(report);
+            adpfTarget = (us) => updateTarget(session, Math.round(us * 1e3));
+            log(`frame bus: performance hints for ${tids.length} game threads`);
+          } else log("frame bus: performance hints refused");
+        }
+      } catch (error) {
+        log(`frame bus: performance hints unavailable: ${error}`);
+      }
+    } catch (error) {
+      log(`frame bus: native unavailable, JS fallback: ${error}`);
+      const usleep = new NativeFunction(libc.getExportByName("usleep"), "int", ["uint"]);
+      const touches = touchCount.isNull() ? null : new NativeFunction(touchCount, "int", []);
+      let last = 0, nextFrame = 0, prevTouch = false;
+      Interceptor.attach(update, {
+        onEnter() {
+          const t = Date.now();
+          if (last && t - last > state.add(28).readU32()) state.add(28).writeU32(t - last);
+          last = t;
+          const frameMs = state.add(16).readS64().toNumber() / 1e3;
+          if (frameMs > 0) {
+            if (nextFrame > t && nextFrame - t <= frameMs) usleep(Math.round((nextFrame - t) * 1e3));
+            nextFrame = Math.max(nextFrame + frameMs, Date.now());
+          } else nextFrame = 0;
+          state.add(24).writeU32(state.add(24).readU32() + 1 >>> 0);
+          let flags = 0;
+          if (t >= state.readDouble()) flags |= 1;
+          if (touch.length) {
+            const c = touches ? touches() : 1;
+            if (c > 0 || prevTouch) flags |= 2;
+            prevTouch = c > 0;
+          }
+          if (flags) dispatch(flags);
+        },
+        onLeave() {
+          if (Date.now() >= state.add(8).readDouble()) dispatch(4);
+        }
+      });
+    }
+    globalThis.__teslFrameBusKeep = [cm, wake, noTouch];
+    const timed = (fn) => hookTimer ? hookTimer(currentSection, fn) : fn;
+    return {
+      update,
+      onDue(fn) {
+        due.push(timed(fn));
+      },
+      setDue(at) {
+        state.writeDouble(at);
+      },
+      onTouch(fn) {
+        touch.push(timed(fn));
+        state.add(56).writeS32(touch.length);
+        return { detach() {
+        } };
+      },
+      onLeave(fn) {
+        const call2 = timed(fn);
+        leave.push(call2);
+        return { detach() {
+          const i = leave.indexOf(call2);
+          if (i >= 0) leave.splice(i, 1);
+        } };
+      },
+      frames: () => state.add(24).readU32(),
+      takeMaxGap() {
+        const gap = state.add(28).readU32();
+        state.add(28).writeU32(0);
+        return gap;
+      },
+      setFrameUs(us) {
+        state.add(16).writeS64(Math.round(us));
+        try {
+          adpfTarget?.(us > 0 ? us : 1e6 / 120);
+        } catch (_) {
+        }
+      }
+    };
+  })();
+  frameLeaves = frameBus;
+  globalThis.__teslFrameBus = frameBus;
+  const pending = [];
+  const taskTime = /* @__PURE__ */ new Map();
+  globalThis.__teslTaskTime = () => {
+    const top = Array.from(taskTime.entries()).sort((a, b) => b[1].ms - a[1].ms).slice(0, 6).map(([tag, e]) => `${tag} ${e.ms} ms/${e.runs}`);
+    taskTime.clear();
+    return top.join("; ");
+  };
+  let nextDue = Infinity;
+  function schedule(delayMs, fn, tag) {
+    const at = delayMs >= 100 ? Math.ceil((Date.now() + delayMs) / 50) * 50 : Date.now() + delayMs;
+    pending.push({ at, fn, tag });
+    if (at < nextDue) {
+      nextDue = at;
+      frameBus.setDue(nextDue);
+    }
+  }
+  function runPending() {
+    const now = Date.now();
+    if (now < nextDue) return;
+    const due = [];
+    nextDue = Infinity;
+    for (let i = pending.length - 1; i >= 0; i--) {
+      if (pending[i].at <= now) due.push(pending.splice(i, 1)[0]);
+      else if (pending[i].at < nextDue) nextDue = pending[i].at;
+    }
+    frameBus.setDue(nextDue);
+    if (!due.length) return;
+    try {
+      Il2Cpp.mainThread.schedule(() => {
+        for (const task of due) {
+          const started = Date.now();
+          try {
+            task.fn();
+          } catch (e) {
+            log(`scheduled task failed: ${e}`);
+          }
+          const took = Date.now() - started;
+          const tag = task.tag || "untagged";
+          const entry = taskTime.get(tag) || { ms: 0, runs: 0 };
+          entry.ms += took;
+          entry.runs++;
+          taskTime.set(tag, entry);
+          const probe = globalThis.__teslRebornStallProbe;
+          if (probe) probe.tasks++;
+          if (took >= 100) log(`scheduled task slow ${took}ms (${task.tag || "untagged"})`);
+        }
+      });
+    } catch (e) {
+      log(`could not schedule a task: ${e}`);
+    }
+  }
+  section("main thread scheduler", () => {
+    frameBus.onDue(runPending);
+  });
+  section("device diagnostics", () => {
+    const libc = Process.getModuleByName("libc.so");
+    let mte = "unknown";
+    try {
+      const prctl = new NativeFunction(libc.getExportByName("prctl"), "int", ["int", "ulong", "ulong", "ulong", "ulong"]);
+      const getauxval = new NativeFunction(libc.getExportByName("getauxval"), "ulong", ["ulong"]);
+      const hardware = (Number(getauxval(26)) & 1 << 18) !== 0;
+      const control = prctl(56, 0, 0, 0, 0);
+      const mode = control < 0 ? "?" : control & 2 ? "sync" : control & 4 ? "async" : "off";
+      mte = `${hardware ? "supported" : "not supported"}, ${control < 0 ? "control unreadable" : "tagged addresses " + (control & 1 ? "on" : "off") + ", checks " + mode}`;
+    } catch (error) {
+      mte = `unreadable: ${error}`;
+    }
+    log(`device: MTE ${mte}`);
+    schedule(2e3, () => {
+      try {
+        const info = ucls("UnityEngine.SystemInfo"), read = (name) => {
+          try {
+            return String(info.method(name, 0).invoke()?.content ?? info.method(name, 0).invoke());
+          } catch (_) {
+            return "?";
+          }
+        };
+        log(`device: GPU ${read("get_graphicsDeviceName")}; ${read("get_graphicsDeviceVersion")}; CPU ${read("get_processorType")} x${read("get_processorCount")}`);
+      } catch (error) {
+        log(`device: GPU unreadable: ${error}`);
+      }
+    }, "device diagnostics");
+  });
+  section("main loop stall probe", () => {
+    const probe = globalThis.__teslRebornStallProbe = { loads: 0, tasks: 0 };
+    setInterval(() => {
+      const gap = globalThis.__teslFrameBus.takeMaxGap();
+      const loads = probe.loads, tasks = probe.tasks;
+      probe.loads = 0;
+      probe.tasks = 0;
+      if (gap >= 200 && gap < 6e4)
+        log(`main loop stalled ${gap}ms` + (loads || tasks ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
+    }, 1e3);
+  });
+  section("resume watch", () => {
+    const read = (path) => {
+      try {
+        return String(File.readAllText(path)).trim();
+      } catch (_) {
+        return "";
+      }
+    };
+    const describe = (id) => {
+      const stat = read(`/proc/self/task/${id}/stat`), close = stat.lastIndexOf(")");
+      const state = close < 0 ? "?" : stat.slice(close + 2).split(" ")[0];
+      return `${state} ${read(`/proc/self/task/${id}/syscall`).split(" ")[0] || "?"} ${read(`/proc/self/task/${id}/wchan`) || "-"}`;
+    };
+    let timer = null;
+    (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
+      if (timer) clearInterval(timer);
+      log("resume watch: started");
+      const started = Date.now();
+      timer = setInterval(() => {
+        try {
+          const since = Date.now() - started, gap = Date.now() - (globalThis.__teslLastFrameAt || started);
+          if (gap > 1e3 || since % 1e4 < 2e3) {
+            const parts = [];
+            for (const thread of Process.enumerateThreads()) {
+              const name = read(`/proc/self/task/${thread.id}/comm`);
+              if (/^(UnityMain|UnityGfxDeviceW|UnityChoreograp|Thread-|AudioTrack|FMOD)/.test(name) || thread.id === Process.id) parts.push(`${name || thread.id} ${describe(thread.id)}`);
             }
-            if (since >= 6e4) {
-              clearInterval(timer);
-              timer = null;
-            }
-          } catch (error) {
-            log(`resume watch: ${error}`);
+            log(`resume +${Math.round(since / 1e3)} s: last frame ${gap} ms ago; ${parts.slice(0, 12).join("; ")}`);
+          }
+          if (since >= 6e4) {
             clearInterval(timer);
             timer = null;
           }
-        }, 2e3);
-      });
-      const loadingFile = `${persistentPath()}/tesl-reborn-loading.json`;
-      const mark = (loaded) => File.writeAllText(loadingFile, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
-      let hung = false, seenAdj = "";
-      setInterval(() => {
-        try {
-          const adj = read("/proc/self/oom_score_adj"), lastFrame = globalThis.__teslLastFrameAt;
-          if (adj !== seenAdj) {
-            seenAdj = adj;
-            if (hung || adj === "0") log(`hang watch: oom_score_adj ${adj}`);
-          }
-          if (!lastFrame) return;
-          const gap = Date.now() - lastFrame;
-          if (hung && gap < 5e3) {
-            hung = false;
-            log("hang watch: frames are back");
-            mark(true);
-          } else if (adj === "0" && gap > 2e4) {
-            if (!hung) {
-              hung = true;
-              const parts = Process.enumerateThreads().map((thread) => `${read(`/proc/self/task/${thread.id}/comm`) || thread.id} ${describe(thread.id)}`);
-              log(`hang watch: on screen, no frame for ${Math.round(gap / 1e3)} s; restart armed; ${parts.join("; ")}`);
-            }
-            mark(false);
-          }
         } catch (error) {
-          log(`hang watch: ${error}`);
+          log(`resume watch: ${error}`);
+          clearInterval(timer);
+          timer = null;
         }
       }, 2e3);
     });
-    let lastDeckStatsFetch = 0;
-    function winRate(wins, losses) {
-      const total = wins + losses;
-      return total === 0 ? 0 : Math.round(wins * 100 / total);
-    }
-    function refreshDeckStats(force = false) {
-      const base = endpointUrl(ENDPOINT_INVENTORY);
-      if (!base) return;
-      const now = Date.now();
-      if (!force && now - lastDeckStatsFetch < 5e3) return;
-      lastDeckStatsFetch = now;
-      httpGet(`${base}/fetchDeckStats`, true, (status, body) => {
-        if (status !== 200) {
-          log(`fetchDeckStats -> HTTP ${status}`);
-          return;
+    const loadingFile = `${persistentPath()}/tesl-reborn-loading.json`;
+    const mark = (loaded) => File.writeAllText(loadingFile, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
+    let hung = false, seenAdj = "";
+    setInterval(() => {
+      try {
+        const adj = read("/proc/self/oom_score_adj"), lastFrame = globalThis.__teslLastFrameAt;
+        if (adj !== seenAdj) {
+          seenAdj = adj;
+          if (hung || adj === "0") log(`hang watch: oom_score_adj ${adj}`);
         }
-        try {
-          const json = JSON.parse(body);
-          const items = json.items ?? json.data ?? [];
-          deckStats.clear();
-          for (const it of items) {
-            deckStats.set(Number(it.deckId), { wins: Number(it.wins) | 0, losses: Number(it.losses) | 0 });
+        if (!lastFrame) return;
+        const gap = Date.now() - lastFrame;
+        if (hung && gap < 5e3) {
+          hung = false;
+          log("hang watch: frames are back");
+          mark(true);
+        } else if (adj === "0" && gap > 2e4) {
+          if (!hung) {
+            hung = true;
+            const parts = Process.enumerateThreads().map((thread) => `${read(`/proc/self/task/${thread.id}/comm`) || thread.id} ${describe(thread.id)}`);
+            log(`hang watch: on screen, no frame for ${Math.round(gap / 1e3)} s; restart armed; ${parts.join("; ")}`);
           }
-          log(`deck stats: ${deckStats.size} decks`);
-          refreshDeckTileLabels();
-        } catch (e) {
-          log(`fetchDeckStats parse error: ${e}`);
+          mark(false);
         }
-      });
-    }
-    function refreshMatchEntries() {
-      const base = endpointUrl(ENDPOINT_STATS);
-      if (!base) return;
-      httpGet(`${base}/fetchExtendedData`, true, (status, body) => {
-        if (status !== 200) {
-          log(`fetchExtendedData -> HTTP ${status}`);
-          statsFinishedLoading = true;
-          return;
-        }
-        try {
-          const json = JSON.parse(body);
-          const entries = json.entries ?? [];
-          matchEntryData = entries.map((e) => ({
-            playedAt: e.playedAt,
-            deckId: Number(e.deckId),
-            deckName: String(e.deckName ?? ""),
-            deckStats: e.deckStats ? { wins: Number(e.deckStats.wins) | 0, losses: Number(e.deckStats.losses) | 0 } : null,
-            opponentDeckName: String(e.opponentDeckName ?? ""),
-            opponentDeckStats: e.opponentDeckStats ? { wins: Number(e.opponentDeckStats.wins) | 0, losses: Number(e.opponentDeckStats.losses) | 0 } : null
-          }));
-          statsFinishedLoading = true;
-          log(`match history: ${matchEntryData.length} entries`);
-          refreshHistoryTooltips();
-        } catch (e) {
-          log(`fetchExtendedData parse error: ${e}`);
-          statsFinishedLoading = true;
-        }
-      });
-    }
-    section("stats and deck statistics", () => {
-      hookAttach(cls(img, "SparkleServices.Stats").method("OnResponse").virtualAddress, {
-        onEnter(args) {
-          try {
-            const response = new Il2Cpp.Object(args[1]);
-            if (enumVal(response.field("resultCode").value) !== 0) return;
-            statsFinishedLoading = false;
-            statsLoadingSince = Date.now();
-            refreshMatchEntries();
-          } catch (e) {
-            log(`stats hook failed: ${e}`);
-          }
-        }
-      });
-      hookAttach(cls(img, "SparkleServices.Inventory").method("OnResponse").virtualAddress, {
-        onEnter(args) {
-          try {
-            const response = new Il2Cpp.Object(args[1]);
-            if (enumVal(response.field("resultCode").value) !== 0) return;
-            refreshDeckStats();
-          } catch (e) {
-            log(`inventory hook failed: ${e}`);
-          }
-        }
-      });
-      for (const name of ["CreateDeck", "SaveDeck", "DeleteDeck"]) {
-        const method = cls(img, "SparkleServices.Inventory").method(name);
-        if (!method) continue;
-        hookAttach(method.virtualAddress, {
-          onLeave() {
-            schedule(1e3, () => refreshDeckStats(true), "deck stats refresh");
-          }
-        });
+      } catch (error) {
+        log(`hang watch: ${error}`);
       }
-      const getResponseStatus = cls(img, "SparkleServices.Stats").method("GetResponseStatus");
-      if (getResponseStatus) {
-        hookAttach(getResponseStatus.virtualAddress, {
-          onEnter(args) {
-            this.instance = args[0];
-          },
-          onLeave(retval) {
-            try {
-              if (isNull(this.instance)) return;
-              const obj = new Il2Cpp.Object(this.instance);
-              if (obj.class.namespace !== "SparkleServices" || obj.class.name !== "Stats") return;
-              const original = retval.toInt32();
-              const loading = !statsFinishedLoading && Date.now() - statsLoadingSince < 1e4;
-              if (loading) {
-                retval.replace(ptr(1));
-                return;
-              }
-              if (original === 2) retval.replace(ptr(2));
-            } catch (_) {
-            }
-          }
-        });
+    }, 2e3);
+  });
+  let lastDeckStatsFetch = 0;
+  function winRate(wins, losses) {
+    const total = wins + losses;
+    return total === 0 ? 0 : Math.round(wins * 100 / total);
+  }
+  function refreshDeckStats(force = false) {
+    const base = endpointUrl(ENDPOINT_INVENTORY);
+    if (!base) return;
+    const now = Date.now();
+    if (!force && now - lastDeckStatsFetch < 5e3) return;
+    lastDeckStatsFetch = now;
+    httpGet(`${base}/fetchDeckStats`, true, (status, body) => {
+      if (status !== 200) {
+        log(`fetchDeckStats -> HTTP ${status}`);
+        return;
+      }
+      try {
+        const json = JSON.parse(body);
+        const items = json.items ?? json.data ?? [];
+        deckStats.clear();
+        for (const it of items) {
+          deckStats.set(Number(it.deckId), { wins: Number(it.wins) | 0, losses: Number(it.losses) | 0 });
+        }
+        log(`deck stats: ${deckStats.size} decks`);
+        refreshDeckTileLabels();
+      } catch (e) {
+        log(`fetchDeckStats parse error: ${e}`);
       }
     });
-    const deckTiles = /* @__PURE__ */ new Map();
-    let deckUiCreated = 0, deckUiShown = 0, deckUiMissing = 0;
-    let deckUiLastError = "", deckUiFailures = 0;
-    function rememberDeckTile(tile) {
-      const key = tile.handle.toString();
-      let record = deckTiles.get(key);
-      if (!record) {
-        record = { tile: tile.weakRef(false), container: null, label: null, shown: false, missing: false, rect: null };
-        deckTiles.set(key, record);
+  }
+  function refreshMatchEntries() {
+    const base = endpointUrl(ENDPOINT_STATS);
+    if (!base) return;
+    httpGet(`${base}/fetchExtendedData`, true, (status, body) => {
+      if (status !== 200) {
+        log(`fetchExtendedData -> HTTP ${status}`);
+        statsFinishedLoading = true;
+        return;
       }
-      return record;
-    }
-    function forgetDeckTile(key) {
-      const record = deckTiles.get(key);
-      if (!record) return;
-      for (const handle of [record.tile, record.container, record.label, record.rect]) {
-        try {
-          if (handle) handle.free();
-        } catch (_) {
-        }
-      }
-      deckTiles.delete(key);
-    }
-    function refreshDeckTileLabels() {
-      for (const [key, record] of Array.from(deckTiles)) {
-        try {
-          const tile = record.tile.target;
-          if (isNull(tile)) {
-            forgetDeckTile(key);
-            continue;
-          }
-          updateDeckTileLabel(tile);
-        } catch (error) {
-          forgetDeckTile(key);
-          log(`stats UI: discarded destroyed tile: ${error}`);
-        }
-      }
-    }
-    function createDeckTileLabel(tile) {
-      const record = rememberDeckTile(tile);
-      if (record.container && record.label) return true;
-      let container = null;
-      const roots = [];
-      const hold = (value) => {
-        if (!isNull(value)) roots.push(value.ref(false));
-        return value;
-      };
       try {
-        hold(tile);
-        const nameText = hold(tile.field("DeckNameText").value);
-        if (isNull(nameText)) return false;
-        const ancestry = Array.from(nameText.class.hierarchy()).map((c) => c.type.name);
-        const isTmp = ancestry.includes("TMPro.TextMeshProUGUI") || ancestry.includes("TMPro.TMP_Text");
-        const isLegacy = ancestry.includes("UnityEngine.UI.Text");
-        if (!isTmp && !isLegacy) throw Error(`Unsupported deck-name renderer: ${nameText.class.type.name}`);
-        const parent = hold(call(tile, "get_transform"));
-        if (isNull(parent)) return false;
-        const rectType = ucls("UnityEngine.RectTransform");
-        const gameObject = ucls("UnityEngine.GameObject");
-        const layer = Number(call(call(parent, "get_gameObject"), "get_layer"));
-        const makeUiObject = (name, parentTransform) => {
-          const go = hold(newWith(
-            gameObject,
-            Il2Cpp.string(name),
-            Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [rectType.type.object])
-          ));
-          call(go, "set_layer", layer);
-          call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parentTransform, false);
-          return go;
-        };
-        const rectOf = (go) => hold(go.method("GetComponent").overload("System.Type").invoke(rectType.type.object));
-        const addComponent = (go, type) => hold(go.method("AddComponent").overload("System.Type").invoke(ucls(type).type.object));
-        const stretch = (rect) => {
-          call(rect, "set_anchorMin", vec2(0, 0));
-          call(rect, "set_anchorMax", vec2(1, 1));
-          call(rect, "set_offsetMin", vec2(0, 0));
-          call(rect, "set_offsetMax", vec2(0, 0));
-        };
-        container = makeUiObject("WinLossRatioContainer", parent);
-        call(container, "SetActive", false);
-        const containerTransform = hold(call(container, "get_transform"));
-        const containerRect = rectOf(container);
-        call(containerRect, "set_anchorMin", vec2(1, 0));
-        call(containerRect, "set_anchorMax", vec2(1, 0));
-        call(containerRect, "set_pivot", vec2(1, 0));
-        call(containerRect, "set_anchoredPosition", vec2(-1, 1));
-        call(containerRect, "set_sizeDelta", vec2(100, 24));
-        const background = makeUiObject("Background", containerTransform);
-        stretch(rectOf(background));
-        const backgroundImage = addComponent(background, "UnityEngine.UI.Image");
-        call(backgroundImage, "set_color", rgba(0, 0, 0, 0.7));
-        call(backgroundImage, "set_raycastTarget", false);
-        const labelObject = makeUiObject("WinLossRatioLabel", containerTransform);
-        stretch(rectOf(labelObject));
-        const renderer = isTmp ? "TMPro.TextMeshProUGUI" : "UnityEngine.UI.Text";
-        const label = addComponent(labelObject, renderer);
-        const font = hold(call(nameText, "get_font"));
-        if (isNull(font)) throw Error("DeckNameText has no font");
-        call(label, "set_font", font);
-        call(label, "set_fontSize", 16);
-        if (isTmp) {
-          call(label, "set_enableAutoSizing", false);
-          const alignmentClass = ucls("TMPro.TextAlignmentOptions");
-          const center = enumVal(alignmentClass.field("Center").value);
-          call(label, "set_alignment", enumBox(alignmentClass, center));
-          const wrapping = label.tryMethod("set_enableWordWrapping", 1);
-          if (wrapping) wrapping.invoke(false);
-        } else {
-          call(label, "set_resizeTextForBestFit", false);
-          call(label, "set_alignment", 4);
-          call(label, "set_horizontalOverflow", 1);
-          call(label, "set_verticalOverflow", 1);
+        const json = JSON.parse(body);
+        const entries = json.entries ?? [];
+        matchEntryData = entries.map((e) => ({
+          playedAt: e.playedAt,
+          deckId: Number(e.deckId),
+          deckName: String(e.deckName ?? ""),
+          deckStats: e.deckStats ? { wins: Number(e.deckStats.wins) | 0, losses: Number(e.deckStats.losses) | 0 } : null,
+          opponentDeckName: String(e.opponentDeckName ?? ""),
+          opponentDeckStats: e.opponentDeckStats ? { wins: Number(e.opponentDeckStats.wins) | 0, losses: Number(e.opponentDeckStats.losses) | 0 } : null
+        }));
+        statsFinishedLoading = true;
+        log(`match history: ${matchEntryData.length} entries`);
+        refreshHistoryTooltips();
+      } catch (e) {
+        log(`fetchExtendedData parse error: ${e}`);
+        statsFinishedLoading = true;
+      }
+    });
+  }
+  section("stats and deck statistics", () => {
+    hookAttach(cls(img, "SparkleServices.Stats").method("OnResponse").virtualAddress, {
+      onEnter(args) {
+        try {
+          const response = new Il2Cpp.Object(args[1]);
+          if (enumVal(response.field("resultCode").value) !== 0) return;
+          statsFinishedLoading = false;
+          statsLoadingSince = Date.now();
+          refreshMatchEntries();
+        } catch (e) {
+          log(`stats hook failed: ${e}`);
         }
-        call(label, "set_color", rgba(1, 1, 1, 1));
-        call(label, "set_raycastTarget", false);
-        call(label, "set_enabled", true);
-        record.rect = containerRect.ref(false);
-        record.container = container.ref(false);
-        record.label = label.ref(false);
-        if (++deckUiCreated <= 8) log(`stats UI: created panel ${deckUiCreated}, layer=${layer}, renderer=${renderer}, template=${nameText.class.type.name}`);
-        return true;
-      } catch (error) {
-        if (container) {
+      }
+    });
+    hookAttach(cls(img, "SparkleServices.Inventory").method("OnResponse").virtualAddress, {
+      onEnter(args) {
+        try {
+          const response = new Il2Cpp.Object(args[1]);
+          if (enumVal(response.field("resultCode").value) !== 0) return;
+          refreshDeckStats();
+        } catch (e) {
+          log(`inventory hook failed: ${e}`);
+        }
+      }
+    });
+    for (const name of ["CreateDeck", "SaveDeck", "DeleteDeck"]) {
+      const method = cls(img, "SparkleServices.Inventory").method(name);
+      if (!method) continue;
+      hookAttach(method.virtualAddress, {
+        onLeave() {
+          schedule(1e3, () => refreshDeckStats(true), "deck stats refresh");
+        }
+      });
+    }
+    const getResponseStatus = cls(img, "SparkleServices.Stats").method("GetResponseStatus");
+    if (getResponseStatus) {
+      hookAttach(getResponseStatus.virtualAddress, {
+        onEnter(args) {
+          this.instance = args[0];
+        },
+        onLeave(retval) {
           try {
-            ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(container);
+            if (isNull(this.instance)) return;
+            const obj = new Il2Cpp.Object(this.instance);
+            if (obj.class.namespace !== "SparkleServices" || obj.class.name !== "Stats") return;
+            const original = retval.toInt32();
+            const loading = !statsFinishedLoading && Date.now() - statsLoadingSince < 1e4;
+            if (loading) {
+              retval.replace(ptr(1));
+              return;
+            }
+            if (original === 2) retval.replace(ptr(2));
           } catch (_) {
           }
         }
-        const detail = String(error);
-        if (detail !== deckUiLastError) {
-          deckUiLastError = detail;
-          deckUiFailures = 0;
-        }
-        deckUiFailures++;
-        if (deckUiFailures <= 3 || deckUiFailures % 25 === 0)
-          log(`stats UI: creation failed (${deckUiFailures}): ${detail}`);
-        return false;
-      } finally {
-        for (const root of roots.reverse()) root.free();
+      });
+    }
+  });
+  const deckTiles = /* @__PURE__ */ new Map();
+  let deckUiCreated = 0, deckUiShown = 0, deckUiMissing = 0;
+  let deckUiLastError = "", deckUiFailures = 0;
+  function rememberDeckTile(tile) {
+    const key = tile.handle.toString();
+    let record = deckTiles.get(key);
+    if (!record) {
+      record = { tile: tile.weakRef(false), container: null, label: null, shown: false, missing: false, rect: null };
+      deckTiles.set(key, record);
+    }
+    return record;
+  }
+  function forgetDeckTile(key) {
+    const record = deckTiles.get(key);
+    if (!record) return;
+    for (const handle of [record.tile, record.container, record.label, record.rect]) {
+      try {
+        if (handle) handle.free();
+      } catch (_) {
       }
     }
-    function updateDeckTileLabel(tile) {
-      const key = tile.handle.toString();
+    deckTiles.delete(key);
+  }
+  function refreshDeckTileLabels() {
+    for (const [key, record] of Array.from(deckTiles)) {
       try {
-        const record = rememberDeckTile(tile);
-        if (!createDeckTileLabel(tile)) return;
-        const container = record.container.target;
-        const label = record.label.target;
-        if (isNull(container) || isNull(label)) {
+        const tile = record.tile.target;
+        if (isNull(tile)) {
           forgetDeckTile(key);
-          return;
+          continue;
         }
-        call(container, "SetActive", false);
-        const deckId = Number(call(tile, "GetDeckId"));
-        const stats = deckStats.get(deckId);
-        if (!stats) {
-          if (!record.missing && deckUiMissing++ < 8) log(`stats UI: no data for deckId=${deckId}, loaded=${deckStats.size}`);
-          record.missing = true;
-          return;
-        }
-        const text = `${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
-        call(label, "set_text", Il2Cpp.string(text));
-        const width = Number(call(label, "get_preferredWidth"));
-        if (!Number.isFinite(width) || width < 0) throw Error("Invalid statistics text width");
-        call(record.rect.target, "set_sizeDelta", vec2(Math.ceil(width) + 6, 24));
-        call(container, "SetActive", true);
-        if (!record.shown && deckUiShown++ < 8) log(`stats UI: shown deckId=${deckId}, ${text}`);
-        record.shown = true;
+        updateDeckTileLabel(tile);
       } catch (error) {
         forgetDeckTile(key);
-        log(`stats UI: update failed: ${error}`);
+        log(`stats UI: discarded destroyed tile: ${error}`);
       }
     }
-    section("deck tile win/loss label", () => {
-      const deckTile = cls(img, "DeckTile");
-      hookAttach(deckTile.method("SetData", 2).virtualAddress, {
-        onEnter(args) {
-          this.tile = args[0];
-        },
-        onLeave() {
-          try {
-            if (this.tile) updateDeckTileLabel(new Il2Cpp.Object(this.tile));
-          } catch (error) {
-            log(`stats UI: SetData failed: ${error}`);
-          }
-        }
-      });
-      const destroy = deckTile.methods.find((m) => m.name === "OnDestroy" && !m.isStatic && m.parameterCount === 0);
-      if (destroy && !destroy.virtualAddress.isNull()) {
-        hookAttach(destroy.virtualAddress, {
-          onEnter(args) {
-            forgetDeckTile(args[0].toString());
-          }
-        });
-      }
-    });
-    const MONTH_KEYS = [
-      "months.January",
-      "months.February",
-      "months.March",
-      "months.April",
-      "months.May",
-      "months.June",
-      "months.July",
-      "months.August",
-      "months.September",
-      "months.October",
-      "months.November",
-      "months.December"
-    ];
-    const MONTH_NAMES = [
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December"
-    ];
-    function monthName(month) {
-      try {
-        const lm = cls(img, "LocalizationManager").method("get_Instance").invoke();
-        if (!isNull(lm)) {
-          const text = call(lm, "GetText", MONTH_KEYS[month - 1]);
-          if (text && text.content) return String(text.content);
-        }
-      } catch (_) {
-      }
-      return MONTH_NAMES[month - 1] ?? "";
-    }
-    function setNewsItem(item, title, content, date, url, primary) {
-      const root = item.field("Root").value;
-      if (!isNull(root)) root.method("SetActive").invoke(true);
-      const titleText = item.field("TitleText").value;
-      if (!isNull(titleText)) titleText.method("set_text").invoke(Il2Cpp.string(title));
-      if (primary && content != null) {
-        const description = item.field("DescriptionText").value;
-        if (!isNull(description)) description.method("set_text").invoke(Il2Cpp.string(content));
-      }
-      const monthText = item.field("MonthText").value;
-      if (!isNull(monthText)) monthText.method("set_text").invoke(Il2Cpp.string(monthName(date.getMonth() + 1)));
-      const dayText = item.field("DayText").value;
-      if (!isNull(dayText)) dayText.method("set_text").invoke(Il2Cpp.string(String(date.getDate())));
-      const button = item.field("Button").value;
-      if (isNull(button)) return;
-      const onClick = call(button, "get_onClick");
-      if (isNull(onClick)) return;
-      onClick.method("RemoveAllListeners").invoke();
-      const action = Il2Cpp.delegate(ucls("UnityEngine.Events.UnityAction"), () => {
-        try {
-          ucls("UnityEngine.Application").method("OpenURL").invoke(Il2Cpp.string(url));
-        } catch (_) {
-        }
-      });
-      onClick.method("AddListener").invoke(action);
-    }
-    function loadRebornNews(widget) {
-      httpGet(NEWS_URL, false, (status, body) => {
-        try {
-          if (status !== 200) {
-            log(`news: HTTP ${status}`);
-            return;
-          }
-          const json = JSON.parse(body);
-          const items = json.items ?? [];
-          const primary = widget.field("_primaryNewsItem").value;
-          const secondary = widget.field("_secondaryNewsItems").value;
-          for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            const date = new Date(String(item.createdAt).replace(" ", "T"));
-            if (i === 0) {
-              if (!isNull(primary)) setNewsItem(primary, String(item.title ?? ""), String(item.content ?? ""), date, String(item.url ?? ""), true);
-            } else if (!isNull(secondary) && i - 1 < secondary.length) {
-              const entry = secondary.get(i - 1);
-              if (!isNull(entry)) setNewsItem(entry, String(item.title ?? ""), null, date, String(item.url ?? ""), false);
-            }
-          }
-          const loading = widget.field("_loadingUi").value;
-          if (!isNull(loading)) loading.method("SetActive").invoke(false);
-          const unavailable = widget.field("_unavailableUi").value;
-          if (!isNull(unavailable)) unavailable.method("SetActive").invoke(false);
-          widget.field("_loadInProgress").value = false;
-          log(`news: ${items.length} items`);
-        } catch (e) {
-          log(`news failed: ${e}`);
-        }
-      });
-    }
-    section("news from tesl-reborn", () => {
-      const widget = cls(img, "MenuNewsWidget");
-      const iterator = img.classes.find((c) => c.name === "<LoadNews>c__Iterator0" && c.declaringClass?.name === "MenuNewsWidget");
-      if (iterator) {
-        const moveNext = iterator.methods.find((m) => m.name === "MoveNext");
-        if (moveNext) {
-          hookAttach(moveNext.virtualAddress, {
-            onLeave(retval) {
-              retval.replace(ptr(0));
-            }
-            // finish the coroutine at once
-          });
-        }
-      } else log("news: the game's news coroutine was not found");
-      hookAttach(widget.method("OnEnable").virtualAddress, {
-        onEnter(args) {
-          try {
-            const self = new Il2Cpp.Object(args[0]);
-            self.field("_lastShownShownLanguage").value = Il2Cpp.string("en");
-            loadRebornNews(self);
-          } catch (e) {
-            log(`news hook failed: ${e}`);
-          }
-        }
-      });
-    });
-    section("custom titles and scenario image", () => {
-      const config = cls(img, "SPTESL.GameConfiguration");
-      const titleData = cls(img, "SPTESL.TitleData");
-      const iterator = img.classes.find((c) => c.name === "<LoadGameConfigurationAtRuntime>c__Iterator0" && c.declaringClass?.name === "GameConfiguration");
-      if (!iterator) throw new Error("the configuration coroutine was not found");
-      const moveNext = iterator.methods.find((m) => m.name === "MoveNext");
-      if (!moveNext) throw new Error("the configuration coroutine has no MoveNext");
-      let applied = false;
-      hookAttach(moveNext.virtualAddress, {
-        onEnter(args) {
-          this.iterator = new Il2Cpp.Object(args[0]);
-        },
-        onLeave(retval) {
-          if (applied) return;
-          if (retval.toInt32() !== 0) return;
-          applied = true;
-          try {
-            const instance = this.iterator.field("$this").value;
-            if (isNull(instance)) return;
-            addCustomTitles(instance, titleData);
-            fixFrostTrollScenario(instance);
-            log("game configuration: custom titles and scenario image applied");
-          } catch (e) {
-            log(`game configuration patch failed: ${e}`);
-          }
-        }
-      });
-      function addCustomTitles(instance, titleClass) {
-        const titles = instance.field("Titles").value;
-        if (isNull(titles)) return;
-        const existing = titles.method("get_Count").invoke();
-        for (const spec of [
-          { id: -900988265, name: "title_reborn_keeper", title: "reborn.titles.keeper.title", desc: "reborn.titles.keeper.description" },
-          { id: -314134087, name: "title_reborn_founder", title: "reborn.titles.founder.title", desc: "reborn.titles.founder.description" }
-        ]) {
-          if (titleExists(titles, spec.name)) continue;
-          const data = newWith(titleClass);
-          const resourceId = data.field("ResourceId").value;
-          resourceId.field("Id").value = spec.id;
-          resourceId.field("UniqueName").value = Il2Cpp.string(spec.name);
-          resourceId.field("CompletionType").value = enumBox(cls(img, "SPTESL.ResourceCompletionType"), 1);
-          data.field("Title").value.field("RawKey").value = Il2Cpp.string(spec.title);
-          data.field("Description").value.field("RawKey").value = Il2Cpp.string(spec.desc);
-          data.field("Rarity").value = enumBox(cls(img, "SPTESL.CardRarity"), RARITY_LEGENDARY);
-          data.field("Hidden").value = false;
-          titles.method("Add").invoke(data);
-          const check = titles.method("get_Item", 1).invoke(Number(titles.method("get_Count").invoke()) - 1);
-          const checkName = check.field("ResourceId").value.field("UniqueName").value?.content;
-          const checkTitle = check.field("Title").value.field("RawKey").value?.content;
-          log(`game configuration: added title ${checkName} (${checkTitle})`);
-        }
-        log(`game configuration: ${existing} + 2 titles`);
-      }
-      function titleExists(titles, uniqueName) {
-        try {
-          const count = Number(titles.method("get_Count").invoke());
-          for (let i = 0; i < count; i++) {
-            const entry = titles.method("get_Item", 1).invoke(i);
-            if (isNull(entry)) continue;
-            const name = entry.field("ResourceId").value.field("UniqueName").value?.content;
-            if (name === uniqueName) return true;
-          }
-        } catch (_) {
-        }
-        return false;
-      }
-      function rarityValue(rarity) {
-        return enumBox(cls(img, "SPTESL.CardRarity"), rarity);
-      }
-      function fixFrostTrollScenario(instance) {
-        const scenarios = instance.field("Scenarios").value;
-        if (isNull(scenarios)) return;
-        const count = Number(scenarios.method("get_Count").invoke());
-        for (let i = 0; i < count; i++) {
-          const scenario = scenarios.method("get_Item", 1).invoke(i);
-          if (isNull(scenario)) continue;
-          const name = scenario.field("ResourceId").value.field("UniqueName").value?.content;
-          if (name !== "CWC_M_Act1_Ep2_FrostTroll_B" && name !== "CWC_Act1_Ep2_FrostTroll_B") continue;
-          const modal = scenario.field("IntroModalData").value;
-          if (isNull(modal)) continue;
-          const overview = modal.field("OverviewSection").value;
-          if (isNull(overview)) continue;
-          overview.field("Image").value = Il2Cpp.string("ContentPack000/Cards/Visuals/Ice_Storm_v2/Ice_Storm_v2");
-          log(`game configuration: fixed the scenario image of ${name}`);
-        }
-      }
-    });
-    function countOf(dictionary) {
-      if (isNull(dictionary)) return 0;
-      try {
-        return Number(dictionary.method("get_Count").invoke());
-      } catch (_) {
-        return 0;
-      }
-    }
-    function restoreLocalization(manager, code) {
-      try {
-        let text = "";
-        const selected = resourceLanguage() || code;
-        const regional = selected.includes("_") ? selected.slice(0, 2) + "_" + selected.slice(3).toUpperCase() : selected;
-        for (const name of [selected, regional, shortLanguage(selected)]) {
-          text = readTextFile(`${persistentPath()}/tesl-localization-${name}.json`);
-          if (text) break;
-        }
-        if (!text) return 0;
-        const json = JSON.parse(text);
-        const keys = Object.keys(json);
-        if (keys.length === 0) return 0;
-        const stringClass = Il2Cpp.corlib.class("System.String");
-        const dictionary = Il2Cpp.corlib.class("System.Collections.Generic.Dictionary`2").inflate(stringClass, stringClass).new();
-        const retained = dictionary.ref(false);
-        try {
-          for (const key of keys) {
-            retained.target.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(String(json[key])));
-          }
-          const fixes = TRANSLATIONS[selected] || TRANSLATIONS[shortLanguage(selected)] || {};
-          for (const key of Object.keys(fixes))
-            retained.target.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
-          manager.field("_localizedData").value = retained.target;
-        } finally {
-          retained.free();
-        }
-        return keys.length;
-      } catch (e) {
-        log(`could not restore the localization: ${e}`);
-        return 0;
-      }
-    }
-    let resourceSettingsWindow = null;
-    function resourceLanguage() {
-      try {
-        const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
-        if (choice && /^(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)$/.test(choice.language)) return choice.language;
-      } catch (_) {
-      }
-      return "";
-    }
-    function languageSetupUri(query) {
-      let host = "resources";
-      try {
-        const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "{}");
-        if (setup.languageTransition === true) host = "language";
-      } catch (_) {
-      }
-      return "teslreborn://" + host + "?" + query;
-    }
-    function liveSettingsWindow() {
-      let destroyed = false;
-      if (resourceSettingsWindow) try {
-        destroyed = Boolean(ucls("UnityEngine.Object").method("op_Equality").invoke(resourceSettingsWindow.target, NULL));
-      } catch (_) {
-      }
-      if (destroyed) {
-        resourceSettingsWindow.free();
-        resourceSettingsWindow = null;
-      }
-      return resourceSettingsWindow;
-    }
-    function resourceSettingsOpen() {
-      try {
-        return liveSettingsWindow() != null && Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy"));
-      } catch (_) {
-        return false;
-      }
-    }
-    function shortLanguage(code) {
-      return String(code).toLowerCase().replace("-", "_").split("_")[0];
-    }
-    function localizedGameUri(uri, code) {
-      if (!code || !/^https?:\/\/(?:[a-z0-9-]+\.)?tesl-reborn\.com(?=[:/]|$)/i.test(uri)) return uri;
-      return uri.replace(/([?&](?:language|locale)=)([^&#]*)/gi, (_, prefix, old) => prefix + shapedLanguage(code, decodeURIComponent(old)));
-    }
-    function localizedAssetPath(path, code) {
-      if (!code) return path;
-      return path.replace(
-        /(\/Localization\/(?:Text|Audio)\/)(?:en|de|es|fr|it|pl|pt|ru|tr)(?:[_-][a-z]{2})?(?=\/|$)/gi,
-        (_, prefix) => prefix + code.slice(0, 2) + "_" + code.slice(3).toUpperCase()
-      );
-    }
-    function shapedLanguage(code, old) {
-      return /[_-]/.test(old) ? code.slice(0, 2) + "_" + code.slice(3).toUpperCase() : code.slice(0, 2);
-    }
-    function languageLabel(text) {
-      const label = String(text).replace(/<[^>]*>/g, "").toLowerCase().replace(/[\s()_-]/g, "");
-      const native = {
-        en_us: ["english", "englishus", "\u0430\u043D\u0433\u043B\u0438\u0439\u0441\u043A\u0438\u0439"],
-        de_de: ["deutsch", "german", "\u043D\u0435\u043C\u0435\u0446\u043A\u0438\u0439"],
-        es_es: ["espa\xF1ol", "spanish", "\u0438\u0441\u043F\u0430\u043D\u0441\u043A\u0438\u0439"],
-        es_mx: ["espa\xF1olmexicano", "espa\xF1ollatinoam\xE9rica", "latinamericanspanish", "espa\xF1olm\xE9xico"],
-        fr_fr: ["fran\xE7ais", "french", "\u0444\u0440\u0430\u043D\u0446\u0443\u0437\u0441\u043A\u0438\u0439"],
-        it_it: ["italiano", "italian", "\u0438\u0442\u0430\u043B\u044C\u044F\u043D\u0441\u043A\u0438\u0439"],
-        pl_pl: ["polski", "polish", "\u043F\u043E\u043B\u044C\u0441\u043A\u0438\u0439"],
-        pt_br: ["portugu\xEAsbrasil", "brazilianportuguese", "portugu\xEAs", "portuguese"],
-        ru_ru: ["\u0440\u0443\u0441\u0441\u043A\u0438\u0439", "\u0440\u0443\u0441\u0441\u043A\u0438\u0439\u044F\u0437\u044B\u043A", "russian"],
-        tr_tr: ["t\xFCrk\xE7e", "turkish", "\u0442\u0443\u0440\u0435\u0446\u043A\u0438\u0439"]
+  }
+  function createDeckTileLabel(tile) {
+    const record = rememberDeckTile(tile);
+    if (record.container && record.label) return true;
+    let container = null;
+    const roots = [];
+    const hold = (value) => {
+      if (!isNull(value)) roots.push(value.ref(false));
+      return value;
+    };
+    try {
+      hold(tile);
+      const nameText = hold(tile.field("DeckNameText").value);
+      if (isNull(nameText)) return false;
+      const ancestry = Array.from(nameText.class.hierarchy()).map((c) => c.type.name);
+      const isTmp = ancestry.includes("TMPro.TextMeshProUGUI") || ancestry.includes("TMPro.TMP_Text");
+      const isLegacy = ancestry.includes("UnityEngine.UI.Text");
+      if (!isTmp && !isLegacy) throw Error(`Unsupported deck-name renderer: ${nameText.class.type.name}`);
+      const parent = hold(call(tile, "get_transform"));
+      if (isNull(parent)) return false;
+      const rectType = ucls("UnityEngine.RectTransform");
+      const gameObject = ucls("UnityEngine.GameObject");
+      const layer = Number(call(call(parent, "get_gameObject"), "get_layer"));
+      const makeUiObject = (name, parentTransform) => {
+        const go = hold(newWith(
+          gameObject,
+          Il2Cpp.string(name),
+          Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [rectType.type.object])
+        ));
+        call(go, "set_layer", layer);
+        call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parentTransform, false);
+        return go;
       };
-      return Object.keys(native).find((code) => native[code].includes(label));
-    }
-    section("translation fixes", () => {
-      const localization = cls(img, "LocalizationManager");
-      let lastLanguage = "", lastRestored = "", lastRestoredDictionary = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0, recentExplicitInputAt = 0, switchingAt = 0;
-      let inputMethods = null;
-      function noteLanguageInput(full = true) {
-        try {
-          if (!inputMethods) {
-            const input = ucls("UnityEngine.Input");
-            inputMethods = { touches: input.method("get_touchCount", 0), down: input.method("GetMouseButtonDown", 1), up: input.method("GetMouseButtonUp", 1) };
-          }
-          if (Number(inputMethods.touches.invoke()) > 0 || full && (inputMethods.down.invoke(0) || inputMethods.up.invoke(0))) {
-            recentExplicitInputAt = Date.now();
-            if (resourceSettingsOpen()) recentInputAt = recentExplicitInputAt;
-          }
-        } catch (_) {
-        }
-      }
-      try {
-        hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-          touchOnly: true,
-          onEnter() {
-            noteLanguageInput(false);
-          }
-        });
-      } catch (error) {
-        log(`resources: settings input trace unavailable: ${error}`);
-      }
-      const languageHandlers = /* @__PURE__ */ new Set();
-      for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name))) {
-        for (const method of owner.methods.filter((m) => /^(On.*(?:Language|Locale|Lang|ValueChanged|SelectionChanged).*|(?:Select|Change|Set).*(?:Language|Locale|Lang)|LanguageChanged)$/i.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
-          const key = method.virtualAddress.toString();
-          if (languageHandlers.has(key)) continue;
-          languageHandlers.add(key);
-          hookAttach(method.virtualAddress, {
-            onEnter() {
-              languageInputDepth++;
-            },
-            onLeave() {
-              languageInputDepth = Math.max(0, languageInputDepth - 1);
-            }
-          });
-        }
-      }
-      const languageNames = {
-        en_us: ["english", "en"],
-        de_de: ["german", "de"],
-        es_es: ["spanish", "es"],
-        es_mx: ["mexicanspanish", "spanishmexican", "latinamericanspanish", "spanishlatinamerica"],
-        fr_fr: ["french", "fr"],
-        it_it: ["italian", "it"],
-        pl_pl: ["polish", "pl"],
-        pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"],
-        ru_ru: ["russian", "ru"],
-        tr_tr: ["turkish", "tr"]
+      const rectOf = (go) => hold(go.method("GetComponent").overload("System.Type").invoke(rectType.type.object));
+      const addComponent = (go, type) => hold(go.method("AddComponent").overload("System.Type").invoke(ucls(type).type.object));
+      const stretch = (rect) => {
+        call(rect, "set_anchorMin", vec2(0, 0));
+        call(rect, "set_anchorMax", vec2(1, 1));
+        call(rect, "set_offsetMin", vec2(0, 0));
+        call(rect, "set_offsetMax", vec2(0, 0));
       };
-      function requestLanguage(target, current, explicit = false) {
-        if (globalThis.__teslLanguageSyncing) return false;
-        noteLanguageInput();
-        if (!explicit && (!target || target === current || !loaded || !recentInputAt || Date.now() - recentInputAt > 3e3)) return false;
-        if (switching && Date.now() - switchingAt < 1500 || target && target === current) return true;
-        switching = true;
-        switchingAt = Date.now();
-        const link = target ? "language=" + target + "&apply=1" : "chooseLanguage=1";
+      container = makeUiObject("WinLossRatioContainer", parent);
+      call(container, "SetActive", false);
+      const containerTransform = hold(call(container, "get_transform"));
+      const containerRect = rectOf(container);
+      call(containerRect, "set_anchorMin", vec2(1, 0));
+      call(containerRect, "set_anchorMax", vec2(1, 0));
+      call(containerRect, "set_pivot", vec2(1, 0));
+      call(containerRect, "set_anchoredPosition", vec2(-1, 1));
+      call(containerRect, "set_sizeDelta", vec2(100, 24));
+      const background = makeUiObject("Background", containerTransform);
+      stretch(rectOf(background));
+      const backgroundImage = addComponent(background, "UnityEngine.UI.Image");
+      call(backgroundImage, "set_color", rgba(0, 0, 0, 0.7));
+      call(backgroundImage, "set_raycastTarget", false);
+      const labelObject = makeUiObject("WinLossRatioLabel", containerTransform);
+      stretch(rectOf(labelObject));
+      const renderer = isTmp ? "TMPro.TextMeshProUGUI" : "UnityEngine.UI.Text";
+      const label = addComponent(labelObject, renderer);
+      const font = hold(call(nameText, "get_font"));
+      if (isNull(font)) throw Error("DeckNameText has no font");
+      call(label, "set_font", font);
+      call(label, "set_fontSize", 16);
+      if (isTmp) {
+        call(label, "set_enableAutoSizing", false);
+        const alignmentClass = ucls("TMPro.TextAlignmentOptions");
+        const center = enumVal(alignmentClass.field("Center").value);
+        call(label, "set_alignment", enumBox(alignmentClass, center));
+        const wrapping = label.tryMethod("set_enableWordWrapping", 1);
+        if (wrapping) wrapping.invoke(false);
+      } else {
+        call(label, "set_resizeTextForBestFit", false);
+        call(label, "set_alignment", 4);
+        call(label, "set_horizontalOverflow", 1);
+        call(label, "set_verticalOverflow", 1);
+      }
+      call(label, "set_color", rgba(1, 1, 1, 1));
+      call(label, "set_raycastTarget", false);
+      call(label, "set_enabled", true);
+      record.rect = containerRect.ref(false);
+      record.container = container.ref(false);
+      record.label = label.ref(false);
+      if (++deckUiCreated <= 8) log(`stats UI: created panel ${deckUiCreated}, layer=${layer}, renderer=${renderer}, template=${nameText.class.type.name}`);
+      return true;
+    } catch (error) {
+      if (container) {
         try {
-          writeTextFile(`${persistentPath()}/tesl-reborn-language-status.json`, JSON.stringify({
-            revision: 30,
-            status: "opening-game-data",
-            current,
-            requested: target || "chooser",
-            at: (/* @__PURE__ */ new Date()).toISOString()
-          }));
+          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(container);
         } catch (_) {
         }
-        log(`resources: language control -> Game data (${target || "chooser"}); native handler suppressed`);
-        schedule(0, () => {
-          try {
-            ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string(languageSetupUri(link)));
-          } catch (error) {
-            switching = false;
-            log(`resources: could not open language setup: ${error}`);
-          }
-        });
-        return true;
       }
-      const replacedLanguageControls = /* @__PURE__ */ new Set();
-      function replaceLanguageControl(method, route) {
-        if (!method || method.isStatic || method.virtualAddress.isNull()) return;
-        const key = method.virtualAddress.toString();
-        if (replacedLanguageControls.has(key)) return;
-        replacedLanguageControls.add(key);
-        method.implementation = function(...args) {
-          try {
-            if (route(this, args)) return;
-          } catch (error) {
-            log(`resources: language control ${method.name}: ${error}`);
-          }
-          return method.invokeRaw(this.handle, ...args);
-        };
+      const detail = String(error);
+      if (detail !== deckUiLastError) {
+        deckUiLastError = detail;
+        deckUiFailures = 0;
       }
-      for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+      deckUiFailures++;
+      if (deckUiFailures <= 3 || deckUiFailures % 25 === 0)
+        log(`stats UI: creation failed (${deckUiFailures}): ${detail}`);
+      return false;
+    } finally {
+      for (const root of roots.reverse()) root.free();
+    }
+  }
+  function updateDeckTileLabel(tile) {
+    const key = tile.handle.toString();
+    try {
+      const record = rememberDeckTile(tile);
+      if (!createDeckTileLabel(tile)) return;
+      const container = record.container.target;
+      const label = record.label.target;
+      if (isNull(container) || isNull(label)) {
+        forgetDeckTile(key);
+        return;
+      }
+      call(container, "SetActive", false);
+      const deckId = Number(call(tile, "GetDeckId"));
+      const stats = deckStats.get(deckId);
+      if (!stats) {
+        if (!record.missing && deckUiMissing++ < 8) log(`stats UI: no data for deckId=${deckId}, loaded=${deckStats.size}`);
+        record.missing = true;
+        return;
+      }
+      const text = `${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
+      call(label, "set_text", Il2Cpp.string(text));
+      const width = Number(call(label, "get_preferredWidth"));
+      if (!Number.isFinite(width) || width < 0) throw Error("Invalid statistics text width");
+      call(record.rect.target, "set_sizeDelta", vec2(Math.ceil(width) + 6, 24));
+      call(container, "SetActive", true);
+      if (!record.shown && deckUiShown++ < 8) log(`stats UI: shown deckId=${deckId}, ${text}`);
+      record.shown = true;
+    } catch (error) {
+      forgetDeckTile(key);
+      log(`stats UI: update failed: ${error}`);
+    }
+  }
+  section("deck tile win/loss label", () => {
+    const deckTile = cls(img, "DeckTile");
+    hookAttach(deckTile.method("SetData", 2).virtualAddress, {
+      onEnter(args) {
+        this.tile = args[0];
+      },
+      onLeave() {
         try {
-          replaceLanguageControl(ucls(name).tryMethod("Show", 0), (self) => {
-            if (globalThis.__teslNativeLanguageCallback) return false;
-            const options = call(self, "get_options"), count = Number(call(options, "get_Count"));
-            if (count < 2 || count > 16) return false;
-            let recognized = 0;
-            for (let i = 0; i < count; i++) if (languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || ""))) recognized++;
-            if (recognized < 2) return false;
-            return requestLanguage(void 0, resourceLanguage(), true);
-          });
+          if (this.tile) updateDeckTileLabel(new Il2Cpp.Object(this.tile));
         } catch (error) {
-          log(`resources: ${name} language entry: ${error}`);
+          log(`stats UI: SetData failed: ${error}`);
         }
       }
+    });
+    const destroy = deckTile.methods.find((m) => m.name === "OnDestroy" && !m.isStatic && m.parameterCount === 0);
+    if (destroy && !destroy.virtualAddress.isNull()) {
+      hookAttach(destroy.virtualAddress, {
+        onEnter(args) {
+          forgetDeckTile(args[0].toString());
+        }
+      });
+    }
+  });
+  const MONTH_KEYS = [
+    "months.January",
+    "months.February",
+    "months.March",
+    "months.April",
+    "months.May",
+    "months.June",
+    "months.July",
+    "months.August",
+    "months.September",
+    "months.October",
+    "months.November",
+    "months.December"
+  ];
+  const MONTH_NAMES = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December"
+  ];
+  function monthName(month) {
+    try {
+      const lm = cls(img, "LocalizationManager").method("get_Instance").invoke();
+      if (!isNull(lm)) {
+        const text = call(lm, "GetText", MONTH_KEYS[month - 1]);
+        if (text && text.content) return String(text.content);
+      }
+    } catch (_) {
+    }
+    return MONTH_NAMES[month - 1] ?? "";
+  }
+  function setNewsItem(item, title, content, date, url, primary) {
+    const root = item.field("Root").value;
+    if (!isNull(root)) root.method("SetActive").invoke(true);
+    const titleText = item.field("TitleText").value;
+    if (!isNull(titleText)) titleText.method("set_text").invoke(Il2Cpp.string(title));
+    if (primary && content != null) {
+      const description = item.field("DescriptionText").value;
+      if (!isNull(description)) description.method("set_text").invoke(Il2Cpp.string(content));
+    }
+    const monthText = item.field("MonthText").value;
+    if (!isNull(monthText)) monthText.method("set_text").invoke(Il2Cpp.string(monthName(date.getMonth() + 1)));
+    const dayText = item.field("DayText").value;
+    if (!isNull(dayText)) dayText.method("set_text").invoke(Il2Cpp.string(String(date.getDate())));
+    const button = item.field("Button").value;
+    if (isNull(button)) return;
+    const onClick = call(button, "get_onClick");
+    if (isNull(onClick)) return;
+    onClick.method("RemoveAllListeners").invoke();
+    const action = Il2Cpp.delegate(ucls("UnityEngine.Events.UnityAction"), () => {
       try {
-        replaceLanguageControl(ucls("UnityEngine.UI.Button").tryMethod("Press", 0), (self) => {
-          settingsButtonPressed(self);
+        ucls("UnityEngine.Application").method("OpenURL").invoke(Il2Cpp.string(url));
+      } catch (_) {
+      }
+    });
+    onClick.method("AddListener").invoke(action);
+  }
+  function loadRebornNews(widget) {
+    httpGet(NEWS_URL, false, (status, body) => {
+      try {
+        if (status !== 200) {
+          log(`news: HTTP ${status}`);
+          return;
+        }
+        const json = JSON.parse(body);
+        const items = json.items ?? [];
+        const primary = widget.field("_primaryNewsItem").value;
+        const secondary = widget.field("_secondaryNewsItems").value;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const date = new Date(String(item.createdAt).replace(" ", "T"));
+          if (i === 0) {
+            if (!isNull(primary)) setNewsItem(primary, String(item.title ?? ""), String(item.content ?? ""), date, String(item.url ?? ""), true);
+          } else if (!isNull(secondary) && i - 1 < secondary.length) {
+            const entry = secondary.get(i - 1);
+            if (!isNull(entry)) setNewsItem(entry, String(item.title ?? ""), null, date, String(item.url ?? ""), false);
+          }
+        }
+        const loading = widget.field("_loadingUi").value;
+        if (!isNull(loading)) loading.method("SetActive").invoke(false);
+        const unavailable = widget.field("_unavailableUi").value;
+        if (!isNull(unavailable)) unavailable.method("SetActive").invoke(false);
+        widget.field("_loadInProgress").value = false;
+        log(`news: ${items.length} items`);
+      } catch (e) {
+        log(`news failed: ${e}`);
+      }
+    });
+  }
+  section("news from tesl-reborn", () => {
+    const widget = cls(img, "MenuNewsWidget");
+    const iterator = img.classes.find((c) => c.name === "<LoadNews>c__Iterator0" && c.declaringClass?.name === "MenuNewsWidget");
+    if (iterator) {
+      const moveNext = iterator.methods.find((m) => m.name === "MoveNext");
+      if (moveNext) {
+        hookAttach(moveNext.virtualAddress, {
+          onLeave(retval) {
+            retval.replace(ptr(0));
+          }
+          // finish the coroutine at once
+        });
+      }
+    } else log("news: the game's news coroutine was not found");
+    hookAttach(widget.method("OnEnable").virtualAddress, {
+      onEnter(args) {
+        try {
+          const self = new Il2Cpp.Object(args[0]);
+          self.field("_lastShownShownLanguage").value = Il2Cpp.string("en");
+          loadRebornNews(self);
+        } catch (e) {
+          log(`news hook failed: ${e}`);
+        }
+      }
+    });
+  });
+  section("custom titles and scenario image", () => {
+    const config = cls(img, "SPTESL.GameConfiguration");
+    const titleData = cls(img, "SPTESL.TitleData");
+    const iterator = img.classes.find((c) => c.name === "<LoadGameConfigurationAtRuntime>c__Iterator0" && c.declaringClass?.name === "GameConfiguration");
+    if (!iterator) throw new Error("the configuration coroutine was not found");
+    const moveNext = iterator.methods.find((m) => m.name === "MoveNext");
+    if (!moveNext) throw new Error("the configuration coroutine has no MoveNext");
+    let applied = false;
+    hookAttach(moveNext.virtualAddress, {
+      onEnter(args) {
+        this.iterator = new Il2Cpp.Object(args[0]);
+      },
+      onLeave(retval) {
+        if (applied) return;
+        if (retval.toInt32() !== 0) return;
+        applied = true;
+        try {
+          const instance = this.iterator.field("$this").value;
+          if (isNull(instance)) return;
+          addCustomTitles(instance, titleData);
+          fixFrostTrollScenario(instance);
+          log("game configuration: custom titles and scenario image applied");
+        } catch (e) {
+          log(`game configuration patch failed: ${e}`);
+        }
+      }
+    });
+    function addCustomTitles(instance, titleClass) {
+      const titles = instance.field("Titles").value;
+      if (isNull(titles)) return;
+      const existing = titles.method("get_Count").invoke();
+      for (const spec of [
+        { id: -900988265, name: "title_reborn_keeper", title: "reborn.titles.keeper.title", desc: "reborn.titles.keeper.description" },
+        { id: -314134087, name: "title_reborn_founder", title: "reborn.titles.founder.title", desc: "reborn.titles.founder.description" }
+      ]) {
+        if (titleExists(titles, spec.name)) continue;
+        const data = newWith(titleClass);
+        const resourceId = data.field("ResourceId").value;
+        resourceId.field("Id").value = spec.id;
+        resourceId.field("UniqueName").value = Il2Cpp.string(spec.name);
+        resourceId.field("CompletionType").value = enumBox(cls(img, "SPTESL.ResourceCompletionType"), 1);
+        data.field("Title").value.field("RawKey").value = Il2Cpp.string(spec.title);
+        data.field("Description").value.field("RawKey").value = Il2Cpp.string(spec.desc);
+        data.field("Rarity").value = enumBox(cls(img, "SPTESL.CardRarity"), RARITY_LEGENDARY);
+        data.field("Hidden").value = false;
+        titles.method("Add").invoke(data);
+        const check = titles.method("get_Item", 1).invoke(Number(titles.method("get_Count").invoke()) - 1);
+        const checkName = check.field("ResourceId").value.field("UniqueName").value?.content;
+        const checkTitle = check.field("Title").value.field("RawKey").value?.content;
+        log(`game configuration: added title ${checkName} (${checkTitle})`);
+      }
+      log(`game configuration: ${existing} + 2 titles`);
+    }
+    function titleExists(titles, uniqueName) {
+      try {
+        const count = Number(titles.method("get_Count").invoke());
+        for (let i = 0; i < count; i++) {
+          const entry = titles.method("get_Item", 1).invoke(i);
+          if (isNull(entry)) continue;
+          const name = entry.field("ResourceId").value.field("UniqueName").value?.content;
+          if (name === uniqueName) return true;
+        }
+      } catch (_) {
+      }
+      return false;
+    }
+    function rarityValue(rarity) {
+      return enumBox(cls(img, "SPTESL.CardRarity"), rarity);
+    }
+    function fixFrostTrollScenario(instance) {
+      const scenarios = instance.field("Scenarios").value;
+      if (isNull(scenarios)) return;
+      const count = Number(scenarios.method("get_Count").invoke());
+      for (let i = 0; i < count; i++) {
+        const scenario = scenarios.method("get_Item", 1).invoke(i);
+        if (isNull(scenario)) continue;
+        const name = scenario.field("ResourceId").value.field("UniqueName").value?.content;
+        if (name !== "CWC_M_Act1_Ep2_FrostTroll_B" && name !== "CWC_Act1_Ep2_FrostTroll_B") continue;
+        const modal = scenario.field("IntroModalData").value;
+        if (isNull(modal)) continue;
+        const overview = modal.field("OverviewSection").value;
+        if (isNull(overview)) continue;
+        overview.field("Image").value = Il2Cpp.string("ContentPack000/Cards/Visuals/Ice_Storm_v2/Ice_Storm_v2");
+        log(`game configuration: fixed the scenario image of ${name}`);
+      }
+    }
+  });
+  function countOf(dictionary) {
+    if (isNull(dictionary)) return 0;
+    try {
+      return Number(dictionary.method("get_Count").invoke());
+    } catch (_) {
+      return 0;
+    }
+  }
+  function restoreLocalization(manager, code) {
+    try {
+      let text = "";
+      const selected = resourceLanguage() || code;
+      const regional = selected.includes("_") ? selected.slice(0, 2) + "_" + selected.slice(3).toUpperCase() : selected;
+      for (const name of [selected, regional, shortLanguage(selected)]) {
+        text = readTextFile(`${persistentPath()}/tesl-localization-${name}.json`);
+        if (text) break;
+      }
+      if (!text) return 0;
+      const json = JSON.parse(text);
+      const keys = Object.keys(json);
+      if (keys.length === 0) return 0;
+      const stringClass = Il2Cpp.corlib.class("System.String");
+      const dictionary = Il2Cpp.corlib.class("System.Collections.Generic.Dictionary`2").inflate(stringClass, stringClass).new();
+      const retained = dictionary.ref(false);
+      try {
+        for (const key of keys) {
+          retained.target.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(String(json[key])));
+        }
+        const fixes = TRANSLATIONS[selected] || TRANSLATIONS[shortLanguage(selected)] || {};
+        for (const key of Object.keys(fixes))
+          retained.target.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
+        manager.field("_localizedData").value = retained.target;
+      } finally {
+        retained.free();
+      }
+      return keys.length;
+    } catch (e) {
+      log(`could not restore the localization: ${e}`);
+      return 0;
+    }
+  }
+  let resourceSettingsWindow = null;
+  function resourceLanguage() {
+    try {
+      const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
+      if (choice && /^(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)$/.test(choice.language)) return choice.language;
+    } catch (_) {
+    }
+    return "";
+  }
+  function languageSetupUri(query) {
+    let host = "resources";
+    try {
+      const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "{}");
+      if (setup.languageTransition === true) host = "language";
+    } catch (_) {
+    }
+    return "teslreborn://" + host + "?" + query;
+  }
+  function liveSettingsWindow() {
+    let destroyed = false;
+    if (resourceSettingsWindow) try {
+      destroyed = Boolean(ucls("UnityEngine.Object").method("op_Equality").invoke(resourceSettingsWindow.target, NULL));
+    } catch (_) {
+    }
+    if (destroyed) {
+      resourceSettingsWindow.free();
+      resourceSettingsWindow = null;
+    }
+    return resourceSettingsWindow;
+  }
+  function resourceSettingsOpen() {
+    try {
+      return liveSettingsWindow() != null && Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy"));
+    } catch (_) {
+      return false;
+    }
+  }
+  function shortLanguage(code) {
+    return String(code).toLowerCase().replace("-", "_").split("_")[0];
+  }
+  function localizedGameUri(uri, code) {
+    if (!code || !/^https?:\/\/(?:[a-z0-9-]+\.)?tesl-reborn\.com(?=[:/]|$)/i.test(uri)) return uri;
+    return uri.replace(/([?&](?:language|locale)=)([^&#]*)/gi, (_, prefix, old) => prefix + shapedLanguage(code, decodeURIComponent(old)));
+  }
+  function localizedAssetPath(path, code) {
+    if (!code) return path;
+    return path.replace(
+      /(\/Localization\/(?:Text|Audio)\/)(?:en|de|es|fr|it|pl|pt|ru|tr)(?:[_-][a-z]{2})?(?=\/|$)/gi,
+      (_, prefix) => prefix + code.slice(0, 2) + "_" + code.slice(3).toUpperCase()
+    );
+  }
+  function shapedLanguage(code, old) {
+    return /[_-]/.test(old) ? code.slice(0, 2) + "_" + code.slice(3).toUpperCase() : code.slice(0, 2);
+  }
+  function languageLabel(text) {
+    const label = String(text).replace(/<[^>]*>/g, "").toLowerCase().replace(/[\s()_-]/g, "");
+    const native = {
+      en_us: ["english", "englishus", "\u0430\u043D\u0433\u043B\u0438\u0439\u0441\u043A\u0438\u0439"],
+      de_de: ["deutsch", "german", "\u043D\u0435\u043C\u0435\u0446\u043A\u0438\u0439"],
+      es_es: ["espa\xF1ol", "spanish", "\u0438\u0441\u043F\u0430\u043D\u0441\u043A\u0438\u0439"],
+      es_mx: ["espa\xF1olmexicano", "espa\xF1ollatinoam\xE9rica", "latinamericanspanish", "espa\xF1olm\xE9xico"],
+      fr_fr: ["fran\xE7ais", "french", "\u0444\u0440\u0430\u043D\u0446\u0443\u0437\u0441\u043A\u0438\u0439"],
+      it_it: ["italiano", "italian", "\u0438\u0442\u0430\u043B\u044C\u044F\u043D\u0441\u043A\u0438\u0439"],
+      pl_pl: ["polski", "polish", "\u043F\u043E\u043B\u044C\u0441\u043A\u0438\u0439"],
+      pt_br: ["portugu\xEAsbrasil", "brazilianportuguese", "portugu\xEAs", "portuguese"],
+      ru_ru: ["\u0440\u0443\u0441\u0441\u043A\u0438\u0439", "\u0440\u0443\u0441\u0441\u043A\u0438\u0439\u044F\u0437\u044B\u043A", "russian"],
+      tr_tr: ["t\xFCrk\xE7e", "turkish", "\u0442\u0443\u0440\u0435\u0446\u043A\u0438\u0439"]
+    };
+    return Object.keys(native).find((code) => native[code].includes(label));
+  }
+  section("translation fixes", () => {
+    const localization = cls(img, "LocalizationManager");
+    let lastLanguage = "", lastRestored = "", lastRestoredDictionary = "", lastFixed = "", loaded = false, switching = false, languageInputDepth = 0, recentInputAt = 0, recentExplicitInputAt = 0, switchingAt = 0;
+    let inputMethods = null;
+    function noteLanguageInput(full = true) {
+      try {
+        if (!inputMethods) {
+          const input = ucls("UnityEngine.Input");
+          inputMethods = { touches: input.method("get_touchCount", 0), down: input.method("GetMouseButtonDown", 1), up: input.method("GetMouseButtonUp", 1) };
+        }
+        if (Number(inputMethods.touches.invoke()) > 0 || full && (inputMethods.down.invoke(0) || inputMethods.up.invoke(0))) {
+          recentExplicitInputAt = Date.now();
+          if (resourceSettingsOpen()) recentInputAt = recentExplicitInputAt;
+        }
+      } catch (_) {
+      }
+    }
+    try {
+      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+        touchOnly: true,
+        onEnter() {
+          noteLanguageInput(false);
+        }
+      });
+    } catch (error) {
+      log(`resources: settings input trace unavailable: ${error}`);
+    }
+    const languageHandlers = /* @__PURE__ */ new Set();
+    for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name))) {
+      for (const method of owner.methods.filter((m) => /^(On.*(?:Language|Locale|Lang|ValueChanged|SelectionChanged).*|(?:Select|Change|Set).*(?:Language|Locale|Lang)|LanguageChanged)$/i.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+        const key = method.virtualAddress.toString();
+        if (languageHandlers.has(key)) continue;
+        languageHandlers.add(key);
+        hookAttach(method.virtualAddress, {
+          onEnter() {
+            languageInputDepth++;
+          },
+          onLeave() {
+            languageInputDepth = Math.max(0, languageInputDepth - 1);
+          }
+        });
+      }
+    }
+    const languageNames = {
+      en_us: ["english", "en"],
+      de_de: ["german", "de"],
+      es_es: ["spanish", "es"],
+      es_mx: ["mexicanspanish", "spanishmexican", "latinamericanspanish", "spanishlatinamerica"],
+      fr_fr: ["french", "fr"],
+      it_it: ["italian", "it"],
+      pl_pl: ["polish", "pl"],
+      pt_br: ["brazilianportuguese", "portuguesebrazilian", "portuguese", "pt"],
+      ru_ru: ["russian", "ru"],
+      tr_tr: ["turkish", "tr"]
+    };
+    function requestLanguage(target, current, explicit = false) {
+      if (globalThis.__teslLanguageSyncing) return false;
+      noteLanguageInput();
+      if (!explicit && (!target || target === current || !loaded || !recentInputAt || Date.now() - recentInputAt > 3e3)) return false;
+      if (switching && Date.now() - switchingAt < 1500 || target && target === current) return true;
+      switching = true;
+      switchingAt = Date.now();
+      const link = target ? "language=" + target + "&apply=1" : "chooseLanguage=1";
+      try {
+        writeTextFile(`${persistentPath()}/tesl-reborn-language-status.json`, JSON.stringify({
+          revision: 30,
+          status: "opening-game-data",
+          current,
+          requested: target || "chooser",
+          at: (/* @__PURE__ */ new Date()).toISOString()
+        }));
+      } catch (_) {
+      }
+      log(`resources: language control -> Game data (${target || "chooser"}); native handler suppressed`);
+      schedule(0, () => {
+        try {
+          ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string(languageSetupUri(link)));
+        } catch (error) {
+          switching = false;
+          log(`resources: could not open language setup: ${error}`);
+        }
+      });
+      return true;
+    }
+    const replacedLanguageControls = /* @__PURE__ */ new Set();
+    function replaceLanguageControl(method, route) {
+      if (!method || method.isStatic || method.virtualAddress.isNull()) return;
+      const key = method.virtualAddress.toString();
+      if (replacedLanguageControls.has(key)) return;
+      replacedLanguageControls.add(key);
+      method.implementation = function(...args) {
+        try {
+          if (route(this, args)) return;
+        } catch (error) {
+          log(`resources: language control ${method.name}: ${error}`);
+        }
+        return method.invokeRaw(this.handle, ...args);
+      };
+    }
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+      try {
+        replaceLanguageControl(ucls(name).tryMethod("Show", 0), (self) => {
           if (globalThis.__teslNativeLanguageCallback) return false;
-          const event = call(self, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
-          let languageAction = false;
-          for (let i = 0; i < count; i++) {
-            const name = String(call(event, "GetPersistentMethodName", i)?.content || "");
-            if (/^(?:On|Show|Open|Select|Change|Choose|Set).*(?:Language|Locale)/i.test(name)) languageAction = true;
-          }
-          if (!languageAction) {
-            const node = call(self, "get_transform");
-            const name = String(call(node, "get_name")?.content || "");
-            languageAction = /language|locale/i.test(name) && !/cancel|close|back|download/i.test(name);
-          }
-          if (!languageAction) return false;
+          const options = call(self, "get_options"), count = Number(call(options, "get_Count"));
+          if (count < 2 || count > 16) return false;
+          let recognized = 0;
+          for (let i = 0; i < count; i++) if (languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || ""))) recognized++;
+          if (recognized < 2) return false;
           return requestLanguage(void 0, resourceLanguage(), true);
         });
       } catch (error) {
-        log(`resources: language button entry: ${error}`);
+        log(`resources: ${name} language entry: ${error}`);
       }
-      for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name))) {
-        let component = false;
-        try {
-          component = Array.from(owner.hierarchy()).some((base) => base.type.name === "UnityEngine.Component");
-        } catch (_) {
+    }
+    try {
+      replaceLanguageControl(ucls("UnityEngine.UI.Button").tryMethod("Press", 0), (self) => {
+        settingsButtonPressed(self);
+        if (globalThis.__teslNativeLanguageCallback) return false;
+        const event = call(self, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
+        let languageAction = false;
+        for (let i = 0; i < count; i++) {
+          const name = String(call(event, "GetPersistentMethodName", i)?.content || "");
+          if (/^(?:On|Show|Open|Select|Change|Choose|Set).*(?:Language|Locale)/i.test(name)) languageAction = true;
         }
-        if (!component) continue;
-        for (const method of owner.methods.filter((m) => /^(?:On|Select|Change|Choose|Show|Open).*Language/i.test(m.name) && !/load|ready|initializ|complete|response|success/i.test(m.name) && m.returnType.name === "System.Void" && m.parameterCount <= 1)) {
-          replaceLanguageControl(method, (self, args) => {
-            if (!Boolean(call(call(self, "get_gameObject"), "get_activeInHierarchy"))) return false;
-            noteLanguageInput();
-            if (!recentExplicitInputAt || Date.now() - recentExplicitInputAt > 3e3) return false;
-            let target;
-            if (method.parameterCount === 1) {
-              const type = method.parameters[0].type;
-              if (type.name === "System.String") target = languageLabel(args[0]?.content || "");
-              else if (type.class.isEnum) {
-                const field = type.class.fields.find((f) => f.isStatic && enumVal(f.value) === Number(args[0]));
-                target = field && Object.keys(languageNames).find((code) => languageNames[code].includes(field.name.toLowerCase().replace(/[^a-z]/g, "")));
-              }
-            }
-            return requestLanguage(target, resourceLanguage(), true);
-          });
+        if (!languageAction) {
+          const node = call(self, "get_transform");
+          const name = String(call(node, "get_name")?.content || "");
+          languageAction = /language|locale/i.test(name) && !/cancel|close|back|download/i.test(name);
         }
+        if (!languageAction) return false;
+        return requestLanguage(void 0, resourceLanguage(), true);
+      });
+    } catch (error) {
+      log(`resources: language button entry: ${error}`);
+    }
+    for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name))) {
+      let component = false;
+      try {
+        component = Array.from(owner.hierarchy()).some((base) => base.type.name === "UnityEngine.Component");
+      } catch (_) {
       }
-      for (const owner of img.classes) for (const method of owner.methods.filter((m) => /^(?:set_(?:GameLanguage|Language|LanguageCode|CurrentLanguage|SelectedLanguage|Locale|LocaleCode)|Set(?:Game|Client)?Language|(?:On|Select|Change).*Language.*)$/i.test(m.name) && m.parameterCount >= 1 && !m.isStatic && owner !== localization && !m.virtualAddress.isNull())) {
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            try {
-              const type = method.parameters[0].type;
-              let requested = "";
-              if (type.name === "System.String") requested = rawStr(args[1]);
-              else if (type.class.isEnum) requested = type.class.fields.find((f) => f.isStatic && enumVal(f.value) === args[1].toInt32())?.name || "";
-              const normalized = requested.toLowerCase().replace("-", "_");
-              const target = Object.keys(languageNames).find((code) => code === normalized || languageNames[code].includes(normalized.replace(/[^a-z]/g, "")));
-              if (target) requestLanguage(target, resourceLanguage());
-            } catch (error) {
-              log(`resources: settings language setter ${owner.name}.${method.name}: ${error}`);
+      if (!component) continue;
+      for (const method of owner.methods.filter((m) => /^(?:On|Select|Change|Choose|Show|Open).*Language/i.test(m.name) && !/load|ready|initializ|complete|response|success/i.test(m.name) && m.returnType.name === "System.Void" && m.parameterCount <= 1)) {
+        replaceLanguageControl(method, (self, args) => {
+          if (!Boolean(call(call(self, "get_gameObject"), "get_activeInHierarchy"))) return false;
+          noteLanguageInput();
+          if (!recentExplicitInputAt || Date.now() - recentExplicitInputAt > 3e3) return false;
+          let target;
+          if (method.parameterCount === 1) {
+            const type = method.parameters[0].type;
+            if (type.name === "System.String") target = languageLabel(args[0]?.content || "");
+            else if (type.class.isEnum) {
+              const field = type.class.fields.find((f) => f.isStatic && enumVal(f.value) === Number(args[0]));
+              target = field && Object.keys(languageNames).find((code) => languageNames[code].includes(field.name.toLowerCase().replace(/[^a-z]/g, "")));
             }
           }
+          return requestLanguage(target, resourceLanguage(), true);
         });
       }
-      for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
-        try {
-          const dropdown = ucls(name), method = dropdown.tryMethod("OnSelectItem", 1) || dropdown.tryMethod("Set", 2) || dropdown.tryMethod("set_value", 1);
-          if (!method || method.virtualAddress.isNull()) continue;
-          hookAttach(method.virtualAddress, {
-            onEnter(args) {
-              this.index = method.name === "OnSelectItem" ? null : args[1].toInt32();
-              this.active = !globalThis.__teslNativeLanguageCallback && resourceSettingsOpen() && (method.name === "OnSelectItem" || method.parameterCount < 2 || args[2].toInt32() !== 0);
-              if (this.active) this.dropdown = new Il2Cpp.Object(args[0]).ref(false);
-            },
-            onLeave() {
-              if (!this.dropdown) return;
-              const retained = this.dropdown, index = this.index;
-              schedule(0, () => {
-                try {
-                  const selectedIndex = index == null ? Number(call(retained.target, "get_value")) : index;
-                  const options = call(retained.target, "get_options"), count = Number(call(options, "get_Count"));
-                  if (selectedIndex < 0 || selectedIndex >= count || count < 2 || count > 16) return;
-                  const labels = [];
-                  for (let i = 0; i < count; i++) labels.push(languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || "")));
-                  if (labels.filter(Boolean).length >= 2 && labels[selectedIndex]) requestLanguage(labels[selectedIndex], resourceLanguage());
-                } catch (error) {
-                  log(`resources: language dropdown: ${error}`);
-                } finally {
-                  retained.free();
-                }
-              });
-            }
-          });
-        } catch (_) {
-        }
-      }
-      const setLanguage = localization.method("SetLanguage", 2);
-      hookAttach(setLanguage.virtualAddress, {
+    }
+    for (const owner of img.classes) for (const method of owner.methods.filter((m) => /^(?:set_(?:GameLanguage|Language|LanguageCode|CurrentLanguage|SelectedLanguage|Locale|LocaleCode)|Set(?:Game|Client)?Language|(?:On|Select|Change).*Language.*)$/i.test(m.name) && m.parameterCount >= 1 && !m.isStatic && owner !== localization && !m.virtualAddress.isNull())) {
+      hookAttach(method.virtualAddress, {
         onEnter(args) {
           try {
-            const choice = resourceLanguage();
-            if (!choice) return;
-            const index = setLanguage.isStatic ? 0 : 1, type = setLanguage.parameters[0].type;
-            if (type.name === "System.String") {
-              const old = rawStr(args[index]);
-              const normalized = old.toLowerCase().replace("-", "_");
-              requestLanguage(Object.keys(languageNames).includes(normalized) ? normalized : Object.keys(languageNames).find((c) => shortLanguage(c) === shortLanguage(old) || languageNames[c].includes(normalized.replace(/[^a-z]/g, ""))), choice);
-              this.languageString = Il2Cpp.string(shapedLanguage(choice, old)).object.ref(false);
-              args[index] = this.languageString.target.handle;
-            } else if (type.class.isEnum) {
-              const requested = type.class.fields.find((f) => f.isStatic && enumVal(f.value) === args[index].toInt32());
-              if (requested) requestLanguage(Object.keys(languageNames).find((c) => languageNames[c].includes(requested.name.toLowerCase().replace(/[^a-z]/g, ""))), choice);
-              const field = type.class.fields.find((f) => f.isStatic && languageNames[choice].includes(f.name.toLowerCase().replace(/[^a-z]/g, "")));
-              if (field) {
-                const value = enumVal(field.value);
-                if (value >= 0) args[index] = ptr(value);
-              }
-            }
-            log(`resources: language ${choice}; SetLanguage parameter=${type.name}`);
+            const type = method.parameters[0].type;
+            let requested = "";
+            if (type.name === "System.String") requested = rawStr(args[1]);
+            else if (type.class.isEnum) requested = type.class.fields.find((f) => f.isStatic && enumVal(f.value) === args[1].toInt32())?.name || "";
+            const normalized = requested.toLowerCase().replace("-", "_");
+            const target = Object.keys(languageNames).find((code) => code === normalized || languageNames[code].includes(normalized.replace(/[^a-z]/g, "")));
+            if (target) requestLanguage(target, resourceLanguage());
           } catch (error) {
-            log(`resources: language override unavailable: ${error}`);
+            log(`resources: settings language setter ${owner.name}.${method.name}: ${error}`);
           }
-        },
-        onLeave() {
-          if (this.languageString) this.languageString.free();
         }
       });
-      const pinnedStrings = /* @__PURE__ */ new Map();
-      const prefs = ucls("UnityEngine.PlayerPrefs");
-      for (const method of prefs.methods.filter((m) => m.name === "SetString" && m.parameterCount === 2)) {
+    }
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+      try {
+        const dropdown = ucls(name), method = dropdown.tryMethod("OnSelectItem", 1) || dropdown.tryMethod("Set", 2) || dropdown.tryMethod("set_value", 1);
+        if (!method || method.virtualAddress.isNull()) continue;
         hookAttach(method.virtualAddress, {
           onEnter(args) {
-            const key = rawStr(args[0]);
-            if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(key)) return;
-            const value = rawStr(args[1]).toLowerCase().replace("-", "_");
-            const target = Object.keys(languageNames).find((code) => code === value || languageNames[code].includes(value.replace(/[^a-z]/g, "")));
-            requestLanguage(target, resourceLanguage());
-          }
-        });
-      }
-      for (const method of prefs.methods.filter((m) => m.name === "GetString" && m.parameterCount >= 1)) {
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            this.key = rawStr(args[0]);
+            this.index = method.name === "OnSelectItem" ? null : args[1].toInt32();
+            this.active = !globalThis.__teslNativeLanguageCallback && resourceSettingsOpen() && (method.name === "OnSelectItem" || method.parameterCount < 2 || args[2].toInt32() !== 0);
+            if (this.active) this.dropdown = new Il2Cpp.Object(args[0]).ref(false);
           },
-          onLeave(result) {
-            if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(this.key || "")) return;
-            const choice = resourceLanguage();
-            if (!choice) return;
-            const old = rawStr(result), value = shapedLanguage(choice, old);
-            if (!pinnedStrings.has(value)) pinnedStrings.set(value, Il2Cpp.string(value).object.ref(false));
-            result.replace(pinnedStrings.get(value).target.handle);
-            log(`resources: language preference ${this.key}=${value}`);
+          onLeave() {
+            if (!this.dropdown) return;
+            const retained = this.dropdown, index = this.index;
+            schedule(0, () => {
+              try {
+                const selectedIndex = index == null ? Number(call(retained.target, "get_value")) : index;
+                const options = call(retained.target, "get_options"), count = Number(call(options, "get_Count"));
+                if (selectedIndex < 0 || selectedIndex >= count || count < 2 || count > 16) return;
+                const labels = [];
+                for (let i = 0; i < count; i++) labels.push(languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || "")));
+                if (labels.filter(Boolean).length >= 2 && labels[selectedIndex]) requestLanguage(labels[selectedIndex], resourceLanguage());
+              } catch (error) {
+                log(`resources: language dropdown: ${error}`);
+              } finally {
+                retained.free();
+              }
+            });
           }
         });
+      } catch (_) {
       }
-      const systemLanguage = ucls("UnityEngine.Application").tryMethod("get_systemLanguage", 0);
-      if (systemLanguage) hookAttach(systemLanguage.virtualAddress, {
-        onLeave(result) {
+    }
+    const setLanguage = localization.method("SetLanguage", 2);
+    hookAttach(setLanguage.virtualAddress, {
+      onEnter(args) {
+        try {
           const choice = resourceLanguage();
           if (!choice) return;
-          const names = choice === "es_mx" ? ["spanish"] : languageNames[choice];
-          const field = systemLanguage.returnType.class.fields.find((f) => f.isStatic && names.includes(f.name.toLowerCase()));
-          if (field) result.replace(ptr(enumVal(field.value)));
-        }
-      });
-      hookAttach(localization.method("UpdateObjects").virtualAddress, {
-        onEnter(args) {
-          try {
-            const manager = new Il2Cpp.Object(args[0]);
-            const code = String(call(manager, "get_CurrentLanguageCode")?.content ?? "en");
-            let data = manager.field("_localizedData").value;
-            let entries = countOf(data);
-            const saved = resourceLanguage();
-            const selection = saved || code;
-            if (entries === 0 || lastLanguage !== code || lastRestored !== selection || lastRestoredDictionary !== String(data?.handle)) {
-              const restored = restoreLocalization(manager, code);
-              if (restored > 0) {
-                lastRestored = selection;
-                log(`localization: restored ${restored} strings for ${selection}; Unity locale ${code}`);
-              }
-              data = manager.field("_localizedData").value;
-              entries = countOf(data);
-              lastRestoredDictionary = String(data?.handle);
+          const index = setLanguage.isStatic ? 0 : 1, type = setLanguage.parameters[0].type;
+          if (type.name === "System.String") {
+            const old = rawStr(args[index]);
+            const normalized = old.toLowerCase().replace("-", "_");
+            requestLanguage(Object.keys(languageNames).includes(normalized) ? normalized : Object.keys(languageNames).find((c) => shortLanguage(c) === shortLanguage(old) || languageNames[c].includes(normalized.replace(/[^a-z]/g, ""))), choice);
+            this.languageString = Il2Cpp.string(shapedLanguage(choice, old)).object.ref(false);
+            args[index] = this.languageString.target.handle;
+          } else if (type.class.isEnum) {
+            const requested = type.class.fields.find((f) => f.isStatic && enumVal(f.value) === args[index].toInt32());
+            if (requested) requestLanguage(Object.keys(languageNames).find((c) => languageNames[c].includes(requested.name.toLowerCase().replace(/[^a-z]/g, ""))), choice);
+            const field = type.class.fields.find((f) => f.isStatic && languageNames[choice].includes(f.name.toLowerCase().replace(/[^a-z]/g, "")));
+            if (field) {
+              const value = enumVal(field.value);
+              if (value >= 0) args[index] = ptr(value);
             }
-            loaded = entries > 0;
-            const fixes = TRANSLATIONS[saved] || TRANSLATIONS[shortLanguage(selection)] || TRANSLATIONS[code];
-            if (lastLanguage !== code) {
-              lastLanguage = code;
-              log(`localization: language ${code}, ${entries} strings${fixes ? "" : ", no fixes for it"}`);
-            }
-            if (!fixes) return;
-            if (isNull(data)) return;
-            const fingerprint = `${selection}:${data.handle}`;
-            if (lastFixed === fingerprint) return;
-            lastFixed = fingerprint;
-            let changed = 0;
-            for (const key of Object.keys(fixes)) {
-              data.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
-              changed++;
-            }
-            log(`localization: applied ${changed} translation fixes`);
-          } catch (e) {
-            log(`translation fixes failed: ${e}`);
           }
+          log(`resources: language ${choice}; SetLanguage parameter=${type.name}`);
+        } catch (error) {
+          log(`resources: language override unavailable: ${error}`);
         }
-      });
+      },
+      onLeave() {
+        if (this.languageString) this.languageString.free();
+      }
     });
-    class ZipReader {
-      constructor(path) {
-        __publicField(this, "file", null);
-        __publicField(this, "entries", /* @__PURE__ */ new Map());
+    const pinnedStrings = /* @__PURE__ */ new Map();
+    const prefs = ucls("UnityEngine.PlayerPrefs");
+    for (const method of prefs.methods.filter((m) => m.name === "SetString" && m.parameterCount === 2)) {
+      hookAttach(method.virtualAddress, {
+        onEnter(args) {
+          const key = rawStr(args[0]);
+          if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(key)) return;
+          const value = rawStr(args[1]).toLowerCase().replace("-", "_");
+          const target = Object.keys(languageNames).find((code) => code === value || languageNames[code].includes(value.replace(/[^a-z]/g, "")));
+          requestLanguage(target, resourceLanguage());
+        }
+      });
+    }
+    for (const method of prefs.methods.filter((m) => m.name === "GetString" && m.parameterCount >= 1)) {
+      hookAttach(method.virtualAddress, {
+        onEnter(args) {
+          this.key = rawStr(args[0]);
+        },
+        onLeave(result) {
+          if (!/^(language|languagecode|selectedlanguage|currentlanguage|locale|loccode)$/i.test(this.key || "")) return;
+          const choice = resourceLanguage();
+          if (!choice) return;
+          const old = rawStr(result), value = shapedLanguage(choice, old);
+          if (!pinnedStrings.has(value)) pinnedStrings.set(value, Il2Cpp.string(value).object.ref(false));
+          result.replace(pinnedStrings.get(value).target.handle);
+          log(`resources: language preference ${this.key}=${value}`);
+        }
+      });
+    }
+    const systemLanguage = ucls("UnityEngine.Application").tryMethod("get_systemLanguage", 0);
+    if (systemLanguage) hookAttach(systemLanguage.virtualAddress, {
+      onLeave(result) {
+        const choice = resourceLanguage();
+        if (!choice) return;
+        const names = choice === "es_mx" ? ["spanish"] : languageNames[choice];
+        const field = systemLanguage.returnType.class.fields.find((f) => f.isStatic && names.includes(f.name.toLowerCase()));
+        if (field) result.replace(ptr(enumVal(field.value)));
+      }
+    });
+    hookAttach(localization.method("UpdateObjects").virtualAddress, {
+      onEnter(args) {
         try {
-          this.file = new File(path, "rb");
-          this.file.seek(0, File.SEEK_END);
-          const length = this.file.tell();
-          const tail = Math.min(length, 65536);
-          this.file.seek(length - tail);
-          const view = new DataView(this.file.readBytes(tail));
-          let eocd = -1;
-          for (let i = tail - 22; i >= 0; i--) {
-            if (view.getUint32(i, true) === 101010256) {
-              eocd = i;
-              break;
+          const manager = new Il2Cpp.Object(args[0]);
+          const code = String(call(manager, "get_CurrentLanguageCode")?.content ?? "en");
+          let data = manager.field("_localizedData").value;
+          let entries = countOf(data);
+          const saved = resourceLanguage();
+          const selection = saved || code;
+          if (entries === 0 || lastLanguage !== code || lastRestored !== selection || lastRestoredDictionary !== String(data?.handle)) {
+            const restored = restoreLocalization(manager, code);
+            if (restored > 0) {
+              lastRestored = selection;
+              log(`localization: restored ${restored} strings for ${selection}; Unity locale ${code}`);
             }
+            data = manager.field("_localizedData").value;
+            entries = countOf(data);
+            lastRestoredDictionary = String(data?.handle);
           }
-          if (eocd < 0) throw new Error("no central directory");
-          const count = view.getUint16(eocd + 10, true);
-          let at = view.getUint32(eocd + 16, true);
-          for (let i = 0; i < count; i++) {
-            this.file.seek(at);
-            const head = new DataView(this.file.readBytes(46));
-            const method = head.getUint16(10, true);
-            const size = head.getUint32(24, true);
-            const nameLen = head.getUint16(28, true);
-            const extraLen = head.getUint16(30, true);
-            const commentLen = head.getUint16(32, true);
-            const offset = head.getUint32(42, true);
-            this.file.seek(at + 46);
-            const name = readString(this.file.readBytes(nameLen));
-            this.entries.set(name, { method, size, offset });
-            at += 46 + nameLen + extraLen + commentLen;
+          loaded = entries > 0;
+          const fixes = TRANSLATIONS[saved] || TRANSLATIONS[shortLanguage(selection)] || TRANSLATIONS[code];
+          if (lastLanguage !== code) {
+            lastLanguage = code;
+            log(`localization: language ${code}, ${entries} strings${fixes ? "" : ", no fixes for it"}`);
           }
+          if (!fixes) return;
+          if (isNull(data)) return;
+          const fingerprint = `${selection}:${data.handle}`;
+          if (lastFixed === fingerprint) return;
+          lastFixed = fingerprint;
+          let changed = 0;
+          for (const key of Object.keys(fixes)) {
+            data.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
+            changed++;
+          }
+          log(`localization: applied ${changed} translation fixes`);
         } catch (e) {
-          log(`payload: the apk cannot be read: ${e}`);
-          try {
-            this.file?.close();
-          } catch (_) {
-          }
-          this.file = null;
+          log(`translation fixes failed: ${e}`);
         }
       }
-      close() {
+    });
+  });
+  class ZipReader {
+    constructor(path) {
+      __publicField(this, "file", null);
+      __publicField(this, "entries", /* @__PURE__ */ new Map());
+      try {
+        this.file = new File(path, "rb");
+        this.file.seek(0, File.SEEK_END);
+        const length = this.file.tell();
+        const tail = Math.min(length, 65536);
+        this.file.seek(length - tail);
+        const view = new DataView(this.file.readBytes(tail));
+        let eocd = -1;
+        for (let i = tail - 22; i >= 0; i--) {
+          if (view.getUint32(i, true) === 101010256) {
+            eocd = i;
+            break;
+          }
+        }
+        if (eocd < 0) throw new Error("no central directory");
+        const count = view.getUint16(eocd + 10, true);
+        let at = view.getUint32(eocd + 16, true);
+        for (let i = 0; i < count; i++) {
+          this.file.seek(at);
+          const head = new DataView(this.file.readBytes(46));
+          const method = head.getUint16(10, true);
+          const size = head.getUint32(24, true);
+          const nameLen = head.getUint16(28, true);
+          const extraLen = head.getUint16(30, true);
+          const commentLen = head.getUint16(32, true);
+          const offset = head.getUint32(42, true);
+          this.file.seek(at + 46);
+          const name = readString(this.file.readBytes(nameLen));
+          this.entries.set(name, { method, size, offset });
+          at += 46 + nameLen + extraLen + commentLen;
+        }
+      } catch (e) {
+        log(`payload: the apk cannot be read: ${e}`);
         try {
           this.file?.close();
-        } finally {
-          this.file = null;
+        } catch (_) {
         }
-      }
-      valid() {
-        return this.file !== null;
-      }
-      find(name) {
-        return this.entries.get(name) ?? null;
-      }
-      list() {
-        return [...this.entries.keys()];
-      }
-      read(entry, from, length) {
-        this.file.seek(this.dataOffset(entry) + from);
-        return this.file.readBytes(length);
-      }
-      copy(entry, target) {
-        if (entry.method !== 0) throw Error("Legacy payload must be stored");
-        const part = target + ".part", out = new File(part, "wb");
-        try {
-          let done = 0;
-          while (done < entry.size) {
-            const n = Math.min(4 * 1024 * 1024, entry.size - done), bytes = this.read(entry, done, n);
-            if (bytes.byteLength !== n) throw Error("Truncated APK payload");
-            out.write(bytes);
-            done += n;
-          }
-          out.flush();
-        } finally {
-          out.close();
-        }
-        if (!atomicRename(part, target)) throw Error("Could not commit APK payload");
-      }
-      dataOffset(entry) {
-        this.file.seek(entry.offset);
-        const head = new DataView(this.file.readBytes(30));
-        return entry.offset + 30 + head.getUint16(26, true) + head.getUint16(28, true);
+        this.file = null;
       }
     }
-    section("payload from the apk", () => {
-      const apk = apkPath();
-      if (!apk) {
-        log("payload: the apk was not found");
+    close() {
+      try {
+        this.file?.close();
+      } finally {
+        this.file = null;
+      }
+    }
+    valid() {
+      return this.file !== null;
+    }
+    find(name) {
+      return this.entries.get(name) ?? null;
+    }
+    list() {
+      return [...this.entries.keys()];
+    }
+    read(entry, from, length) {
+      this.file.seek(this.dataOffset(entry) + from);
+      return this.file.readBytes(length);
+    }
+    copy(entry, target) {
+      if (entry.method !== 0) throw Error("Legacy payload must be stored");
+      const part = target + ".part", out = new File(part, "wb");
+      try {
+        let done = 0;
+        while (done < entry.size) {
+          const n = Math.min(4 * 1024 * 1024, entry.size - done), bytes = this.read(entry, done, n);
+          if (bytes.byteLength !== n) throw Error("Truncated APK payload");
+          out.write(bytes);
+          done += n;
+        }
+        out.flush();
+      } finally {
+        out.close();
+      }
+      if (!atomicRename(part, target)) throw Error("Could not commit APK payload");
+    }
+    dataOffset(entry) {
+      this.file.seek(entry.offset);
+      const head = new DataView(this.file.readBytes(30));
+      return entry.offset + 30 + head.getUint16(26, true) + head.getUint16(28, true);
+    }
+  }
+  section("payload from the apk", () => {
+    const apk = apkPath();
+    if (!apk) {
+      log("payload: the apk was not found");
+      return;
+    }
+    const zip = new ZipReader(apk);
+    if (!zip.valid()) return;
+    try {
+      const emojiHashes = {
+        "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
+        "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa"
+      };
+      for (const [name, expected] of Object.entries(emojiHashes)) {
+        const entry = zip.find(`assets/tesl-reborn/emojis/${name}`);
+        if (!entry) {
+          log(`emoji payload: missing ${name}`);
+          continue;
+        }
+        if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) throw Error("Invalid emoji APK entry");
+        const directory = `${persistentPath()}/tesl-reborn-emojis`;
+        const target = `${directory}/${name}`;
+        let current = false;
+        try {
+          current = Checksum.compute("sha256", File.readAllBytes(target)) === expected;
+        } catch (_) {
+        }
+        if (current) continue;
+        makeDirectory(directory);
+        zip.copy(entry, target);
+        if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid emoji payload: ${name}`);
+        log(`emoji payload: restored ${name}`);
+      }
+      const obb = zip.find("assets/tesl-payload/obb.bin");
+      const cache = zip.find("assets/tesl-payload/cache.bin");
+      const perFileEntries = zip.list().filter((e) => e.startsWith("assets/tesl-payload/UnityCache/Shared/"));
+      if (!obb && !cache && !perFileEntries.length) {
+        log("payload: the apk carries no payload");
         return;
       }
-      const zip = new ZipReader(apk);
-      if (!zip.valid()) return;
-      try {
-        const emojiHashes = {
-          "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
-          "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa"
-        };
-        for (const [name, expected] of Object.entries(emojiHashes)) {
-          const entry = zip.find(`assets/tesl-reborn/emojis/${name}`);
-          if (!entry) {
-            log(`emoji payload: missing ${name}`);
-            continue;
-          }
-          if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) throw Error("Invalid emoji APK entry");
-          const directory = `${persistentPath()}/tesl-reborn-emojis`;
-          const target = `${directory}/${name}`;
-          let current = false;
-          try {
-            current = Checksum.compute("sha256", File.readAllBytes(target)) === expected;
-          } catch (_) {
-          }
-          if (current) continue;
-          makeDirectory(directory);
-          zip.copy(entry, target);
-          if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid emoji payload: ${name}`);
-          log(`emoji payload: restored ${name}`);
+      if (obb) {
+        const target = obbPath();
+        if (target && fileSize(target) !== obb.size) {
+          log(`payload: writing the streaming assets to ${target}`);
+          makeDirectory(target.substring(0, target.lastIndexOf("/")));
+          zip.copy(obb, target);
+          log("payload: the streaming assets are ready");
         }
-        const obb = zip.find("assets/tesl-payload/obb.bin");
-        const cache = zip.find("assets/tesl-payload/cache.bin");
-        const perFileEntries = zip.list().filter((e) => e.startsWith("assets/tesl-payload/UnityCache/Shared/"));
-        if (!obb && !cache && !perFileEntries.length) {
-          log("payload: the apk carries no payload");
-          return;
+      }
+      if (cache) {
+        const target = `${persistentPath()}/UnityCache/Shared`;
+        const head = new DataView(zip.read(cache, 0, 12));
+        const count = head.getUint32(8, true);
+        let at = 12;
+        const files = [];
+        for (let i = 0; i < count; i++) {
+          const len = new DataView(zip.read(cache, at, 2)).getUint16(0, true);
+          at += 2;
+          const name = readString(zip.read(cache, at, len));
+          at += len;
+          const size = readUInt64(new DataView(zip.read(cache, at, 8)));
+          at += 8;
+          files.push({ name, size });
         }
-        if (obb) {
-          const target = obbPath();
-          if (target && fileSize(target) !== obb.size) {
-            log(`payload: writing the streaming assets to ${target}`);
-            makeDirectory(target.substring(0, target.lastIndexOf("/")));
-            zip.copy(obb, target);
-            log("payload: the streaming assets are ready");
+        let offset = at;
+        let written = 0;
+        for (const f of files) {
+          const path = `${target}/${f.name}`;
+          if (!fileExists(path)) {
+            makeDirectory(path.substring(0, path.lastIndexOf("/")));
+            const out = new File(path, "wb");
+            let done = 0;
+            while (done < f.size) {
+              const n = Math.min(4 * 1024 * 1024, f.size - done);
+              out.write(zip.read(cache, offset + done, n));
+              done += n;
+            }
+            out.close();
+            written++;
           }
+          offset += f.size;
         }
-        if (cache) {
-          const target = `${persistentPath()}/UnityCache/Shared`;
-          const head = new DataView(zip.read(cache, 0, 12));
-          const count = head.getUint32(8, true);
-          let at = 12;
-          const files = [];
-          for (let i = 0; i < count; i++) {
-            const len = new DataView(zip.read(cache, at, 2)).getUint16(0, true);
-            at += 2;
-            const name = readString(zip.read(cache, at, len));
-            at += len;
-            const size = readUInt64(new DataView(zip.read(cache, at, 8)));
-            at += 8;
-            files.push({ name, size });
-          }
-          let offset = at;
+        log(`payload: ${written} of ${count} cache files written (packed)`);
+      } else {
+        const prefix = "assets/tesl-payload/UnityCache/Shared/";
+        const perEntry = zip.list().filter((e) => e.startsWith(prefix));
+        if (perEntry.length) {
+          const tgt = `${persistentPath()}/UnityCache/Shared`;
           let written = 0;
-          for (const f of files) {
-            const path = `${target}/${f.name}`;
-            if (!fileExists(path)) {
+          for (const name of perEntry) {
+            const rel = name.substring(prefix.length);
+            const path = `${tgt}/${rel}`;
+            const e = zip.find(name);
+            if (fileSize(path) !== e.size) {
               makeDirectory(path.substring(0, path.lastIndexOf("/")));
-              const out = new File(path, "wb");
-              let done = 0;
-              while (done < f.size) {
-                const n = Math.min(4 * 1024 * 1024, f.size - done);
-                out.write(zip.read(cache, offset + done, n));
-                done += n;
-              }
-              out.close();
+              zip.copy(e, path);
               written++;
             }
-            offset += f.size;
           }
-          log(`payload: ${written} of ${count} cache files written (packed)`);
-        } else {
-          const prefix = "assets/tesl-payload/UnityCache/Shared/";
-          const perEntry = zip.list().filter((e) => e.startsWith(prefix));
-          if (perEntry.length) {
-            const tgt = `${persistentPath()}/UnityCache/Shared`;
-            let written = 0;
-            for (const name of perEntry) {
-              const rel = name.substring(prefix.length);
-              const path = `${tgt}/${rel}`;
-              const e = zip.find(name);
-              if (fileSize(path) !== e.size) {
-                makeDirectory(path.substring(0, path.lastIndexOf("/")));
-                zip.copy(e, path);
-                written++;
-              }
+          log(`payload: ${written} of ${perEntry.length} cache files written (per-file)`);
+        }
+      }
+      const versions = zip.find("assets/tesl-payload/versions.json");
+      if (versions) {
+        const target = `${persistentPath()}/versions.json`;
+        if (!fileExists(target)) {
+          log("payload: writing versions.json");
+          makeDirectory(target.substring(0, target.lastIndexOf("/")));
+          zip.copy(versions, target);
+        }
+      }
+    } finally {
+      zip.close();
+    }
+  });
+  function apkPath() {
+    try {
+      const f = new File("/proc/self/maps", "rb");
+      let line = "";
+      let fallback = "";
+      while ((line = f.readLine()) !== "") {
+        const matches = line.match(/(\/[^\s]+\.apk)/g);
+        if (matches) for (const cand of matches) {
+          if (cand.indexOf("base.apk") >= 0) {
+            try {
+              f.close();
+            } catch (_) {
             }
-            log(`payload: ${written} of ${perEntry.length} cache files written (per-file)`);
+            ;
+            return cand;
           }
+          if (!fallback) fallback = cand;
         }
-        const versions = zip.find("assets/tesl-payload/versions.json");
-        if (versions) {
-          const target = `${persistentPath()}/versions.json`;
-          if (!fileExists(target)) {
-            log("payload: writing versions.json");
-            makeDirectory(target.substring(0, target.lastIndexOf("/")));
-            zip.copy(versions, target);
-          }
-        }
+      }
+      try {
+        f.close();
+      } catch (_) {
+      }
+      if (fallback) return fallback;
+    } catch (_) {
+    }
+    try {
+      const path = String(ucls("UnityEngine.Application").method("get_streamingAssetsPath").invoke()?.content ?? "");
+      const m = path.match(/^jar:file:\/\/(.*)!.*$/);
+      return m ? m[1] : "";
+    } catch {
+      return "";
+    }
+  }
+  function obbPath() {
+    const persistent = persistentPath();
+    const android = persistent.replace(/\/data\/[^/]+\/files$/, "");
+    return `${android}/obb/com.bethsoft.theelderscrollslegends/main.11009.com.bethsoft.theelderscrollslegends.obb`;
+  }
+  function fileSize(path) {
+    try {
+      const f = new File(path, "rb");
+      try {
+        f.seek(0, File.SEEK_END);
+        return f.tell();
       } finally {
-        zip.close();
+        f.close();
+      }
+    } catch (_) {
+      return -1;
+    }
+  }
+  function fileExists(path) {
+    try {
+      return Boolean(Il2Cpp.corlib.class("System.IO.File").method("Exists").invoke(Il2Cpp.string(path)));
+    } catch (_) {
+      return false;
+    }
+  }
+  function makeDirectory(path) {
+    try {
+      Il2Cpp.corlib.class("System.IO.Directory").method("CreateDirectory").invoke(Il2Cpp.string(path));
+    } catch (e) {
+      log(`payload: cannot create ${path}: ${e}`);
+    }
+  }
+  function readString(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let text = "";
+    for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+    return text;
+  }
+  function readUInt64(view) {
+    const low = view.getUint32(0, true);
+    const high = view.getUint32(4, true);
+    return low + high * 4294967296;
+  }
+  const LOGIN_FILE = "tesl-login.json";
+  let autoLoginAt = 0;
+  const autoLoginRecent = () => Date.now() - autoLoginAt < 6e4;
+  function readSavedLogin() {
+    try {
+      const text = readTextFile(`${persistentPath()}/${LOGIN_FILE}`);
+      if (!text) return null;
+      const json = JSON.parse(text);
+      if (!json || !json.username) return null;
+      return { username: String(json.username), password: String(json.password ?? "") };
+    } catch (e) {
+      return null;
+    }
+  }
+  function writeSavedLogin(username, password) {
+    if (!username) return;
+    const path = `${persistentPath()}/${LOGIN_FILE}`;
+    if (!writeTextFile(path + ".part", JSON.stringify({ username, password }))) {
+      log("login: credential write failed");
+      return;
+    }
+    if (atomicRename(path + ".part", path)) log("login: saved username and credential state");
+    else log("login: could not commit saved credentials; previous file retained");
+  }
+  function prefillLoginUsername(username) {
+    if (!username) return;
+    for (const delay of [0, 300, 1200]) schedule(delay, () => {
+      for (const typeName of ["UnityEngine.UI.InputField", "TMPro.TMP_InputField"]) try {
+        const fields = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls(typeName).type.object);
+        for (let i = 0; i < fields.length; i++) {
+          const field = fields.get(i), go = call(field, "get_gameObject");
+          if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
+          const name = String(call(go, "get_name")?.content || "");
+          if (!/user[_ ]?name|account[_ ]?name|email/i.test(name)) continue;
+          if (!String(call(field, "get_text")?.content || "")) call(field, "set_text", Il2Cpp.string(username));
+        }
+      } catch (_) {
       }
     });
-    function apkPath() {
-      try {
-        const f = new File("/proc/self/maps", "rb");
-        let line = "";
-        let fallback = "";
-        while ((line = f.readLine()) !== "") {
-          const matches = line.match(/(\/[^\s]+\.apk)/g);
-          if (matches) for (const cand of matches) {
-            if (cand.indexOf("base.apk") >= 0) {
-              try {
-                f.close();
-              } catch (_) {
-              }
-              ;
-              return cand;
-            }
-            if (!fallback) fallback = cand;
-          }
-        }
+  }
+  section("auto login", () => {
+    const credentials = cls(img, "SparkleServices.UsernameAndPassword");
+    const useRemembered = (callback, saved, failed) => {
+      const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
+      autoLoginAt = Date.now();
+      log(`auto login as ${saved.username}`);
+      schedule(0, () => {
         try {
-          f.close();
-        } catch (_) {
-        }
-        if (fallback) return fallback;
-      } catch (_) {
-      }
-      try {
-        const path = String(ucls("UnityEngine.Application").method("get_streamingAssetsPath").invoke()?.content ?? "");
-        const m = path.match(/^jar:file:\/\/(.*)!.*$/);
-        return m ? m[1] : "";
-      } catch {
-        return "";
-      }
-    }
-    function obbPath() {
-      const persistent = persistentPath();
-      const android = persistent.replace(/\/data\/[^/]+\/files$/, "");
-      return `${android}/obb/com.bethsoft.theelderscrollslegends/main.11009.com.bethsoft.theelderscrollslegends.obb`;
-    }
-    function fileSize(path) {
-      try {
-        const f = new File(path, "rb");
-        try {
-          f.seek(0, File.SEEK_END);
-          return f.tell();
+          const value = credentials.alloc();
+          value.field("username").value = Il2Cpp.string(saved.username);
+          value.field("password").value = Il2Cpp.string(saved.password);
+          retained.target.method("Invoke").invoke(value.unbox());
+        } catch (e) {
+          log(`auto login callback failed: ${e}`);
+          failed();
         } finally {
-          f.close();
-        }
-      } catch (_) {
-        return -1;
-      }
-    }
-    function fileExists(path) {
-      try {
-        return Boolean(Il2Cpp.corlib.class("System.IO.File").method("Exists").invoke(Il2Cpp.string(path)));
-      } catch (_) {
-        return false;
-      }
-    }
-    function makeDirectory(path) {
-      try {
-        Il2Cpp.corlib.class("System.IO.Directory").method("CreateDirectory").invoke(Il2Cpp.string(path));
-      } catch (e) {
-        log(`payload: cannot create ${path}: ${e}`);
-      }
-    }
-    function readString(buffer) {
-      const bytes = new Uint8Array(buffer);
-      let text = "";
-      for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
-      return text;
-    }
-    function readUInt64(view) {
-      const low = view.getUint32(0, true);
-      const high = view.getUint32(4, true);
-      return low + high * 4294967296;
-    }
-    const LOGIN_FILE = "tesl-login.json";
-    let autoLoginAt = 0;
-    const autoLoginRecent = () => Date.now() - autoLoginAt < 6e4;
-    function readSavedLogin() {
-      try {
-        const text = readTextFile(`${persistentPath()}/${LOGIN_FILE}`);
-        if (!text) return null;
-        const json = JSON.parse(text);
-        if (!json || !json.username) return null;
-        return { username: String(json.username), password: String(json.password ?? "") };
-      } catch (e) {
-        return null;
-      }
-    }
-    function writeSavedLogin(username, password) {
-      if (!username) return;
-      const path = `${persistentPath()}/${LOGIN_FILE}`;
-      if (!writeTextFile(path + ".part", JSON.stringify({ username, password }))) {
-        log("login: credential write failed");
-        return;
-      }
-      if (atomicRename(path + ".part", path)) log("login: saved username and credential state");
-      else log("login: could not commit saved credentials; previous file retained");
-    }
-    function prefillLoginUsername(username) {
-      if (!username) return;
-      for (const delay of [0, 300, 1200]) schedule(delay, () => {
-        for (const typeName of ["UnityEngine.UI.InputField", "TMPro.TMP_InputField"]) try {
-          const fields = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls(typeName).type.object);
-          for (let i = 0; i < fields.length; i++) {
-            const field = fields.get(i), go = call(field, "get_gameObject");
-            if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
-            const name = String(call(go, "get_name")?.content || "");
-            if (!/user[_ ]?name|account[_ ]?name|email/i.test(name)) continue;
-            if (!String(call(field, "get_text")?.content || "")) call(field, "set_text", Il2Cpp.string(username));
-          }
-        } catch (_) {
+          retained.free();
         }
       });
-    }
-    section("auto login", () => {
-      const credentials = cls(img, "SparkleServices.UsernameAndPassword");
-      const useRemembered = (callback, saved, failed) => {
-        const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
-        autoLoginAt = Date.now();
-        log(`auto login as ${saved.username}`);
-        schedule(0, () => {
-          try {
-            const value = credentials.alloc();
-            value.field("username").value = Il2Cpp.string(saved.username);
-            value.field("password").value = Il2Cpp.string(saved.password);
-            retained.target.method("Invoke").invoke(value.unbox());
-          } catch (e) {
-            log(`auto login callback failed: ${e}`);
-            failed();
-          } finally {
-            retained.free();
+    };
+    const mobile = cls(img, "LoginHandler").method("OnLogin", 3);
+    const mobileOriginal = new NativeFunction(
+      mobile.virtualAddress,
+      "void",
+      ["pointer", "pointer", "pointer", "pointer"]
+    );
+    mobile.implementation = function(title, description, callback) {
+      try {
+        const stored = readSavedLogin();
+        const saved = autoLoginRecent() || !stored?.password ? null : stored;
+        if (!saved) {
+          if (autoLoginRecent()) {
+            log("auto login already attempted; keeping saved credentials and showing login");
           }
-        });
-      };
-      const mobile = cls(img, "LoginHandler").method("OnLogin", 3);
-      const mobileOriginal = new NativeFunction(
-        mobile.virtualAddress,
-        "void",
-        ["pointer", "pointer", "pointer", "pointer"]
-      );
-      mobile.implementation = function(title, description, callback) {
-        try {
-          const stored = readSavedLogin();
-          const saved = autoLoginRecent() || !stored?.password ? null : stored;
-          if (!saved) {
-            if (autoLoginRecent()) {
-              log("auto login already attempted; keeping saved credentials and showing login");
-            }
-            mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
-            prefillLoginUsername(stored?.username || "");
-            return;
-          }
-          useRemembered(callback, saved, () => {
-            mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
-            prefillLoginUsername(stored?.username || "");
-          });
-        } catch (e) {
-          log(`auto login error: ${e}`);
-          const stored = readSavedLogin();
           mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
           prefillLoginUsername(stored?.username || "");
+          return;
         }
-      };
-      const fallback = cls(img, "SparkleServices.DefaultLoginHandler").method("LoginHandler", 3);
-      const fallbackOriginal = new NativeFunction(
-        fallback.virtualAddress,
-        "void",
-        ["pointer", "pointer", "pointer"]
-      );
-      fallback.implementation = function(title, description, callback) {
-        try {
-          const stored = readSavedLogin();
-          const saved = autoLoginRecent() || !stored?.password ? null : stored;
-          if (!saved) {
-            if (autoLoginRecent()) {
-              log("auto login already attempted; keeping saved credentials and showing login");
-            }
-            fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
-            prefillLoginUsername(stored?.username || "");
-            return;
+        useRemembered(callback, saved, () => {
+          mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
+        });
+      } catch (e) {
+        log(`auto login error: ${e}`);
+        const stored = readSavedLogin();
+        mobileOriginal(this.handle, title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+        prefillLoginUsername(stored?.username || "");
+      }
+    };
+    const fallback = cls(img, "SparkleServices.DefaultLoginHandler").method("LoginHandler", 3);
+    const fallbackOriginal = new NativeFunction(
+      fallback.virtualAddress,
+      "void",
+      ["pointer", "pointer", "pointer"]
+    );
+    fallback.implementation = function(title, description, callback) {
+      try {
+        const stored = readSavedLogin();
+        const saved = autoLoginRecent() || !stored?.password ? null : stored;
+        if (!saved) {
+          if (autoLoginRecent()) {
+            log("auto login already attempted; keeping saved credentials and showing login");
           }
-          useRemembered(callback, saved, () => {
-            fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
-            prefillLoginUsername(stored?.username || "");
-          });
-        } catch (e) {
-          log(`auto login error: ${e}`);
-          const stored = readSavedLogin();
           fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
           prefillLoginUsername(stored?.username || "");
+          return;
         }
-      };
-    });
-    section("tesl reborn credits", () => {
-      const credits = cls(img, "CreditsLoader");
-      const lineData = cls(img, "CreditsWin").nested("LineDisplayData");
-      hookAttach(credits.method("LoadCreditsForDisplay").virtualAddress, {
-        onEnter(args) {
-          try {
-            const list = new Il2Cpp.Object(args[0]);
-            for (const [type, text] of [
-              [CREDIT_GROUP, "TESL Reborn Team"],
-              [CREDIT_TITLE, "Android port \xB7 build 27 \xB7 archive installer"],
-              [CREDIT_TITLE, "Project Lead"],
-              [CREDIT_NAME, "Renian"],
-              [CREDIT_TITLE, "Game Server Developer"],
-              [CREDIT_NAME, "Martin Butlak (maker83)"],
-              [CREDIT_NAME, "Renian"],
-              [CREDIT_TITLE, "Game Client Patches & Mods"],
-              [CREDIT_NAME, "Martin Butlak (maker83)"],
-              [CREDIT_TITLE, "Tester/Contributor"],
-              [CREDIT_NAME, "Vidi_Aquam"]
-            ]) {
-              const line = newWith(lineData, type, Il2Cpp.string(text));
-              list.method("Add").invoke(line);
-            }
-            log("credits: added the TESL Reborn team");
-          } catch (e) {
-            log(`credits failed: ${e}`);
-          }
-        }
-      });
-    });
-    section("legendary title banner", () => {
-      hookAttach(cls(img, "UIResourceManager").method("GetTitleBannerSprite").virtualAddress, {
-        onEnter(args) {
-          if (args[1].toInt32() !== RARITY_LEGENDARY) return;
-          args[1] = ptr(0);
-          log("UIResourceManager: legendary title banner -> common");
-        }
-      });
-    });
-    function revealLegendaryTitleFilter(self) {
-      try {
-        const root = call(self, "get_transform");
-        if (isNull(root)) return;
-        const queue = [{ transform: root, path: "", depth: 0 }];
-        let found = 0, visited = 0;
-        const filterPaths = [];
-        while (queue.length && visited++ < 512) {
-          const node = queue.shift();
-          const name = String(call(node.transform, "get_name")?.content || "");
-          const path = `${node.path}/${name}`;
-          if (/filter/i.test(name) && filterPaths.length < 12) filterPaths.push(path);
-          if (/legendary/i.test(name) && /filter/i.test(path)) {
-            call(call(node.transform, "get_gameObject"), "SetActive", true);
-            found++;
-          }
-          if (node.depth >= 12) continue;
-          const count = Math.min(100, Number(call(node.transform, "get_childCount")));
-          for (let i = 0; i < count; i++) queue.push({ transform: call(node.transform, "GetChild", i), path, depth: node.depth + 1 });
-        }
-        if (found) log(`titles UI: revealed ${found} legendary filter(s)`);
-        else log(`titles UI: legendary filter not found; filter nodes=${filterPaths.join(" | ") || "none"}`);
-      } catch (error) {
-        log(`titles UI: filter failed: ${error}`);
-      }
-    }
-    section("player profile titles (legendary filter)", () => {
-      const ppt = cls(img, "PlayerProfileTitles");
-      const hooks = ppt.methods.filter((m) => ["Awake", "OnEnable"].includes(m.name) && !m.isStatic && m.parameterCount === 0);
-      if (!hooks.length) throw Error("No own Awake/OnEnable method on PlayerProfileTitles");
-      for (const method of hooks) {
-        if (method.virtualAddress.isNull()) continue;
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            this.self = args[0];
-          },
-          // Fields and mobile UI bindings must already have been initialized.
-          onLeave() {
-            try {
-              revealLegendaryTitleFilter(new Il2Cpp.Object(this.self));
-            } catch (error) {
-              log(`titles UI: ${error}`);
-            }
-          }
+        useRemembered(callback, saved, () => {
+          fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+          prefillLoginUsername(stored?.username || "");
         });
+      } catch (e) {
+        log(`auto login error: ${e}`);
+        const stored = readSavedLogin();
+        fallbackOriginal(title?.handle ?? title, description?.handle ?? description, callback?.handle ?? callback);
+        prefillLoginUsername(stored?.username || "");
+      }
+    };
+  });
+  section("tesl reborn credits", () => {
+    const credits = cls(img, "CreditsLoader");
+    const lineData = cls(img, "CreditsWin").nested("LineDisplayData");
+    hookAttach(credits.method("LoadCreditsForDisplay").virtualAddress, {
+      onEnter(args) {
+        try {
+          const list = new Il2Cpp.Object(args[0]);
+          for (const [type, text] of [
+            [CREDIT_GROUP, "TESL Reborn Team"],
+            [CREDIT_TITLE, "Android port \xB7 build 27 \xB7 archive installer"],
+            [CREDIT_TITLE, "Project Lead"],
+            [CREDIT_NAME, "Renian"],
+            [CREDIT_TITLE, "Game Server Developer"],
+            [CREDIT_NAME, "Martin Butlak (maker83)"],
+            [CREDIT_NAME, "Renian"],
+            [CREDIT_TITLE, "Game Client Patches & Mods"],
+            [CREDIT_NAME, "Martin Butlak (maker83)"],
+            [CREDIT_TITLE, "Tester/Contributor"],
+            [CREDIT_NAME, "Vidi_Aquam"]
+          ]) {
+            const line = newWith(lineData, type, Il2Cpp.string(text));
+            list.method("Add").invoke(line);
+          }
+          log("credits: added the TESL Reborn team");
+        } catch (e) {
+          log(`credits failed: ${e}`);
+        }
       }
     });
-    const legendaryTitleRows = /* @__PURE__ */ new Map();
-    let armTitleGuard = () => {
-    };
-    function titleListColour(self) {
-      const key = self.handle.toString();
-      const data = self.field("_titleData").value;
-      if (isNull(data)) return;
-      const legendary = enumVal(data.field("Rarity").value) === RARITY_LEGENDARY;
-      const previous = legendaryTitleRows.get(key);
-      if (!legendary) {
-        if (previous) {
-          previous.row.free();
-          previous.image.free();
-          legendaryTitleRows.delete(key);
+  });
+  section("legendary title banner", () => {
+    hookAttach(cls(img, "UIResourceManager").method("GetTitleBannerSprite").virtualAddress, {
+      onEnter(args) {
+        if (args[1].toInt32() !== RARITY_LEGENDARY) return;
+        args[1] = ptr(0);
+        log("UIResourceManager: legendary title banner -> common");
+      }
+    });
+  });
+  function revealLegendaryTitleFilter(self) {
+    try {
+      const root = call(self, "get_transform");
+      if (isNull(root)) return;
+      const queue = [{ transform: root, path: "", depth: 0 }];
+      let found = 0, visited = 0;
+      const filterPaths = [];
+      while (queue.length && visited++ < 512) {
+        const node = queue.shift();
+        const name = String(call(node.transform, "get_name")?.content || "");
+        const path = `${node.path}/${name}`;
+        if (/filter/i.test(name) && filterPaths.length < 12) filterPaths.push(path);
+        if (/legendary/i.test(name) && /filter/i.test(path)) {
+          call(call(node.transform, "get_gameObject"), "SetActive", true);
+          found++;
         }
-        return;
+        if (node.depth >= 12) continue;
+        const count = Math.min(100, Number(call(node.transform, "get_childCount")));
+        for (let i = 0; i < count; i++) queue.push({ transform: call(node.transform, "GetChild", i), path, depth: node.depth + 1 });
       }
-      const image = self.field("BackgroundImage").value;
-      if (isNull(image)) return;
-      const resources = call(ucls("UIResourceManager"), "get_Instance");
-      if (!isNull(resources)) {
-        const sprite = resources.method("GetTitleBannerSprite", 1).invoke(enumBox(cls(img, "SPTESL.CardRarity"), 0));
-        if (!isNull(sprite)) call(image, "set_overrideSprite", sprite);
-      }
-      call(image, "set_color", rgba(1, 0.75, 0, 1));
-      if (!previous) {
-        legendaryTitleRows.set(key, { row: self.weakRef(false), image: image.weakRef(false), repairs: 0, warned: false });
-        armTitleGuard(true);
-        const transform = call(image, "get_transform");
-        log(`titles UI: list tint target=${String(call(transform, "get_name")?.content || "?")}`);
-        uiLogTree(call(self, "get_transform"), "titles UI list paths");
-      }
+      if (found) log(`titles UI: revealed ${found} legendary filter(s)`);
+      else log(`titles UI: legendary filter not found; filter nodes=${filterPaths.join(" | ") || "none"}`);
+    } catch (error) {
+      log(`titles UI: filter failed: ${error}`);
     }
-    function maintainTitleListColours() {
-      for (const [key, record] of legendaryTitleRows) {
-        try {
-          const row = record.row.target, image = record.image.target;
-          if (!unityAlive(row) || !unityAlive(image)) {
-            record.row.free();
-            record.image.free();
-            legendaryTitleRows.delete(key);
-            continue;
+  }
+  section("player profile titles (legendary filter)", () => {
+    const ppt = cls(img, "PlayerProfileTitles");
+    const hooks = ppt.methods.filter((m) => ["Awake", "OnEnable"].includes(m.name) && !m.isStatic && m.parameterCount === 0);
+    if (!hooks.length) throw Error("No own Awake/OnEnable method on PlayerProfileTitles");
+    for (const method of hooks) {
+      if (method.virtualAddress.isNull()) continue;
+      hookAttach(method.virtualAddress, {
+        onEnter(args) {
+          this.self = args[0];
+        },
+        // Fields and mobile UI bindings must already have been initialized.
+        onLeave() {
+          try {
+            revealLegendaryTitleFilter(new Il2Cpp.Object(this.self));
+          } catch (error) {
+            log(`titles UI: ${error}`);
           }
-          const data = row.field("_titleData").value;
-          if (isNull(data) || enumVal(data.field("Rarity").value) !== RARITY_LEGENDARY) {
-            record.row.free();
-            record.image.free();
-            legendaryTitleRows.delete(key);
-            continue;
-          }
-          if (!Boolean(call(call(image, "get_gameObject"), "get_activeInHierarchy"))) continue;
-          const colour = call(image, "get_color");
-          if (Math.abs(Number(colour.field("r").value) - 1) > 0.01 || Math.abs(Number(colour.field("g").value) - 0.75) > 0.01 || Math.abs(Number(colour.field("b").value)) > 0.01 || Number(colour.field("a").value) < 0.99) {
-            call(image, "set_color", rgba(1, 0.75, 0, 1));
-            if (record.repairs++ < 2) log("titles UI: list tint restored after native UI reset");
-          }
-        } catch (error) {
-          if (!record.warned) {
-            record.warned = true;
-            log(`titles UI: list maintenance failed: ${error}`);
-          }
+        }
+      });
+    }
+  });
+  const legendaryTitleRows = /* @__PURE__ */ new Map();
+  let armTitleGuard = () => {
+  };
+  function titleListColour(self) {
+    const key = self.handle.toString();
+    const data = self.field("_titleData").value;
+    if (isNull(data)) return;
+    const legendary = enumVal(data.field("Rarity").value) === RARITY_LEGENDARY;
+    const previous = legendaryTitleRows.get(key);
+    if (!legendary) {
+      if (previous) {
+        previous.row.free();
+        previous.image.free();
+        legendaryTitleRows.delete(key);
+      }
+      return;
+    }
+    const image = self.field("BackgroundImage").value;
+    if (isNull(image)) return;
+    const resources = call(ucls("UIResourceManager"), "get_Instance");
+    if (!isNull(resources)) {
+      const sprite = resources.method("GetTitleBannerSprite", 1).invoke(enumBox(cls(img, "SPTESL.CardRarity"), 0));
+      if (!isNull(sprite)) call(image, "set_overrideSprite", sprite);
+    }
+    call(image, "set_color", rgba(1, 0.75, 0, 1));
+    if (!previous) {
+      legendaryTitleRows.set(key, { row: self.weakRef(false), image: image.weakRef(false), repairs: 0, warned: false });
+      armTitleGuard(true);
+      const transform = call(image, "get_transform");
+      log(`titles UI: list tint target=${String(call(transform, "get_name")?.content || "?")}`);
+      uiLogTree(call(self, "get_transform"), "titles UI list paths");
+    }
+  }
+  function maintainTitleListColours() {
+    for (const [key, record] of legendaryTitleRows) {
+      try {
+        const row = record.row.target, image = record.image.target;
+        if (!unityAlive(row) || !unityAlive(image)) {
           record.row.free();
           record.image.free();
           legendaryTitleRows.delete(key);
+          continue;
         }
+        const data = row.field("_titleData").value;
+        if (isNull(data) || enumVal(data.field("Rarity").value) !== RARITY_LEGENDARY) {
+          record.row.free();
+          record.image.free();
+          legendaryTitleRows.delete(key);
+          continue;
+        }
+        if (!Boolean(call(call(image, "get_gameObject"), "get_activeInHierarchy"))) continue;
+        const colour = call(image, "get_color");
+        if (Math.abs(Number(colour.field("r").value) - 1) > 0.01 || Math.abs(Number(colour.field("g").value) - 0.75) > 0.01 || Math.abs(Number(colour.field("b").value)) > 0.01 || Number(colour.field("a").value) < 0.99) {
+          call(image, "set_color", rgba(1, 0.75, 0, 1));
+          if (record.repairs++ < 2) log("titles UI: list tint restored after native UI reset");
+        }
+      } catch (error) {
+        if (!record.warned) {
+          record.warned = true;
+          log(`titles UI: list maintenance failed: ${error}`);
+        }
+        record.row.free();
+        record.image.free();
+        legendaryTitleRows.delete(key);
       }
-      armTitleGuard(legendaryTitleRows.size > 0);
     }
-    section("player profile title item (legendary colour)", () => {
-      const klass = cls(img, "PlayerProfileTitleItem");
-      const methods = klass.methods.filter((m) => ["UpdateUi", "SetData"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull());
-      if (!methods.length) throw Error("Title item callbacks not found");
-      const attached = /* @__PURE__ */ new Set();
-      for (const method of methods) {
-        const key = method.virtualAddress.toString();
-        if (attached.has(key)) continue;
-        attached.add(key);
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            this.self = args[0];
-          },
-          onLeave() {
-            try {
-              titleListColour(new Il2Cpp.Object(this.self));
-            } catch (error) {
-              log(`titles UI: list tint failed: ${error}`);
-            }
-          }
-        });
-      }
-      const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-      if (render && !render.virtualAddress.isNull()) {
-        armTitleGuard = gatedHook(render.virtualAddress, "enter", maintainTitleListColours);
-        armTitleGuard(legendaryTitleRows.size > 0);
-        log("titles UI: list colour guard uses Canvas render callback");
-      } else {
-        const tick = () => {
-          maintainTitleListColours();
-          schedule(100, tick, "title colours");
-        };
-        schedule(100, tick, "title colours");
-        log("titles UI: list colour guard uses main-thread scheduler");
-      }
-    });
-    section("player info panel (legendary title banner)", () => {
-      const pip = cls(img, "PlayerInfoPanel");
-      hookAttach(pip.method("UpdateUi").virtualAddress, {
+    armTitleGuard(legendaryTitleRows.size > 0);
+  }
+  section("player profile title item (legendary colour)", () => {
+    const klass = cls(img, "PlayerProfileTitleItem");
+    const methods = klass.methods.filter((m) => ["UpdateUi", "SetData"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull());
+    if (!methods.length) throw Error("Title item callbacks not found");
+    const attached = /* @__PURE__ */ new Set();
+    for (const method of methods) {
+      const key = method.virtualAddress.toString();
+      if (attached.has(key)) continue;
+      attached.add(key);
+      hookAttach(method.virtualAddress, {
         onEnter(args) {
           this.self = args[0];
         },
         onLeave() {
-          const retained = new Il2Cpp.Object(this.self).ref(false);
-          schedule(0, () => {
-            try {
-              if (unityAlive(retained.target)) titleBanner(retained.target);
-            } finally {
-              retained.free();
-            }
-          }, "legendary title banner");
+          try {
+            titleListColour(new Il2Cpp.Object(this.self));
+          } catch (error) {
+            log(`titles UI: list tint failed: ${error}`);
+          }
         }
       });
-      function titleBanner(panel) {
-        try {
-          const self = panel;
-          const banners = self.field("_titleBanners").value;
-          if (isNull(banners)) return;
-          let matchPlayerData = null;
+    }
+    const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
+    if (render && !render.virtualAddress.isNull()) {
+      armTitleGuard = gatedHook(render.virtualAddress, "enter", maintainTitleListColours);
+      armTitleGuard(legendaryTitleRows.size > 0);
+      log("titles UI: list colour guard uses Canvas render callback");
+    } else {
+      const tick = () => {
+        maintainTitleListColours();
+        schedule(100, tick, "title colours");
+      };
+      schedule(100, tick, "title colours");
+      log("titles UI: list colour guard uses main-thread scheduler");
+    }
+  });
+  section("player info panel (legendary title banner)", () => {
+    const pip = cls(img, "PlayerInfoPanel");
+    hookAttach(pip.method("UpdateUi").virtualAddress, {
+      onEnter(args) {
+        this.self = args[0];
+      },
+      onLeave() {
+        const retained = new Il2Cpp.Object(this.self).ref(false);
+        schedule(0, () => {
           try {
-            matchPlayerData = self.field("_matchPlayerData").value;
-          } catch (_) {
+            if (unityAlive(retained.target)) titleBanner(retained.target);
+          } finally {
+            retained.free();
           }
-          if (isNull(matchPlayerData)) return;
-          const titleName = String(matchPlayerData.field("Title").value?.content ?? "");
-          if (!titleName) return;
-          const gm = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
-          if (isNull(gm)) return;
-          const titles = gm.field("Config").value?.field("Titles").value;
-          if (isNull(titles)) return;
-          let found = null;
-          const count = Number(titles.method("get_Count").invoke());
-          for (let i = 0; i < count; i++) {
-            const t = titles.method("get_Item", 1).invoke(i);
-            if (isNull(t)) continue;
-            const name = t.field("ResourceId").value.field("UniqueName").value?.content;
-            if (name === titleName) {
-              found = t;
-              break;
-            }
-          }
-          if (isNull(found)) return;
-          const rarity = enumVal(found.field("Rarity").value);
-          if (rarity !== RARITY_LEGENDARY) return;
-          log(`PlayerInfoPanel: legendary title ${titleName}`);
-          try {
-            const legendaryBanner = banners.get(RARITY_LEGENDARY);
-            if (!isNull(legendaryBanner)) {
-              const go = call(legendaryBanner, "get_gameObject");
-              if (!isNull(go)) go.method("SetActive").invoke(false);
-            }
-          } catch (_) {
-          }
-          const commonBanner = banners.get(0);
-          if (!isNull(commonBanner)) {
-            const go = call(commonBanner, "get_gameObject");
-            if (!isNull(go)) go.method("SetActive").invoke(true);
-            commonBanner.method("set_color").invoke(rgba(1, 0.75, 0, 1));
-          }
-        } catch (e) {
-          log(`player info panel update failed: ${e}`);
-        }
+        }, "legendary title banner");
       }
     });
-    function rebornStoreImagePath(value) {
-      return typeof value === "string" && /^AppBase\/UI\/Textures\/Store\/img_-?\d+_2$/.test(value);
-    }
-    section("Reborn store image loading", () => {
-      const owner = cls(img, "StoreImageUtils");
-      const iterator = img.classes.find((c) => c.declaringClass?.name === owner.name && /LoadStoreImageCoroutine/.test(c.name) && c.fields.some((f) => f.name === "imageUrl") && c.fields.some((f) => f.name === "callback"));
-      if (!iterator) throw Error("Store image coroutine metadata unavailable");
-      const state = iterator.fields.find((f) => f.name === "$PC"), current = iterator.fields.find((f) => f.name === "$current");
-      const operation = iterator.fields.find((f) => /operation/i.test(f.name) && /AssetBundleLoadAssetOperation$/.test(f.type.name));
-      const sprite = ucls("UnityEngine.Sprite"), catalog = cls(img, "AssetCatalog");
-      const load = catalog.method("LoadAssetFromPathAsync").overload("System.String", "System.Type", "System.String");
-      const move = iterator.method("MoveNext", 0);
-      if (!state || !current || !operation || move.virtualAddress.isNull()) throw Error("Store image coroutine fields unavailable");
-      function report(kind, path) {
-        recordResourceEvent(kind, path);
-        log(`store image: ${kind} ${path}`);
-      }
-      const jobs = /* @__PURE__ */ new Map();
-      function finish(job) {
-        if (jobs.get(job.key) !== job) return;
-        jobs.delete(job.key);
+    function titleBanner(panel) {
+      try {
+        const self = panel;
+        const banners = self.field("_titleBanners").value;
+        if (isNull(banners)) return;
+        let matchPlayerData = null;
         try {
-          const self = job.ref.target;
-          self.field(state.name).value = -1;
-          self.field(current.name).value = ptr(0);
-          self.field(operation.name).value = ptr(0);
+          matchPlayerData = self.field("_matchPlayerData").value;
         } catch (_) {
         }
-        job.ref.free();
-      }
-      function poll(job) {
-        if (jobs.get(job.key) !== job) return;
+        if (isNull(matchPlayerData)) return;
+        const titleName = String(matchPlayerData.field("Title").value?.content ?? "");
+        if (!titleName) return;
+        const gm = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
+        if (isNull(gm)) return;
+        const titles = gm.field("Config").value?.field("Titles").value;
+        if (isNull(titles)) return;
+        let found = null;
+        const count = Number(titles.method("get_Count").invoke());
+        for (let i = 0; i < count; i++) {
+          const t = titles.method("get_Item", 1).invoke(i);
+          if (isNull(t)) continue;
+          const name = t.field("ResourceId").value.field("UniqueName").value?.content;
+          if (name === titleName) {
+            found = t;
+            break;
+          }
+        }
+        if (isNull(found)) return;
+        const rarity = enumVal(found.field("Rarity").value);
+        if (rarity !== RARITY_LEGENDARY) return;
+        log(`PlayerInfoPanel: legendary title ${titleName}`);
         try {
-          const self = job.ref.target;
-          if (!job.started) {
-            job.started = true;
-            report("store-request", job.path);
-            const result = catalog.method("get_Instance", 0).invoke().method(load.name).overload("System.String", "System.Type", "System.String").invoke(Il2Cpp.string(job.path), sprite.type.object, Il2Cpp.string("png"));
-            if (isNull(result)) {
-              report("store-missing", job.path);
-              finish(job);
-              return;
-            }
-            self.field(operation.name).value = result;
+          const legendaryBanner = banners.get(RARITY_LEGENDARY);
+          if (!isNull(legendaryBanner)) {
+            const go = call(legendaryBanner, "get_gameObject");
+            if (!isNull(go)) go.method("SetActive").invoke(false);
           }
-          const op = self.field(operation.name).value;
-          if (call(op, "IsDone")) {
-            const asset = op.method("GetAsset", 0).inflate(sprite).invoke();
-            self.field(state.name).value = -1;
-            if (isNull(asset)) report("store-missing", job.path);
-            else {
-              report("store-loaded", job.path);
-              const callback = self.field("callback").value;
-              if (!isNull(callback)) invokeDelegatePtr(callback, asset.handle);
-            }
-            finish(job);
-            return;
-          }
-          if (Date.now() > job.deadline) {
-            report("store-timeout", job.path);
-            finish(job);
-            return;
-          }
-          schedule(50, () => poll(job), "store image poll");
-        } catch (error) {
-          report("store-error", job.path);
-          log(`store image failure: ${error}`);
-          finish(job);
+        } catch (_) {
         }
+        const commonBanner = banners.get(0);
+        if (!isNull(commonBanner)) {
+          const go = call(commonBanner, "get_gameObject");
+          if (!isNull(go)) go.method("SetActive").invoke(true);
+          commonBanner.method("set_color").invoke(rgba(1, 0.75, 0, 1));
+        }
+      } catch (e) {
+        log(`player info panel update failed: ${e}`);
       }
-      const factory = owner.methods.find((m) => m.name === "LoadStoreImageCoroutine" && m.isStatic && m.parameterCount === 4);
-      if (!factory || factory.virtualAddress.isNull()) throw Error("Store image factory unavailable");
-      hookAttach(factory.virtualAddress, { onLeave(ret) {
-        if (ret.isNull()) return;
-        try {
-          const self = new Il2Cpp.Object(ret), path = String(self.field("imageUrl").value?.content || "");
-          if (!rebornStoreImagePath(path)) return;
-          self.field(state.name).value = -1;
-          self.field(current.name).value = ptr(0);
-          if (jobs.size >= 64) {
-            report("store-busy", path);
-            return;
-          }
-          const key = self.handle.toString();
-          if (jobs.has(key)) return;
-          const job = { key, ref: self.ref(false), path, deadline: Date.now() + 2e4, started: false };
-          jobs.set(key, job);
-          report("store-queued", path);
-          schedule(0, () => poll(job), "store image poll");
-        } catch (error) {
-          log(`store image factory failure: ${error}`);
-        }
-      } });
-      log(`store image: direct Sprite/png loading via ${iterator.name}`);
-    });
-    section("localization asset trace", () => {
-      const catalog = cls(img, "AssetCatalog");
-      let lastEnterPath = "", lastLoggedPath = "", lastLoggedAt = 0;
-      for (const m of catalog.methods.filter((x) => x.name === "LoadAssetFromPathAsync")) {
-        hookAttach(m.virtualAddress, {
-          onEnter(args) {
-            this.path = rawStr(args[1]);
-            if (this.path !== lastEnterPath) {
-              lastEnterPath = this.path;
-              const probe = globalThis.__teslRebornStallProbe;
-              if (probe) probe.loads++;
-            }
-            const selected = /\/Localization\/(?:Text|Audio)\//i.test(this.path) ? resourceLanguage() : "";
-            const next = localizedAssetPath(this.path, selected);
-            if (next !== this.path) {
-              this.replacement = Il2Cpp.string(next).object.ref(false);
-              args[1] = this.replacement.target.handle;
-              this.path = next;
-            }
-            recordResourceEvent("asset-request", this.path);
-          },
-          onLeave(ret) {
-            if (this.replacement) this.replacement.free();
-            recordResourceEvent(ret.isNull() ? "asset-null" : "asset-operation", this.path);
-            const path = this.path ?? "";
-            if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
-            if (path === lastLoggedPath && Date.now() - lastLoggedAt < 100) return;
-            lastLoggedPath = path;
-            lastLoggedAt = Date.now();
-            log(`LoadAssetFromPathAsync("${path}") -> ${ret.isNull() ? "NULL (not in the asset map)" : "ok"}`);
-          }
-        });
-      }
-    });
-    section("bundle hash report", () => {
-      const mgr = cls(img, "AssetBundles.AssetBundleManager");
-      const catalog = cls(img, "AssetCatalog");
-      const target = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/tesl-bundle-hashes.txt";
-      let written = false, attempts = 0, last = 0;
-      hookAttach(catalog.method("SetCacheExpiration").virtualAddress, {
-        onEnter() {
-          const now = Date.now();
-          if (written || attempts >= 3 || attempts > 0 && now - last < 6e4) return;
-          last = now;
-          attempts++;
-          const started = now;
-          try {
-            const manifest = mgr.field("m_AssetBundleManifest").value;
-            if (isNull(manifest)) {
-              log("bundle hashes: the manifest is not loaded yet");
-              return;
-            }
-            const names = manifest.method("GetAllAssetBundles").invoke();
-            const lines = [];
-            for (let i = 0; i < names.length; i++) {
-              const name = names.get(i)?.content ?? "";
-              const hash = manifest.method("GetAssetBundleHash").invoke(Il2Cpp.string(name));
-              const hex = String(hash?.method("ToString").invoke()?.content ?? "");
-              lines.push(`${name} ${hex}`);
-            }
-            Il2Cpp.corlib.class("System.IO.File").method("WriteAllText").invoke(Il2Cpp.string(target), Il2Cpp.string(lines.join("\n")));
-            written = true;
-            log(`bundle hashes: wrote ${lines.length} entries to ${target} in ${Date.now() - started}ms`);
-          } catch (e) {
-            log(`bundle hash report failed: ${e}`);
-          }
-        }
-      });
-    });
-    function uiComponent(go, type) {
-      return go.method("GetComponent").overload("System.Type").invoke(ucls(type).type.object);
     }
-    function uiAdd(go, type) {
-      return go.method("AddComponent").overload("System.Type").invoke(ucls(type).type.object);
+  });
+  function rebornStoreImagePath(value) {
+    return typeof value === "string" && /^AppBase\/UI\/Textures\/Store\/img_-?\d+_2$/.test(value);
+  }
+  section("Reborn store image loading", () => {
+    const owner = cls(img, "StoreImageUtils");
+    const iterator = img.classes.find((c) => c.declaringClass?.name === owner.name && /LoadStoreImageCoroutine/.test(c.name) && c.fields.some((f) => f.name === "imageUrl") && c.fields.some((f) => f.name === "callback"));
+    if (!iterator) throw Error("Store image coroutine metadata unavailable");
+    const state = iterator.fields.find((f) => f.name === "$PC"), current = iterator.fields.find((f) => f.name === "$current");
+    const operation = iterator.fields.find((f) => /operation/i.test(f.name) && /AssetBundleLoadAssetOperation$/.test(f.type.name));
+    const sprite = ucls("UnityEngine.Sprite"), catalog = cls(img, "AssetCatalog");
+    const load = catalog.method("LoadAssetFromPathAsync").overload("System.String", "System.Type", "System.String");
+    const move = iterator.method("MoveNext", 0);
+    if (!state || !current || !operation || move.virtualAddress.isNull()) throw Error("Store image coroutine fields unavailable");
+    function report(kind, path) {
+      recordResourceEvent(kind, path);
+      log(`store image: ${kind} ${path}`);
     }
-    function uiNew(name, parent) {
-      const go = newWith(
-        ucls("UnityEngine.GameObject"),
-        Il2Cpp.string(name),
-        Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [ucls("UnityEngine.RectTransform").type.object])
-      );
-      const root = go.ref(false);
+    const jobs = /* @__PURE__ */ new Map();
+    function finish(job) {
+      if (jobs.get(job.key) !== job) return;
+      jobs.delete(job.key);
       try {
-        call(go, "set_layer", Number(call(call(parent, "get_gameObject"), "get_layer")));
-        call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parent, false);
-        return go;
-      } finally {
-        root.free();
-      }
-    }
-    function uiRect(go) {
-      return uiComponent(go, "UnityEngine.RectTransform");
-    }
-    function uiPlace(go, ax, ay, px, py, x, y, width, height) {
-      const rect = uiRect(go);
-      call(rect, "set_anchorMin", vec2(ax, ay));
-      call(rect, "set_anchorMax", vec2(ax, ay));
-      call(rect, "set_pivot", vec2(px, py));
-      call(rect, "set_anchoredPosition", vec2(x, y));
-      call(rect, "set_sizeDelta", vec2(width, height));
-      return rect;
-    }
-    function uiStretch(rect) {
-      call(rect, "set_anchorMin", vec2(0, 0));
-      call(rect, "set_anchorMax", vec2(1, 1));
-      call(rect, "set_offsetMin", vec2(0, 0));
-      call(rect, "set_offsetMax", vec2(0, 0));
-    }
-    function uiXY(value) {
-      return { x: Number(value.field("x").value), y: Number(value.field("y").value) };
-    }
-    function uiEnum(type, field) {
-      const c = ucls(type);
-      return enumBox(c, enumVal(c.field(field).value));
-    }
-    function uiList(type) {
-      const klass = Il2Cpp.corlib.class("System.Collections.Generic.List`1").inflate(type);
-      const list = klass.alloc();
-      list.method(".ctor").overload().invoke();
-      return list;
-    }
-    function uiPlain(text) {
-      return String(text).replace(/</g, "\u2039").replace(/>/g, "\u203A");
-    }
-    function uiLogTree(root, prefix) {
-      const queue = [{ node: root, path: "", depth: 0 }];
-      let visited = 0, line = "";
-      while (queue.length && visited++ < 140) {
-        const item = queue.shift();
-        const path = `${item.path}/${String(call(item.node, "get_name")?.content || "")}`;
-        if (line.length + path.length > 700) {
-          log(`${prefix}: ${line}`);
-          line = "";
-        }
-        line += `${path} | `;
-        if (item.depth >= 6) continue;
-        for (let i = 0, count = Math.min(80, Number(call(item.node, "get_childCount"))); i < count; i++)
-          queue.push({ node: call(item.node, "GetChild", i), path, depth: item.depth + 1 });
-      }
-      if (line) log(`${prefix}: ${line}`);
-    }
-    let uiFontHandle = null;
-    function uiFont() {
-      if (uiFontHandle) return uiFontHandle.target;
-      const objects = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("TMPro.TextMeshProUGUI").type.object);
-      const root = objects.object.ref(false);
-      try {
-        let fallback = null;
-        for (let i = 0; i < objects.length; i++) {
-          const font = call(objects.get(i), "get_font");
-          if (isNull(font)) continue;
-          fallback = fallback || font;
-          try {
-            if (/Merriweather/i.test(String(call(font, "get_name")?.content))) {
-              fallback = font;
-              break;
-            }
-          } catch (_) {
-          }
-        }
-        if (!fallback) fallback = ucls("TMPro.TMP_FontAsset").method("get_defaultFontAsset").invoke();
-        if (isNull(fallback)) throw Error("No loaded TMP font");
-        uiFontHandle = fallback.ref(false);
-        return fallback;
-      } finally {
-        root.free();
-      }
-    }
-    function uiText(go, text, size = 20) {
-      const label = uiAdd(go, "TMPro.TextMeshProUGUI"), root = label.ref(false);
-      try {
-        call(label, "set_font", uiFont());
-        call(label, "set_fontSize", size);
-        call(label, "set_enableAutoSizing", false);
-        call(label, "set_raycastTarget", false);
-        call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Center"));
-        call(label, "set_color", rgba(1, 1, 1, 1));
-        call(label, "set_text", Il2Cpp.string(text));
-        return label;
-      } finally {
-        root.free();
-      }
-    }
-    function uiButton(go, graphic, action) {
-      const button = uiAdd(go, "UnityEngine.UI.Button");
-      call(button, "set_targetGraphic", graphic);
-      const callback = Il2Cpp.delegate(ucls("UnityEngine.Events.UnityAction"), () => {
-        try {
-          action();
-        } catch (error) {
-          log(`UI button failed: ${error}`);
-        }
-      });
-      call(call(button, "get_onClick"), "AddListener", callback);
-      return button;
-    }
-    function uiLabeledButton(name, parent, text, x, y, width, action) {
-      const go = uiNew(name, parent);
-      uiPlace(go, 1, 1, 1, 1, x, y, width, 28);
-      const bg = uiAdd(go, "UnityEngine.UI.Image");
-      call(bg, "set_color", rgba(0.12, 0.12, 0.12, 0.96));
-      const labelGO = uiNew("Label", call(go, "get_transform"));
-      uiStretch(uiRect(labelGO));
-      uiText(labelGO, text, 18);
-      uiButton(go, bg, action);
-      return go;
-    }
-    section("native localized language state", () => {
-      const localization = cls(img, "LocalizationManager"), set = localization.method("SetLanguage", 2);
-      const type = set.parameters[0].type;
-      let pending2 = false, nextCheck = 0, attempts = 0, lastChoice = "", lastError = "";
-      const resolved = /* @__PURE__ */ new Map();
-      function codeOf(name) {
-        const raw = String(name || "").toLowerCase().replace(/[^a-zа-яё]/g, "").replace(/^(localizedlanguage|language|locale)/, "");
-        const aliases = {
-          en_us: ["en", "enus", "engb", "english", "englishus", "englishuk", "englishunitedstates"],
-          de_de: ["de", "dede", "german", "deutsch"],
-          es_es: ["es", "eses", "spanish", "spanishspain"],
-          es_mx: ["esmx", "spanishmexico", "mexicanspanish", "spanishlatinamerica", "latinamericanspanish"],
-          fr_fr: ["fr", "frfr", "french", "fran\xE7ais"],
-          it_it: ["it", "itit", "italian", "italiano"],
-          pl_pl: ["pl", "plpl", "polish", "polski"],
-          pt_br: ["pt", "ptbr", "portuguese", "portuguesebrazil", "brazilianportuguese"],
-          ru_ru: ["ru", "ruru", "russian", "russianru", "\u0440\u0443\u0441\u0441\u043A\u0438\u0439"],
-          tr_tr: ["tr", "trtr", "turkish", "t\xFCrk\xE7e"]
-        };
-        return Object.keys(aliases).find((code) => aliases[code].includes(raw)) || languageLabel(name);
-      }
-      function objectCode(object) {
-        if (isNull(object)) return;
-        for (const field of object.class.fields.filter((f) => !f.isStatic && f.type.name === "System.String" && /code|name|language/i.test(f.name))) {
-          const code = codeOf(object.field(field.name).value?.content);
-          if (code) return code;
-        }
-      }
-      function resolve(code, manager = null) {
-        if (resolved.has(code)) return resolved.get(code);
-        if (type.class.isEnum) {
-          const field = type.class.fields.find((f) => f.isStatic && codeOf(f.name) === code);
-          if (!field) return null;
-          const value = field.value, numeric = enumVal(value);
-          if (numeric < 0) return null;
-          const entry2 = { raw: ptr(numeric), managed: value, name: field.name };
-          resolved.set(code, entry2);
-          return entry2;
-        }
-        if (type.class.isValueType) return null;
-        const candidates = [];
-        for (const field of type.class.fields.filter((f) => f.isStatic && f.type.name === type.name)) candidates.push(field.value);
-        if (manager) for (const field of manager.class.fields.filter((f) => !f.isStatic && f.type.name.includes(type.name))) {
-          const value = manager.field(field.name).value;
-          if (isNull(value)) continue;
-          if (field.type.name === type.name) candidates.push(value);
-          else if (field.type.name.endsWith("[]")) {
-            for (let i = 0; i < Math.min(value.length, 32); i++) candidates.push(value.get(i));
-          } else {
-            try {
-              for (let i = 0, n = Math.min(32, Number(call(value, "get_Count"))); i < n; i++) candidates.push(call(value, "get_Item", i));
-            } catch (_) {
-            }
-          }
-        }
-        const object = candidates.find((value) => objectCode(value) === code);
-        if (!object) return null;
-        const retained = object.ref(false), entry = { raw: retained.target.handle, managed: retained.target, name: code, retained };
-        resolved.set(code, entry);
-        return entry;
-      }
-      function pin(method) {
-        if (!method || method.virtualAddress.isNull()) return;
-        hookAttach(method.virtualAddress, { onEnter(args) {
-          try {
-            const selected = resourceLanguage(), value = selected && resolve(selected, method === set && !set.isStatic ? new Il2Cpp.Object(args[0]) : null);
-            if (value) args[method.isStatic ? 0 : 1] = value.raw;
-          } catch (error) {
-            log(`language state: ${method.name} argument: ${error}`);
-          }
-        } });
-      }
-      pin(set);
-      let settings = null;
-      try {
-        settings = cls(img, "SettingsManager");
-        const setter = settings.tryMethod("SetCurrentLanguage", 1);
-        if (setter) pin(setter);
+        const self = job.ref.target;
+        self.field(state.name).value = -1;
+        self.field(current.name).value = ptr(0);
+        self.field(operation.name).value = ptr(0);
       } catch (_) {
       }
-      for (const [owner, name] of [[localization, "GetSystemDefaultLanguage"], [settings, "GetCurrentLanguage"]]) {
-        try {
-          const method = owner?.tryMethod(name, 0);
-          if (!method || method.returnType.name !== type.name || method.virtualAddress.isNull()) continue;
-          hookAttach(method.virtualAddress, { onLeave(result) {
-            try {
-              const value = resolve(resourceLanguage());
-              if (value) result.replace(value.raw);
-            } catch (_) {
-            }
-          } });
-        } catch (_) {
-        }
-      }
-      function check() {
-        if (pending2 || Date.now() < nextCheck) return;
-        nextCheck = Date.now() + 1500;
-        const selected = resourceLanguage();
-        if (!selected) return;
-        if (selected !== lastChoice) {
-          lastChoice = selected;
-          attempts = 0;
-        }
-        try {
-          const manager = localization.method("get_Instance", 0).invoke();
-          if (isNull(manager)) return;
-          const actual = String(call(manager, "get_CurrentLanguageCode")?.content || "");
-          if (codeOf(actual) === selected) return;
-          const value = resolve(selected, manager);
-          if (!value) {
-            const error = `Cannot resolve ${type.name} for ${selected}`;
-            if (error !== lastError) {
-              lastError = error;
-              log(`language state: ${error}`);
-            }
+      job.ref.free();
+    }
+    function poll(job) {
+      if (jobs.get(job.key) !== job) return;
+      try {
+        const self = job.ref.target;
+        if (!job.started) {
+          job.started = true;
+          report("store-request", job.path);
+          const result = catalog.method("get_Instance", 0).invoke().method(load.name).overload("System.String", "System.Type", "System.String").invoke(Il2Cpp.string(job.path), sprite.type.object, Il2Cpp.string("png"));
+          if (isNull(result)) {
+            report("store-missing", job.path);
+            finish(job);
             return;
           }
-          if (attempts >= 3) return;
-          pending2 = true;
-          attempts++;
-          const retained = manager.ref(false);
-          schedule(0, () => {
-            const previous = globalThis.__teslLanguageSyncing;
-            globalThis.__teslLanguageSyncing = true;
-            try {
-              retained.target.method("SetLanguage", 2).invoke(value.managed, false);
-              restoreLocalization(retained.target, selected);
-              retained.target.method("UpdateObjects", 0).invoke();
-              if (settings) try {
-                const current = settings.method("get_Instance", 0).invoke();
-                if (!isNull(current)) current.method("SetCurrentLanguage", 1).invoke(value.managed);
-              } catch (_) {
-              }
-              const after = String(call(retained.target, "get_CurrentLanguageCode")?.content || "");
-              writeTextFile(`${persistentPath()}/tesl-reborn-language-state.json`, JSON.stringify({ revision: 32, selected, before: actual, after, type: type.name, value: value.name, attempt: attempts }));
-              log(`language state: ${actual} -> ${after}; selected ${selected}, ${value.name}`);
-            } catch (error) {
-              log(`language state: initialization failed: ${error}`);
-            } finally {
-              globalThis.__teslLanguageSyncing = previous;
-              pending2 = false;
-              retained.free();
-            }
-          });
-        } catch (error) {
-          log(`language state: ${error}`);
+          self.field(operation.name).value = result;
         }
-      }
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave: check });
-      schedule(0, check);
-    });
-    const nativeUiSprites = /* @__PURE__ */ new Map();
-    function loadNativeUiSprite(path, image, onLoaded = () => {
-    }) {
-      const cached = nativeUiSprites.get(path);
-      if (cached) try {
-        if (!isNull(cached.target)) {
-          if (image) {
-            call(image, "set_sprite", cached.target);
-            call(image, "set_color", rgba(1, 1, 1, 1));
+        const op = self.field(operation.name).value;
+        if (call(op, "IsDone")) {
+          const asset = op.method("GetAsset", 0).inflate(sprite).invoke();
+          self.field(state.name).value = -1;
+          if (isNull(asset)) report("store-missing", job.path);
+          else {
+            report("store-loaded", job.path);
+            const callback = self.field("callback").value;
+            if (!isNull(callback)) invokeDelegatePtr(callback, asset.handle);
           }
-          onLoaded();
+          finish(job);
           return;
         }
+        if (Date.now() > job.deadline) {
+          report("store-timeout", job.path);
+          finish(job);
+          return;
+        }
+        schedule(50, () => poll(job), "store image poll");
+      } catch (error) {
+        report("store-error", job.path);
+        log(`store image failure: ${error}`);
+        finish(job);
+      }
+    }
+    const factory = owner.methods.find((m) => m.name === "LoadStoreImageCoroutine" && m.isStatic && m.parameterCount === 4);
+    if (!factory || factory.virtualAddress.isNull()) throw Error("Store image factory unavailable");
+    hookAttach(factory.virtualAddress, { onLeave(ret) {
+      if (ret.isNull()) return;
+      try {
+        const self = new Il2Cpp.Object(ret), path = String(self.field("imageUrl").value?.content || "");
+        if (!rebornStoreImagePath(path)) return;
+        self.field(state.name).value = -1;
+        self.field(current.name).value = ptr(0);
+        if (jobs.size >= 64) {
+          report("store-busy", path);
+          return;
+        }
+        const key = self.handle.toString();
+        if (jobs.has(key)) return;
+        const job = { key, ref: self.ref(false), path, deadline: Date.now() + 2e4, started: false };
+        jobs.set(key, job);
+        report("store-queued", path);
+        schedule(0, () => poll(job), "store image poll");
+      } catch (error) {
+        log(`store image factory failure: ${error}`);
+      }
+    } });
+    log(`store image: direct Sprite/png loading via ${iterator.name}`);
+  });
+  section("localization asset trace", () => {
+    const catalog = cls(img, "AssetCatalog");
+    let lastEnterPath = "", lastLoggedPath = "", lastLoggedAt = 0;
+    for (const m of catalog.methods.filter((x) => x.name === "LoadAssetFromPathAsync")) {
+      hookAttach(m.virtualAddress, {
+        onEnter(args) {
+          this.path = rawStr(args[1]);
+          if (this.path !== lastEnterPath) {
+            lastEnterPath = this.path;
+            const probe = globalThis.__teslRebornStallProbe;
+            if (probe) probe.loads++;
+          }
+          const selected = /\/Localization\/(?:Text|Audio)\//i.test(this.path) ? resourceLanguage() : "";
+          const next = localizedAssetPath(this.path, selected);
+          if (next !== this.path) {
+            this.replacement = Il2Cpp.string(next).object.ref(false);
+            args[1] = this.replacement.target.handle;
+            this.path = next;
+          }
+          recordResourceEvent("asset-request", this.path);
+        },
+        onLeave(ret) {
+          if (this.replacement) this.replacement.free();
+          recordResourceEvent(ret.isNull() ? "asset-null" : "asset-operation", this.path);
+          const path = this.path ?? "";
+          if (path.toLowerCase().indexOf("localization") < 0 && !ret.isNull()) return;
+          if (path === lastLoggedPath && Date.now() - lastLoggedAt < 100) return;
+          lastLoggedPath = path;
+          lastLoggedAt = Date.now();
+          log(`LoadAssetFromPathAsync("${path}") -> ${ret.isNull() ? "NULL (not in the asset map)" : "ok"}`);
+        }
+      });
+    }
+  });
+  section("bundle hash report", () => {
+    const mgr = cls(img, "AssetBundles.AssetBundleManager");
+    const catalog = cls(img, "AssetCatalog");
+    const target = "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/tesl-bundle-hashes.txt";
+    let written = false, attempts = 0, last = 0;
+    hookAttach(catalog.method("SetCacheExpiration").virtualAddress, {
+      onEnter() {
+        const now = Date.now();
+        if (written || attempts >= 3 || attempts > 0 && now - last < 6e4) return;
+        last = now;
+        attempts++;
+        const started = now;
+        try {
+          const manifest = mgr.field("m_AssetBundleManifest").value;
+          if (isNull(manifest)) {
+            log("bundle hashes: the manifest is not loaded yet");
+            return;
+          }
+          const names = manifest.method("GetAllAssetBundles").invoke();
+          const lines = [];
+          for (let i = 0; i < names.length; i++) {
+            const name = names.get(i)?.content ?? "";
+            const hash = manifest.method("GetAssetBundleHash").invoke(Il2Cpp.string(name));
+            const hex = String(hash?.method("ToString").invoke()?.content ?? "");
+            lines.push(`${name} ${hex}`);
+          }
+          Il2Cpp.corlib.class("System.IO.File").method("WriteAllText").invoke(Il2Cpp.string(target), Il2Cpp.string(lines.join("\n")));
+          written = true;
+          log(`bundle hashes: wrote ${lines.length} entries to ${target} in ${Date.now() - started}ms`);
+        } catch (e) {
+          log(`bundle hash report failed: ${e}`);
+        }
+      }
+    });
+  });
+  function uiComponent(go, type) {
+    return go.method("GetComponent").overload("System.Type").invoke(ucls(type).type.object);
+  }
+  function uiAdd(go, type) {
+    return go.method("AddComponent").overload("System.Type").invoke(ucls(type).type.object);
+  }
+  function uiNew(name, parent) {
+    const go = newWith(
+      ucls("UnityEngine.GameObject"),
+      Il2Cpp.string(name),
+      Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [ucls("UnityEngine.RectTransform").type.object])
+    );
+    const root = go.ref(false);
+    try {
+      call(go, "set_layer", Number(call(call(parent, "get_gameObject"), "get_layer")));
+      call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(parent, false);
+      return go;
+    } finally {
+      root.free();
+    }
+  }
+  function uiRect(go) {
+    return uiComponent(go, "UnityEngine.RectTransform");
+  }
+  function uiPlace(go, ax, ay, px, py, x, y, width, height) {
+    const rect = uiRect(go);
+    call(rect, "set_anchorMin", vec2(ax, ay));
+    call(rect, "set_anchorMax", vec2(ax, ay));
+    call(rect, "set_pivot", vec2(px, py));
+    call(rect, "set_anchoredPosition", vec2(x, y));
+    call(rect, "set_sizeDelta", vec2(width, height));
+    return rect;
+  }
+  function uiStretch(rect) {
+    call(rect, "set_anchorMin", vec2(0, 0));
+    call(rect, "set_anchorMax", vec2(1, 1));
+    call(rect, "set_offsetMin", vec2(0, 0));
+    call(rect, "set_offsetMax", vec2(0, 0));
+  }
+  function uiXY(value) {
+    return { x: Number(value.field("x").value), y: Number(value.field("y").value) };
+  }
+  function uiEnum(type, field) {
+    const c = ucls(type);
+    return enumBox(c, enumVal(c.field(field).value));
+  }
+  function uiList(type) {
+    const klass = Il2Cpp.corlib.class("System.Collections.Generic.List`1").inflate(type);
+    const list = klass.alloc();
+    list.method(".ctor").overload().invoke();
+    return list;
+  }
+  function uiPlain(text) {
+    return String(text).replace(/</g, "\u2039").replace(/>/g, "\u203A");
+  }
+  function uiLogTree(root, prefix) {
+    const queue = [{ node: root, path: "", depth: 0 }];
+    let visited = 0, line = "";
+    while (queue.length && visited++ < 140) {
+      const item = queue.shift();
+      const path = `${item.path}/${String(call(item.node, "get_name")?.content || "")}`;
+      if (line.length + path.length > 700) {
+        log(`${prefix}: ${line}`);
+        line = "";
+      }
+      line += `${path} | `;
+      if (item.depth >= 6) continue;
+      for (let i = 0, count = Math.min(80, Number(call(item.node, "get_childCount"))); i < count; i++)
+        queue.push({ node: call(item.node, "GetChild", i), path, depth: item.depth + 1 });
+    }
+    if (line) log(`${prefix}: ${line}`);
+  }
+  let uiFontHandle = null;
+  function uiFont() {
+    if (uiFontHandle) return uiFontHandle.target;
+    const objects = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("TMPro.TextMeshProUGUI").type.object);
+    const root = objects.object.ref(false);
+    try {
+      let fallback = null;
+      for (let i = 0; i < objects.length; i++) {
+        const font = call(objects.get(i), "get_font");
+        if (isNull(font)) continue;
+        fallback = fallback || font;
+        try {
+          if (/Merriweather/i.test(String(call(font, "get_name")?.content))) {
+            fallback = font;
+            break;
+          }
+        } catch (_) {
+        }
+      }
+      if (!fallback) fallback = ucls("TMPro.TMP_FontAsset").method("get_defaultFontAsset").invoke();
+      if (isNull(fallback)) throw Error("No loaded TMP font");
+      uiFontHandle = fallback.ref(false);
+      return fallback;
+    } finally {
+      root.free();
+    }
+  }
+  function uiText(go, text, size = 20) {
+    const label = uiAdd(go, "TMPro.TextMeshProUGUI"), root = label.ref(false);
+    try {
+      call(label, "set_font", uiFont());
+      call(label, "set_fontSize", size);
+      call(label, "set_enableAutoSizing", false);
+      call(label, "set_raycastTarget", false);
+      call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Center"));
+      call(label, "set_color", rgba(1, 1, 1, 1));
+      call(label, "set_text", Il2Cpp.string(text));
+      return label;
+    } finally {
+      root.free();
+    }
+  }
+  function uiButton(go, graphic, action) {
+    const button = uiAdd(go, "UnityEngine.UI.Button");
+    call(button, "set_targetGraphic", graphic);
+    const callback = Il2Cpp.delegate(ucls("UnityEngine.Events.UnityAction"), () => {
+      try {
+        action();
+      } catch (error) {
+        log(`UI button failed: ${error}`);
+      }
+    });
+    call(call(button, "get_onClick"), "AddListener", callback);
+    return button;
+  }
+  function uiLabeledButton(name, parent, text, x, y, width, action) {
+    const go = uiNew(name, parent);
+    uiPlace(go, 1, 1, 1, 1, x, y, width, 28);
+    const bg = uiAdd(go, "UnityEngine.UI.Image");
+    call(bg, "set_color", rgba(0.12, 0.12, 0.12, 0.96));
+    const labelGO = uiNew("Label", call(go, "get_transform"));
+    uiStretch(uiRect(labelGO));
+    uiText(labelGO, text, 18);
+    uiButton(go, bg, action);
+    return go;
+  }
+  section("native localized language state", () => {
+    const localization = cls(img, "LocalizationManager"), set = localization.method("SetLanguage", 2);
+    const type = set.parameters[0].type;
+    let pending2 = false, nextCheck = 0, attempts = 0, lastChoice = "", lastError = "";
+    const resolved = /* @__PURE__ */ new Map();
+    function codeOf(name) {
+      const raw = String(name || "").toLowerCase().replace(/[^a-zа-яё]/g, "").replace(/^(localizedlanguage|language|locale)/, "");
+      const aliases = {
+        en_us: ["en", "enus", "engb", "english", "englishus", "englishuk", "englishunitedstates"],
+        de_de: ["de", "dede", "german", "deutsch"],
+        es_es: ["es", "eses", "spanish", "spanishspain"],
+        es_mx: ["esmx", "spanishmexico", "mexicanspanish", "spanishlatinamerica", "latinamericanspanish"],
+        fr_fr: ["fr", "frfr", "french", "fran\xE7ais"],
+        it_it: ["it", "itit", "italian", "italiano"],
+        pl_pl: ["pl", "plpl", "polish", "polski"],
+        pt_br: ["pt", "ptbr", "portuguese", "portuguesebrazil", "brazilianportuguese"],
+        ru_ru: ["ru", "ruru", "russian", "russianru", "\u0440\u0443\u0441\u0441\u043A\u0438\u0439"],
+        tr_tr: ["tr", "trtr", "turkish", "t\xFCrk\xE7e"]
+      };
+      return Object.keys(aliases).find((code) => aliases[code].includes(raw)) || languageLabel(name);
+    }
+    function objectCode(object) {
+      if (isNull(object)) return;
+      for (const field of object.class.fields.filter((f) => !f.isStatic && f.type.name === "System.String" && /code|name|language/i.test(f.name))) {
+        const code = codeOf(object.field(field.name).value?.content);
+        if (code) return code;
+      }
+    }
+    function resolve(code, manager = null) {
+      if (resolved.has(code)) return resolved.get(code);
+      if (type.class.isEnum) {
+        const field = type.class.fields.find((f) => f.isStatic && codeOf(f.name) === code);
+        if (!field) return null;
+        const value = field.value, numeric = enumVal(value);
+        if (numeric < 0) return null;
+        const entry2 = { raw: ptr(numeric), managed: value, name: field.name };
+        resolved.set(code, entry2);
+        return entry2;
+      }
+      if (type.class.isValueType) return null;
+      const candidates = [];
+      for (const field of type.class.fields.filter((f) => f.isStatic && f.type.name === type.name)) candidates.push(field.value);
+      if (manager) for (const field of manager.class.fields.filter((f) => !f.isStatic && f.type.name.includes(type.name))) {
+        const value = manager.field(field.name).value;
+        if (isNull(value)) continue;
+        if (field.type.name === type.name) candidates.push(value);
+        else if (field.type.name.endsWith("[]")) {
+          for (let i = 0; i < Math.min(value.length, 32); i++) candidates.push(value.get(i));
+        } else {
+          try {
+            for (let i = 0, n = Math.min(32, Number(call(value, "get_Count"))); i < n; i++) candidates.push(call(value, "get_Item", i));
+          } catch (_) {
+          }
+        }
+      }
+      const object = candidates.find((value) => objectCode(value) === code);
+      if (!object) return null;
+      const retained = object.ref(false), entry = { raw: retained.target.handle, managed: retained.target, name: code, retained };
+      resolved.set(code, entry);
+      return entry;
+    }
+    function pin(method) {
+      if (!method || method.virtualAddress.isNull()) return;
+      hookAttach(method.virtualAddress, { onEnter(args) {
+        try {
+          const selected = resourceLanguage(), value = selected && resolve(selected, method === set && !set.isStatic ? new Il2Cpp.Object(args[0]) : null);
+          if (value) args[method.isStatic ? 0 : 1] = value.raw;
+        } catch (error) {
+          log(`language state: ${method.name} argument: ${error}`);
+        }
+      } });
+    }
+    pin(set);
+    let settings = null;
+    try {
+      settings = cls(img, "SettingsManager");
+      const setter = settings.tryMethod("SetCurrentLanguage", 1);
+      if (setter) pin(setter);
+    } catch (_) {
+    }
+    for (const [owner, name] of [[localization, "GetSystemDefaultLanguage"], [settings, "GetCurrentLanguage"]]) {
+      try {
+        const method = owner?.tryMethod(name, 0);
+        if (!method || method.returnType.name !== type.name || method.virtualAddress.isNull()) continue;
+        hookAttach(method.virtualAddress, { onLeave(result) {
+          try {
+            const value = resolve(resourceLanguage());
+            if (value) result.replace(value.raw);
+          } catch (_) {
+          }
+        } });
       } catch (_) {
       }
-      const retained = image ? image.ref(false) : null, started = Date.now();
-      let operation = null;
-      function release() {
-        if (operation) {
-          operation.free();
-          operation = null;
-        }
-        if (retained) retained.free();
+    }
+    function check() {
+      if (pending2 || Date.now() < nextCheck) return;
+      nextCheck = Date.now() + 1500;
+      const selected = resourceLanguage();
+      if (!selected) return;
+      if (selected !== lastChoice) {
+        lastChoice = selected;
+        attempts = 0;
       }
-      function poll() {
-        try {
-          if (!operation) {
-            const catalog = cls(img, "AssetCatalog").method("get_Instance", 0).invoke();
-            const value = catalog.method("LoadAssetFromPathAsync").overload("System.String", "System.Type", "System.String").invoke(Il2Cpp.string(path), ucls("UnityEngine.Sprite").type.object, Il2Cpp.string("png"));
-            if (isNull(value)) {
-              release();
-              return;
-            }
-            operation = value.ref(false);
+      try {
+        const manager = localization.method("get_Instance", 0).invoke();
+        if (isNull(manager)) return;
+        const actual = String(call(manager, "get_CurrentLanguageCode")?.content || "");
+        if (codeOf(actual) === selected) return;
+        const value = resolve(selected, manager);
+        if (!value) {
+          const error = `Cannot resolve ${type.name} for ${selected}`;
+          if (error !== lastError) {
+            lastError = error;
+            log(`language state: ${error}`);
           }
-          if (call(operation.target, "IsDone")) {
-            const sprite = operation.target.method("GetAsset", 0).inflate(ucls("UnityEngine.Sprite")).invoke();
-            if (!isNull(sprite)) {
-              if (!nativeUiSprites.has(path)) nativeUiSprites.set(path, sprite.ref(false));
-              if (retained) {
-                call(retained.target, "set_sprite", sprite);
-                call(retained.target, "set_color", rgba(1, 1, 1, 1));
-              }
-              onLoaded();
+          return;
+        }
+        if (attempts >= 3) return;
+        pending2 = true;
+        attempts++;
+        const retained = manager.ref(false);
+        schedule(0, () => {
+          const previous = globalThis.__teslLanguageSyncing;
+          globalThis.__teslLanguageSyncing = true;
+          try {
+            retained.target.method("SetLanguage", 2).invoke(value.managed, false);
+            restoreLocalization(retained.target, selected);
+            retained.target.method("UpdateObjects", 0).invoke();
+            if (settings) try {
+              const current = settings.method("get_Instance", 0).invoke();
+              if (!isNull(current)) current.method("SetCurrentLanguage", 1).invoke(value.managed);
+            } catch (_) {
             }
+            const after = String(call(retained.target, "get_CurrentLanguageCode")?.content || "");
+            writeTextFile(`${persistentPath()}/tesl-reborn-language-state.json`, JSON.stringify({ revision: 32, selected, before: actual, after, type: type.name, value: value.name, attempt: attempts }));
+            log(`language state: ${actual} -> ${after}; selected ${selected}, ${value.name}`);
+          } catch (error) {
+            log(`language state: initialization failed: ${error}`);
+          } finally {
+            globalThis.__teslLanguageSyncing = previous;
+            pending2 = false;
+            retained.free();
+          }
+        });
+      } catch (error) {
+        log(`language state: ${error}`);
+      }
+    }
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave: check });
+    schedule(0, check);
+  });
+  const nativeUiSprites = /* @__PURE__ */ new Map();
+  function loadNativeUiSprite(path, image, onLoaded = () => {
+  }) {
+    const cached = nativeUiSprites.get(path);
+    if (cached) try {
+      if (!isNull(cached.target)) {
+        if (image) {
+          call(image, "set_sprite", cached.target);
+          call(image, "set_color", rgba(1, 1, 1, 1));
+        }
+        onLoaded();
+        return;
+      }
+    } catch (_) {
+    }
+    const retained = image ? image.ref(false) : null, started = Date.now();
+    let operation = null;
+    function release() {
+      if (operation) {
+        operation.free();
+        operation = null;
+      }
+      if (retained) retained.free();
+    }
+    function poll() {
+      try {
+        if (!operation) {
+          const catalog = cls(img, "AssetCatalog").method("get_Instance", 0).invoke();
+          const value = catalog.method("LoadAssetFromPathAsync").overload("System.String", "System.Type", "System.String").invoke(Il2Cpp.string(path), ucls("UnityEngine.Sprite").type.object, Il2Cpp.string("png"));
+          if (isNull(value)) {
             release();
             return;
           }
-          if (Date.now() - started > 2e4) {
-            release();
-            return;
+          operation = value.ref(false);
+        }
+        if (call(operation.target, "IsDone")) {
+          const sprite = operation.target.method("GetAsset", 0).inflate(ucls("UnityEngine.Sprite")).invoke();
+          if (!isNull(sprite)) {
+            if (!nativeUiSprites.has(path)) nativeUiSprites.set(path, sprite.ref(false));
+            if (retained) {
+              call(retained.target, "set_sprite", sprite);
+              call(retained.target, "set_color", rgba(1, 1, 1, 1));
+            }
+            onLoaded();
           }
-          schedule(50, poll);
-        } catch (error) {
-          log(`native UI sprite: ${path}: ${error}`);
           release();
+          return;
+        }
+        if (Date.now() - started > 2e4) {
+          release();
+          return;
+        }
+        schedule(50, poll);
+      } catch (error) {
+        log(`native UI sprite: ${path}: ${error}`);
+        release();
+      }
+    }
+    schedule(0, poll);
+  }
+  function uiRetryGate(now, limit = 3) {
+    let first = null, next = 0, failures = 0;
+    return {
+      allow() {
+        if (first === null) {
+          first = now();
+          return false;
+        }
+        return failures < limit && now() - first >= 500 && now() >= next;
+      },
+      fail() {
+        failures++;
+        next = now() + Math.min(5e3, 1e3 * failures);
+      },
+      success() {
+        failures = 0;
+        next = 0;
+      },
+      count() {
+        return failures;
+      }
+    };
+  }
+  function deckSearchText(go, text, size) {
+    const label = uiAdd(go, "UnityEngine.UI.Text"), root = label.ref(false);
+    try {
+      const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
+      if (isNull(font)) throw Error("Deck search font unavailable");
+      call(label, "set_font", font);
+      call(label, "set_fontSize", size);
+      call(label, "set_resizeTextForBestFit", false);
+      call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleLeft"));
+      call(label, "set_supportRichText", false);
+      call(label, "set_color", rgba(1, 1, 1, 1));
+      call(label, "set_raycastTarget", false);
+      call(label, "set_text", Il2Cpp.string(text));
+      return label;
+    } finally {
+      root.free();
+    }
+  }
+  function deckSearchInput(go, label, image) {
+    const input = uiAdd(go, "UnityEngine.UI.InputField"), root = input.ref(false);
+    try {
+      call(input, "set_textComponent", label);
+      call(input, "set_targetGraphic", image);
+      call(input, "set_lineType", enumBox(input.method("set_lineType", 1).parameters[0].type.class, 0));
+      call(input, "set_characterLimit", 100);
+      return input;
+    } finally {
+      root.free();
+    }
+  }
+  function styleLikeGameInput(ours, label, hint) {
+    const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.InputField").type.object);
+    const order = [];
+    for (let i = 0; i < values.length; i++) {
+      const game = values.get(i);
+      let name = "";
+      try {
+        name = String(call(call(game, "get_gameObject"), "get_name")?.content || "");
+      } catch (_) {
+      }
+      order.push({ game, rank: /DeckName/i.test(name) ? 0 : /^Input/i.test(name) ? 1 : 2 });
+    }
+    order.sort((a, b) => a.rank - b.rank);
+    for (const { game } of order) {
+      if (!unityAlive(game) || game.handle.equals(ours.handle)) continue;
+      const text = call(game, "get_textComponent");
+      if (!unityAlive(text) || isNull(call(text, "get_font"))) continue;
+      call(label, "set_font", call(text, "get_font"));
+      call(label, "set_fontStyle", call(text, "get_fontStyle"));
+      call(label, "set_color", call(text, "get_color"));
+      const placeholder = call(game, "get_placeholder");
+      if (hint && unityAlive(placeholder) && placeholder.class.type.name === "UnityEngine.UI.Text") {
+        call(hint, "set_font", call(placeholder, "get_font"));
+        call(hint, "set_fontStyle", call(placeholder, "get_fontStyle"));
+        call(hint, "set_color", call(placeholder, "get_color"));
+      } else if (hint) call(hint, "set_font", call(text, "get_font"));
+      try {
+        const theirs = call(game, "get_targetGraphic"), mine = call(ours, "get_targetGraphic");
+        if (unityAlive(theirs) && unityAlive(mine) && theirs.class.type.name === "UnityEngine.UI.Image" && !isNull(call(theirs, "get_sprite"))) {
+          call(mine, "set_sprite", call(theirs, "get_sprite"));
+          call(mine, "set_type", call(theirs, "get_type"));
+          call(mine, "set_color", call(theirs, "get_color"));
+        }
+      } catch (_) {
+      }
+      let keyboard = "";
+      for (const name of ["shouldHideMobileInput", "keyboardType", "inputType", "contentType"]) {
+        try {
+          const value = call(game, `get_${name}`);
+          call(ours, `set_${name}`, value);
+          keyboard += ` ${name}=${typeof value === "boolean" ? value : enumVal(value)}`;
+        } catch (_) {
         }
       }
-      schedule(0, poll);
+      return String(call(call(game, "get_gameObject"), "get_name")?.content || "InputField") + keyboard;
     }
-    function uiRetryGate(now, limit = 3) {
-      let first = null, next = 0, failures = 0;
-      return {
-        allow() {
-          if (first === null) {
-            first = now();
-            return false;
-          }
-          return failures < limit && now() - first >= 500 && now() >= next;
-        },
-        fail() {
-          failures++;
-          next = now() + Math.min(5e3, 1e3 * failures);
-        },
-        success() {
-          failures = 0;
-          next = 0;
-        },
-        count() {
-          return failures;
+    return null;
+  }
+  function deckSearchMatches(name, query) {
+    const normalize = (value) => String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g, "").trim();
+    return normalize(name).includes(normalize(query));
+  }
+  let deckSearchStyleLogged = false;
+  section("mobile deck picker search", () => {
+    const picker = cls(img, "DeckPickerWin"), tile = cls(img, "DeckTile"), records = /* @__PURE__ */ new Map(), retries = /* @__PURE__ */ new Map();
+    const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+    let next = 0;
+    function cleanup(record) {
+      for (const ref of record.hidden.values()) {
+        try {
+          call(ref.target, "SetActive", true);
+        } catch (_) {
         }
+        ref.free();
+      }
+      try {
+        call(record.grid.target, "set_offsetMax", vec2(record.offset.x, record.offset.y));
+        ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(record.bar.target);
+      } catch (_) {
+      }
+      for (const name of ["self", "input", "bar", "grid"]) record[name].free();
+    }
+    function install(self) {
+      const roots = [];
+      let bar = null, gridRect = null, offset = null, committed = false, phase = "root";
+      const hold = (value) => {
+        if (!isNull(value)) roots.push(value.ref(false));
+        return value;
       };
-    }
-    function deckSearchText(go, text, size) {
-      const label = uiAdd(go, "UnityEngine.UI.Text"), root = label.ref(false);
+      const create = (...args) => hold(uiNew(...args));
       try {
-        const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
-        if (isNull(font)) throw Error("Deck search font unavailable");
-        call(label, "set_font", font);
-        call(label, "set_fontSize", size);
-        call(label, "set_resizeTextForBestFit", false);
-        call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleLeft"));
-        call(label, "set_supportRichText", false);
-        call(label, "set_color", rgba(1, 1, 1, 1));
-        call(label, "set_raycastTarget", false);
-        call(label, "set_text", Il2Cpp.string(text));
-        return label;
-      } finally {
-        root.free();
-      }
-    }
-    function deckSearchInput(go, label, image) {
-      const input = uiAdd(go, "UnityEngine.UI.InputField"), root = input.ref(false);
-      try {
-        call(input, "set_textComponent", label);
-        call(input, "set_targetGraphic", image);
-        call(input, "set_lineType", enumBox(input.method("set_lineType", 1).parameters[0].type.class, 0));
-        call(input, "set_characterLimit", 100);
-        return input;
-      } finally {
-        root.free();
-      }
-    }
-    function styleLikeGameInput(ours, label, hint) {
-      const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.InputField").type.object);
-      const order = [];
-      for (let i = 0; i < values.length; i++) {
-        const game = values.get(i);
-        let name = "";
+        hold(self);
+        const go = hold(call(self, "get_gameObject")), parent = hold(call(go, "get_transform")), grid = hold(self.field("_grid").value);
+        if (isNull(grid)) throw Error("Deck grid not initialized");
+        gridRect = hold(call(grid, "get_transform"));
         try {
-          name = String(call(call(game, "get_gameObject"), "get_name")?.content || "");
-        } catch (_) {
-        }
-        order.push({ game, rank: /DeckName/i.test(name) ? 0 : /^Input/i.test(name) ? 1 : 2 });
-      }
-      order.sort((a, b) => a.rank - b.rank);
-      for (const { game } of order) {
-        if (!unityAlive(game) || game.handle.equals(ours.handle)) continue;
-        const text = call(game, "get_textComponent");
-        if (!unityAlive(text) || isNull(call(text, "get_font"))) continue;
-        call(label, "set_font", call(text, "get_font"));
-        call(label, "set_fontStyle", call(text, "get_fontStyle"));
-        call(label, "set_color", call(text, "get_color"));
-        const placeholder = call(game, "get_placeholder");
-        if (hint && unityAlive(placeholder) && placeholder.class.type.name === "UnityEngine.UI.Text") {
-          call(hint, "set_font", call(placeholder, "get_font"));
-          call(hint, "set_fontStyle", call(placeholder, "get_fontStyle"));
-          call(hint, "set_color", call(placeholder, "get_color"));
-        } else if (hint) call(hint, "set_font", call(text, "get_font"));
-        try {
-          const theirs = call(game, "get_targetGraphic"), mine = call(ours, "get_targetGraphic");
-          if (unityAlive(theirs) && unityAlive(mine) && theirs.class.type.name === "UnityEngine.UI.Image" && !isNull(call(theirs, "get_sprite"))) {
-            call(mine, "set_sprite", call(theirs, "get_sprite"));
-            call(mine, "set_type", call(theirs, "get_type"));
-            call(mine, "set_color", call(theirs, "get_color"));
+          const scroll = grid.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.UI.ScrollRect").type.object);
+          if (!isNull(scroll)) {
+            const viewport2 = call(scroll, "get_viewport");
+            if (!isNull(viewport2)) gridRect = hold(viewport2);
           }
         } catch (_) {
         }
-        let keyboard = "";
-        for (const name of ["shouldHideMobileInput", "keyboardType", "inputType", "contentType"]) {
-          try {
-            const value = call(game, `get_${name}`);
-            call(ours, `set_${name}`, value);
-            keyboard += ` ${name}=${typeof value === "boolean" ? value : enumVal(value)}`;
-          } catch (_) {
-          }
-        }
-        return String(call(call(game, "get_gameObject"), "get_name")?.content || "InputField") + keyboard;
-      }
-      return null;
-    }
-    function deckSearchMatches(name, query) {
-      const normalize = (value) => String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/<[^>]*>/g, "").trim();
-      return normalize(name).includes(normalize(query));
-    }
-    let deckSearchStyleLogged = false;
-    section("mobile deck picker search", () => {
-      const picker = cls(img, "DeckPickerWin"), tile = cls(img, "DeckTile"), records = /* @__PURE__ */ new Map(), retries = /* @__PURE__ */ new Map();
-      const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-      let next = 0;
-      function cleanup(record) {
-        for (const ref of record.hidden.values()) {
-          try {
-            call(ref.target, "SetActive", true);
-          } catch (_) {
-          }
-          ref.free();
-        }
+        const old = call(gridRect, "get_offsetMax");
+        offset = { x: Number(old.field("x").value), y: Number(old.field("y").value) };
+        const stale = call(parent, "Find", Il2Cpp.string("RebornDeckSearch"));
+        if (!isNull(stale)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(stale, "get_gameObject"));
+        phase = "create bar";
+        bar = create("RebornDeckSearch", parent);
+        call(bar, "SetActive", false);
+        uiPlace(bar, 0.5, 1, 0.5, 1, 0, -6, 760, 68);
+        const image = hold(uiAdd(bar, "UnityEngine.UI.Image"));
+        call(image, "set_color", rgba(0.08, 0.08, 0.08, 0.96));
+        const viewport = create("TextViewport", call(bar, "get_transform"));
+        uiStretch(uiRect(viewport));
+        call(uiRect(viewport), "set_offsetMin", vec2(18, 6));
+        call(uiRect(viewport), "set_offsetMax", vec2(-96, -6));
+        const textGO = create("Text", call(viewport, "get_transform"));
+        uiStretch(uiRect(textGO));
+        phase = "text/input";
+        const label = hold(deckSearchText(textGO, "", 32)), input = hold(deckSearchInput(bar, label, image));
+        const placeholderGO = create("Placeholder", call(viewport, "get_transform"));
+        uiStretch(uiRect(placeholderGO));
+        const labels = { en_us: "Search decks\u2026", ru_ru: "\u041F\u043E\u0438\u0441\u043A \u043A\u043E\u043B\u043E\u0434\u2026", de_de: "Decks suchen\u2026", es_es: "Buscar mazos\u2026", es_mx: "Buscar mazos\u2026", fr_fr: "Rechercher un deck\u2026", it_it: "Cerca mazzi\u2026", pl_pl: "Szukaj talii\u2026", pt_br: "Buscar decks\u2026", tr_tr: "Deste ara\u2026" };
+        phase = "placeholder";
+        const hint = hold(deckSearchText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30));
+        call(hint, "set_color", rgba(0.65, 0.65, 0.65, 1));
+        call(input, "set_placeholder", hint);
+        phase = "game font";
         try {
-          call(record.grid.target, "set_offsetMax", vec2(record.offset.x, record.offset.y));
-          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(record.bar.target);
-        } catch (_) {
-        }
-        for (const name of ["self", "input", "bar", "grid"]) record[name].free();
-      }
-      function install(self) {
-        const roots = [];
-        let bar = null, gridRect = null, offset = null, committed = false, phase = "root";
-        const hold = (value) => {
-          if (!isNull(value)) roots.push(value.ref(false));
-          return value;
-        };
-        const create = (...args) => hold(uiNew(...args));
-        try {
-          hold(self);
-          const go = hold(call(self, "get_gameObject")), parent = hold(call(go, "get_transform")), grid = hold(self.field("_grid").value);
-          if (isNull(grid)) throw Error("Deck grid not initialized");
-          gridRect = hold(call(grid, "get_transform"));
-          try {
-            const scroll = grid.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.UI.ScrollRect").type.object);
-            if (!isNull(scroll)) {
-              const viewport2 = call(scroll, "get_viewport");
-              if (!isNull(viewport2)) gridRect = hold(viewport2);
-            }
-          } catch (_) {
+          const source = styleLikeGameInput(input, label, hint);
+          if (source && !deckSearchStyleLogged) {
+            deckSearchStyleLogged = true;
+            log(`deck search: text styled like the game's ${source}`);
           }
-          const old = call(gridRect, "get_offsetMax");
-          offset = { x: Number(old.field("x").value), y: Number(old.field("y").value) };
-          const stale = call(parent, "Find", Il2Cpp.string("RebornDeckSearch"));
-          if (!isNull(stale)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(stale, "get_gameObject"));
-          phase = "create bar";
-          bar = create("RebornDeckSearch", parent);
-          call(bar, "SetActive", false);
-          uiPlace(bar, 0.5, 1, 0.5, 1, 0, -6, 760, 68);
-          const image = hold(uiAdd(bar, "UnityEngine.UI.Image"));
-          call(image, "set_color", rgba(0.08, 0.08, 0.08, 0.96));
-          const viewport = create("TextViewport", call(bar, "get_transform"));
-          uiStretch(uiRect(viewport));
-          call(uiRect(viewport), "set_offsetMin", vec2(18, 6));
-          call(uiRect(viewport), "set_offsetMax", vec2(-96, -6));
-          const textGO = create("Text", call(viewport, "get_transform"));
-          uiStretch(uiRect(textGO));
-          phase = "text/input";
-          const label = hold(deckSearchText(textGO, "", 32)), input = hold(deckSearchInput(bar, label, image));
-          const placeholderGO = create("Placeholder", call(viewport, "get_transform"));
-          uiStretch(uiRect(placeholderGO));
-          const labels = { en_us: "Search decks\u2026", ru_ru: "\u041F\u043E\u0438\u0441\u043A \u043A\u043E\u043B\u043E\u0434\u2026", de_de: "Decks suchen\u2026", es_es: "Buscar mazos\u2026", es_mx: "Buscar mazos\u2026", fr_fr: "Rechercher un deck\u2026", it_it: "Cerca mazzi\u2026", pl_pl: "Szukaj talii\u2026", pt_br: "Buscar decks\u2026", tr_tr: "Deste ara\u2026" };
-          phase = "placeholder";
-          const hint = hold(deckSearchText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30));
-          call(hint, "set_color", rgba(0.65, 0.65, 0.65, 1));
-          call(input, "set_placeholder", hint);
-          phase = "game font";
-          try {
-            const source = styleLikeGameInput(input, label, hint);
-            if (source && !deckSearchStyleLogged) {
-              deckSearchStyleLogged = true;
-              log(`deck search: text styled like the game's ${source}`);
-            }
-          } catch (error) {
-            log(`deck search: kept the built-in font: ${error}`);
-          }
-          phase = "clear button";
-          const clear = uiLabeledButton("Clear", call(bar, "get_transform"), "X", -8, -8, 100, () => {
-            call(input, "set_text", Il2Cpp.string(""));
-          });
-          {
-            const r = uiRect(clear);
-            call(r, "set_anchorMin", vec2(1, 0));
-            call(r, "set_anchorMax", vec2(1, 1));
-            call(r, "set_pivot", vec2(1, 0.5));
-            call(r, "set_anchoredPosition", vec2(-6, 0));
-            call(r, "set_sizeDelta", vec2(52, -12));
-          }
-          const clearText = call(call(clear, "get_transform"), "Find", Il2Cpp.string("Label"));
-          if (!isNull(clearText)) {
-            const t = uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI");
-            call(t, "set_fontSize", 28);
-            try {
-              call(t, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Center"));
-            } catch (_) {
-            }
-            uiPlace(call(clearText, "get_gameObject"), 0.5, 0.5, 0.5, 0.5, 0, 0, 24, 30);
-          }
-          {
-            const back = uiComponent(clear, "UnityEngine.UI.Image"), frame = call(image, "get_sprite");
-            if (!isNull(frame)) {
-              call(back, "set_sprite", frame);
-              call(back, "set_type", call(image, "get_type"));
-            }
-            call(back, "set_color", call(image, "get_color"));
-          }
-          if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_color", rgba(0.85, 0.75, 0.55, 1));
-          call(gridRect, "set_offsetMax", vec2(offset.x, offset.y - 82));
-          call(bar, "SetActive", true);
-          const record = { self: self.ref(false), input: input.ref(false), bar: bar.ref(false), grid: gridRect.ref(false), offset, hidden: /* @__PURE__ */ new Map() };
-          committed = true;
-          return record;
         } catch (error) {
-          throw Error(`${phase}: ${error}`);
-        } finally {
-          if (!committed) {
-            if (offset && gridRect) try {
-              call(gridRect, "set_offsetMax", vec2(offset.x, offset.y));
-            } catch (_) {
-            }
-            if (bar) try {
-              ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(bar);
-            } catch (_) {
-            }
-          }
-          for (const root of roots.reverse()) root.free();
+          log(`deck search: kept the built-in font: ${error}`);
         }
-      }
-      function scanPicker(self, go, immediate) {
-        const key = self.handle.toString();
-        let record = records.get(key);
-        if (!record) {
-          let gate = retries.get(key);
-          if (!gate) {
-            gate = uiRetryGate(() => Date.now());
-            retries.set(key, gate);
-          }
-          if (!immediate && !gate.allow()) return key;
+        phase = "clear button";
+        const clear = uiLabeledButton("Clear", call(bar, "get_transform"), "X", -8, -8, 100, () => {
+          call(input, "set_text", Il2Cpp.string(""));
+        });
+        {
+          const r = uiRect(clear);
+          call(r, "set_anchorMin", vec2(1, 0));
+          call(r, "set_anchorMax", vec2(1, 1));
+          call(r, "set_pivot", vec2(1, 0.5));
+          call(r, "set_anchoredPosition", vec2(-6, 0));
+          call(r, "set_sizeDelta", vec2(52, -12));
+        }
+        const clearText = call(call(clear, "get_transform"), "Find", Il2Cpp.string("Label"));
+        if (!isNull(clearText)) {
+          const t = uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI");
+          call(t, "set_fontSize", 28);
           try {
-            record = install(self);
-            records.set(key, record);
-            gate.success();
-            log(`deck search: installed${immediate ? " with the deck list" : ""}`);
-          } catch (error) {
-            gate.fail();
-            log(`deck search: initialization attempt ${gate.count()}/3: ${error}`);
-            return key;
+            call(t, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Center"));
+          } catch (_) {
+          }
+          uiPlace(call(clearText, "get_gameObject"), 0.5, 0.5, 0.5, 0.5, 0, 0, 24, 30);
+        }
+        {
+          const back = uiComponent(clear, "UnityEngine.UI.Image"), frame = call(image, "get_sprite");
+          if (!isNull(frame)) {
+            call(back, "set_sprite", frame);
+            call(back, "set_type", call(image, "get_type"));
+          }
+          call(back, "set_color", call(image, "get_color"));
+        }
+        if (!isNull(clearText)) call(uiComponent(call(clearText, "get_gameObject"), "TMPro.TextMeshProUGUI"), "set_color", rgba(0.85, 0.75, 0.55, 1));
+        call(gridRect, "set_offsetMax", vec2(offset.x, offset.y - 82));
+        call(bar, "SetActive", true);
+        const record = { self: self.ref(false), input: input.ref(false), bar: bar.ref(false), grid: gridRect.ref(false), offset, hidden: /* @__PURE__ */ new Map() };
+        committed = true;
+        return record;
+      } catch (error) {
+        throw Error(`${phase}: ${error}`);
+      } finally {
+        if (!committed) {
+          if (offset && gridRect) try {
+            call(gridRect, "set_offsetMax", vec2(offset.x, offset.y));
+          } catch (_) {
+          }
+          if (bar) try {
+            ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(bar);
+          } catch (_) {
           }
         }
-        const query = String(call(record.input.target, "get_text")?.content || "");
-        if (!query && !record.hidden.size) {
-          record.lastQuery = "";
+        for (const root of roots.reverse()) root.free();
+      }
+    }
+    function scanPicker(self, go, immediate) {
+      const key = self.handle.toString();
+      let record = records.get(key);
+      if (!record) {
+        let gate = retries.get(key);
+        if (!gate) {
+          gate = uiRetryGate(() => Date.now());
+          retries.set(key, gate);
+        }
+        if (!immediate && !gate.allow()) return key;
+        try {
+          record = install(self);
+          records.set(key, record);
+          gate.success();
+          log(`deck search: installed${immediate ? " with the deck list" : ""}`);
+        } catch (error) {
+          gate.fail();
+          log(`deck search: initialization attempt ${gate.count()}/3: ${error}`);
           return key;
         }
-        if (query === record.lastQuery && record.lastCount >= 0) return key;
-        const tiles = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tile.type.object, true), tilesRoot = tiles.object.ref(false);
-        try {
-          if (query === record.lastQuery && tiles.length === record.lastCount) return key;
-          for (let j = 0; j < tiles.length; j++) {
-            const item = tiles.get(j), child = call(item, "get_gameObject"), id = child.handle.toString();
-            if (!call(child, "get_activeSelf") && !record.hidden.has(id)) continue;
-            const name = String(call(item.field("DeckNameText").value, "get_text")?.content || "");
-            const show = deckSearchMatches(name, query), hidden = record.hidden.get(id);
-            if (!show && !hidden) {
-              record.hidden.set(id, child.ref(false));
-              call(child, "SetActive", false);
-            } else if (show && hidden) {
-              call(child, "SetActive", true);
-              hidden.free();
-              record.hidden.delete(id);
-            }
-          }
-          record.lastQuery = query;
-          record.lastCount = tiles.length;
-        } finally {
-          tilesRoot.free();
-        }
+      }
+      const query = String(call(record.input.target, "get_text")?.content || "");
+      if (!query && !record.hidden.size) {
+        record.lastQuery = "";
         return key;
       }
-      const updateUi = picker.tryMethod("UpdateUi", 0);
-      if (updateUi && !updateUi.virtualAddress.isNull()) hookAttach(updateUi.virtualAddress, { onEnter(args) {
-        this.self = args[0];
-      }, onLeave() {
-        const ref = new Il2Cpp.Object(this.self).ref(false);
-        schedule(0, () => {
-          try {
-            const go = call(ref.target, "get_gameObject");
-            if (call(go, "get_activeInHierarchy")) {
-              const record = records.get(ref.target.handle.toString());
-              if (record) record.lastCount = -1;
-              scanPicker(ref.target, go, true);
-            }
-          } catch (error) {
-            log(`deck search: ${error}`);
-          } finally {
-            ref.free();
+      if (query === record.lastQuery && record.lastCount >= 0) return key;
+      const tiles = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tile.type.object, true), tilesRoot = tiles.object.ref(false);
+      try {
+        if (query === record.lastQuery && tiles.length === record.lastCount) return key;
+        for (let j = 0; j < tiles.length; j++) {
+          const item = tiles.get(j), child = call(item, "get_gameObject"), id = child.handle.toString();
+          if (!call(child, "get_activeSelf") && !record.hidden.has(id)) continue;
+          const name = String(call(item.field("DeckNameText").value, "get_text")?.content || "");
+          const show = deckSearchMatches(name, query), hidden = record.hidden.get(id);
+          if (!show && !hidden) {
+            record.hidden.set(id, child.ref(false));
+            call(child, "SetActive", false);
+          } else if (show && hidden) {
+            call(child, "SetActive", true);
+            hidden.free();
+            record.hidden.delete(id);
           }
-        }, "deck search install");
-      } });
-      const preloadAt = Date.now() + 15e3;
-      let preloaded = false;
-      let fullScanAt = 0;
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
-        if (!preloaded && Date.now() >= preloadAt) {
-          preloaded = true;
-          for (const path of ["AppBase/UI/Sprites/Core/UtilityAssets/input-frame", "AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon"])
-            schedule(0, () => loadNativeUiSprite(path, null), "deck search sprite preload");
         }
-        if (Date.now() < next) return;
-        next = Date.now() + 250;
-        if (globalThis.__teslInBattle) return;
-        const known = [...records.values()];
-        const open = known.filter((r) => {
-          try {
-            return unityAlive(r.self.target) && Boolean(call(call(r.self.target, "get_gameObject"), "get_activeInHierarchy"));
-          } catch (_) {
-            return false;
+        record.lastQuery = query;
+        record.lastCount = tiles.length;
+      } finally {
+        tilesRoot.free();
+      }
+      return key;
+    }
+    const updateUi = picker.tryMethod("UpdateUi", 0);
+    if (updateUi && !updateUi.virtualAddress.isNull()) hookAttach(updateUi.virtualAddress, { onEnter(args) {
+      this.self = args[0];
+    }, onLeave() {
+      const ref = new Il2Cpp.Object(this.self).ref(false);
+      schedule(0, () => {
+        try {
+          const go = call(ref.target, "get_gameObject");
+          if (call(go, "get_activeInHierarchy")) {
+            const record = records.get(ref.target.handle.toString());
+            if (record) record.lastCount = -1;
+            scanPicker(ref.target, go, true);
           }
-        });
-        if (known.length && open.length === known.length || Date.now() < fullScanAt) {
-          if (open.length) schedule(0, () => {
-            for (const r of open) {
-              try {
-                scanPicker(r.self.target, call(r.self.target, "get_gameObject"), false);
-              } catch (_) {
-              }
-            }
-          }, "deck search scan");
-          return;
+        } catch (error) {
+          log(`deck search: ${error}`);
+        } finally {
+          ref.free();
         }
-        fullScanAt = Date.now() + 3e3;
-        schedule(0, () => {
-          const live = /* @__PURE__ */ new Set();
-          let scanned = false;
-          try {
-            const values = find.invoke(picker.type.object), arrayRoot = values.object.ref(false);
+      }, "deck search install");
+    } });
+    const preloadAt = Date.now() + 15e3;
+    let preloaded = false;
+    let fullScanAt = 0;
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
+      if (!preloaded && Date.now() >= preloadAt) {
+        preloaded = true;
+        for (const path of ["AppBase/UI/Sprites/Core/UtilityAssets/input-frame", "AppBase/UI/Sprites/Core/UtilityAssets/close-x-icon"])
+          schedule(0, () => loadNativeUiSprite(path, null), "deck search sprite preload");
+      }
+      if (Date.now() < next) return;
+      next = Date.now() + 250;
+      if (globalThis.__teslInBattle) return;
+      const known = [...records.values()];
+      const open = known.filter((r) => {
+        try {
+          return unityAlive(r.self.target) && Boolean(call(call(r.self.target, "get_gameObject"), "get_activeInHierarchy"));
+        } catch (_) {
+          return false;
+        }
+      });
+      if (known.length && open.length === known.length || Date.now() < fullScanAt) {
+        if (open.length) schedule(0, () => {
+          for (const r of open) {
             try {
-              for (let i = 0; i < values.length; i++) {
-                const self = values.get(i), go = call(self, "get_gameObject");
-                if (!call(go, "get_activeInHierarchy")) continue;
-                live.add(scanPicker(self, go, false));
-              }
-              scanned = true;
-            } finally {
-              arrayRoot.free();
+              scanPicker(r.self.target, call(r.self.target, "get_gameObject"), false);
+            } catch (_) {
             }
-          } catch (error) {
-            log(`deck search: ${error}`);
-          }
-          if (scanned) {
-            for (const [key, record] of records) if (!live.has(key)) {
-              cleanup(record);
-              records.delete(key);
-            }
-            for (const key of retries.keys()) if (!live.has(key)) retries.delete(key);
           }
         }, "deck search scan");
-      } });
-    });
-    section("friends while matchmaking", () => {
-      const seeking = cls(img, "MatchSeekingWin"), records = /* @__PURE__ */ new Map();
-      const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-      const unityObject = ucls("UnityEngine.Object");
-      const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
-      const firstLive = (type, pick) => {
-        const values = find.invoke(type);
-        for (let i = 0; i < values.length; i++) {
-          const value = pick(values.get(i));
-          if (alive(value) && call(call(value, "get_gameObject"), "get_activeInHierarchy")) return value;
-        }
-        return null;
-      };
-      const gameFriendsButton = () => firstLive(cls(img, "MainMenuOverlayController").type.object, (c) => {
-        const view = call(c, "get__overlayView");
-        return alive(view) ? view.field("_friendsBtn").value : null;
-      });
-      const gameFriendsWindow = () => firstLive(cls(img, "SPTESL.MainMenu").type.object, (m) => m.field("_friendsWin").value);
-      const originals = /* @__PURE__ */ new Map();
-      const original = (component, read) => {
-        const key = component.handle.toString();
-        if (!originals.has(key)) originals.set(key, read());
-        return originals.get(key);
-      };
-      function raise(go, order, layer) {
-        const canvasType = ucls("UnityEngine.Canvas").type.object, rayType = ucls("UnityEngine.UI.GraphicRaycaster").type.object;
-        let canvas = go.method("GetComponent").overload("System.Type").invoke(canvasType), saved;
-        if (alive(canvas)) saved = original(canvas, () => ({ override: Boolean(call(canvas, "get_overrideSorting")), order: Number(call(canvas, "get_sortingOrder")), layer: Number(call(canvas, "get_sortingLayerID")) }));
-        else {
-          canvas = uiAdd(go, "UnityEngine.Canvas");
-          saved = original(canvas, () => ({ override: false, order: 0, layer: 0 }));
-        }
-        let ray = go.method("GetComponent").overload("System.Type").invoke(rayType), rayEnabled;
-        if (alive(ray)) rayEnabled = original(ray, () => Boolean(call(ray, "get_enabled")));
-        else {
-          ray = uiAdd(go, "UnityEngine.UI.GraphicRaycaster");
-          rayEnabled = original(ray, () => true);
-        }
-        const item = { go: go.ref(false), canvas: canvas.ref(false), ray: ray.ref(false), ...saved, rayEnabled };
-        call(canvas, "set_overrideSorting", true);
-        call(canvas, "set_sortingLayerID", layer);
-        call(canvas, "set_sortingOrder", order);
-        call(ray, "set_enabled", true);
-        return item;
+        return;
       }
-      function lower(item) {
+      fullScanAt = Date.now() + 3e3;
+      schedule(0, () => {
+        const live = /* @__PURE__ */ new Set();
+        let scanned = false;
         try {
-          if (alive(item.canvas.target)) {
-            call(item.canvas.target, "set_sortingLayerID", item.layer);
-            call(item.canvas.target, "set_sortingOrder", item.order);
-            call(item.canvas.target, "set_overrideSorting", item.override);
-          }
-          if (alive(item.ray.target)) call(item.ray.target, "set_enabled", item.rayEnabled);
-        } finally {
-          item.go.free();
-          item.canvas.free();
-          item.ray.free();
-        }
-      }
-      function restore(record, source) {
-        log(`matching friends: lowered (${source}; ${record.items.length} item${record.items.length === 1 ? "" : "s"})`);
-        for (const item of record.items) try {
-          lower(item);
-        } catch (error) {
-          log(`matching friends: lower (${source}) failed: ${error}`);
-        }
-        record.window.free();
-      }
-      const show = seeking.method("Show");
-      hookAttach(show.virtualAddress, { onEnter(args) {
-        this.self = args[0];
-      }, onLeave() {
-        const ref = new Il2Cpp.Object(this.self).ref(false);
-        schedule(0, () => {
-          let record = null, key = "";
+          const values = find.invoke(picker.type.object), arrayRoot = values.object.ref(false);
           try {
-            const go = call(ref.target, "get_gameObject");
-            key = go.handle.toString();
-            if (!call(go, "get_activeInHierarchy")) return;
-            if (records.has(key)) {
-              const stale = records.get(key);
-              records.delete(key);
-              restore(stale, "search reopened");
+            for (let i = 0; i < values.length; i++) {
+              const self = values.get(i), go = call(self, "get_gameObject");
+              if (!call(go, "get_activeInHierarchy")) continue;
+              live.add(scanPicker(self, go, false));
             }
-            const window = ref.target.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
-            if (!alive(window)) throw Error("search window has no Canvas");
-            const root = call(window, "get_rootCanvas");
-            const order = Math.max(Number(call(window, "get_sortingOrder")), alive(root) ? Number(call(root, "get_sortingOrder")) : 0) + 10, layer = Number(call(window, "get_sortingLayerID"));
-            const button = gameFriendsButton();
-            if (!button) throw Error("the menu's _friendsBtn is unavailable");
-            record = { items: [], window: ref.target.ref(false) };
-            record.items.push(raise(call(button, "get_gameObject"), order, layer));
-            const friends = gameFriendsWindow();
-            if (friends) record.items.push(raise(call(friends, "get_gameObject"), order + 1, layer));
-            records.set(key, record);
-            armWatch();
-            log(`matching friends: raised above the search window (order ${order}${friends ? "" : ", no friends window"})`);
-          } catch (error) {
-            if (record) {
-              records.delete(key);
-              restore(record, "show failure rollback");
-            }
-            log(`matching friends: ${error}`);
+            scanned = true;
           } finally {
-            ref.free();
+            arrayRoot.free();
           }
-        }, "matching friends show");
-      } });
-      const closed = [], absent = [];
-      for (const name of ["OnDisable", "OnDestroy", "HandleOnCancelSearch"]) {
-        const method = seeking.tryMethod(name, 0);
-        if (!method || method.virtualAddress.isNull()) {
-          absent.push(name);
-          continue;
-        }
-        closed.push(name);
-        hookAttach(method.virtualAddress, { onEnter(args) {
-          try {
-            const key = call(new Il2Cpp.Object(args[0]), "get_gameObject").handle.toString(), record = records.get(key);
-            if (record) {
-              records.delete(key);
-              schedule(0, () => restore(record, name), "matching friends restore");
-            }
-          } catch (error) {
-            log(`matching friends restore: ${error}`);
-          }
-        } });
-      }
-      log(`matching friends: close hooks ${closed.join(", ")}${absent.length ? ` (missing ${absent.join(", ")})` : ""}`);
-      let watching = false;
-      const armWatch = () => {
-        if (records.size && !watching) {
-          watching = true;
-          schedule(1e3, watch, "matching friends watchdog");
-        }
-      };
-      const watch = () => {
-        watching = false;
-        for (const [key, record] of records) {
-          let live = false;
-          try {
-            live = alive(record.window.target) && call(call(record.window.target, "get_gameObject"), "get_activeInHierarchy");
-          } catch (_) {
-          }
-          if (live) continue;
-          records.delete(key);
-          restore(record, "watchdog");
-        }
-        armWatch();
-      };
-    });
-    section("native Settings language selection", () => {
-      const owner = img.classes.find((c) => c.name === "LanguageSelectDropdown");
-      const handler = owner?.tryMethod("HandleLanguageOnValueChanged", 1);
-      if (!handler || handler.virtualAddress.isNull()) return;
-      let selecting = 0, selectionHooks = 0;
-      for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) try {
-        const method = ucls(name).tryMethod("OnSelectItem", 1);
-        if (!method || method.virtualAddress.isNull()) continue;
-        hookAttach(method.virtualAddress, { onEnter() {
-          selecting++;
-        }, onLeave() {
-          selecting = Math.max(0, selecting - 1);
-        } });
-        selectionHooks++;
-      } catch (_) {
-      }
-      if (!selectionHooks) return;
-      handler.implementation = function(index) {
-        if (!selecting) return handler.invokeRaw(this.handle, index);
-        try {
-          let dropdown = this;
-          try {
-            call(dropdown, "get_options");
-          } catch (_) {
-            const field = this.class.fields.find((f) => !f.isStatic && /^(UnityEngine.UI.Dropdown|TMPro.TMP_Dropdown)$/.test(f.type.name));
-            dropdown = field ? this.field(field.name).value : null;
-          }
-          if (isNull(dropdown)) throw Error("Language dropdown instance unavailable");
-          const options = call(dropdown, "get_options"), count = Number(call(options, "get_Count"));
-          if (index < 0 || index >= count || count > 32) return;
-          const label = String(call(call(options, "get_Item", index), "get_text")?.content || "");
-          const code = languageLabel(label);
-          if (!code) throw Error("Unknown language label " + JSON.stringify(label.slice(0, 120)));
-          if (code === resourceLanguage()) return;
-          log(`native language dropdown: selected ${code}`);
-          schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string(languageSetupUri("language=" + code + "&apply=1"))));
         } catch (error) {
-          log(`native language dropdown: ${error}`);
-          schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string(languageSetupUri("chooseLanguage=1"))));
+          log(`deck search: ${error}`);
         }
-      };
-      globalThis.__teslNativeLanguageCallback = true;
-    });
-    const closingSettings = /* @__PURE__ */ new Set();
-    function settingsWindowKey(self) {
-      return (self.class?.type.name === "UnityEngine.GameObject" ? self : call(self, "get_gameObject")).handle.toString();
-    }
-    function settingsClosing(self, reason) {
-      const key = settingsWindowKey(self);
-      if (closingSettings.size > 128) closingSettings.clear();
-      closingSettings.add(key);
-      const root = call(self, "get_transform"), child = call(root, "Find", Il2Cpp.string("RebornGameData"));
-      if (resourceSettingsWindow && resourceSettingsWindow.target.handle.toString() === key) {
-        resourceSettingsWindow.free();
-        resourceSettingsWindow = null;
-      }
-      log(`settings UI: ${reason}; custom control suspended`);
-    }
-    function settingsButtonPressed(button) {
-      try {
-        let node = call(button, "get_transform"), names = [];
-        const buttonName = String(call(node, "get_name")?.content || "");
-        try {
-          const event = call(button, "get_onClick");
-          const countMethod = event.tryMethod("GetPersistentEventCount", 0);
-          const nameMethod = event.tryMethod("GetPersistentMethodName", 1);
-          if (countMethod && nameMethod) {
-            const count = Math.min(32, Number(countMethod.invoke()));
-            for (let i = 0; i < count; i++) names.push(String(nameMethod.invoke(i)?.content || ""));
-          } else {
-            const fields = Array.from(event.class.hierarchy()).flatMap((c) => c.fields);
-            const groupField = fields.find((f) => !f.isStatic && /PersistentCallGroup$/.test(f.type.name));
-            const group = groupField && event.field(groupField.name).value;
-            if (!isNull(group)) {
-              const listField = group.class.fields.find((f) => !f.isStatic && /List.*PersistentCall/.test(f.type.name));
-              const list = listField && group.field(listField.name).value;
-              if (!isNull(list)) for (let i = 0, count = Math.min(32, Number(call(list, "get_Count"))); i < count; i++) {
-                const entry = call(list, "get_Item", i), field = entry.class.fields.find((f) => !f.isStatic && /methodname/i.test(f.name) && f.type.name === "System.String");
-                if (field) names.push(String(entry.field(field.name).value?.content || ""));
-              }
-            }
+        if (scanned) {
+          for (const [key, record] of records) if (!live.has(key)) {
+            cleanup(record);
+            records.delete(key);
           }
+          for (const key of retries.keys()) if (!live.has(key)) retries.delete(key);
+        }
+      }, "deck search scan");
+    } });
+  });
+  section("friends while matchmaking", () => {
+    const seeking = cls(img, "MatchSeekingWin"), records = /* @__PURE__ */ new Map();
+    const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+    const unityObject = ucls("UnityEngine.Object");
+    const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
+    const firstLive = (type, pick) => {
+      const values = find.invoke(type);
+      for (let i = 0; i < values.length; i++) {
+        const value = pick(values.get(i));
+        if (alive(value) && call(call(value, "get_gameObject"), "get_activeInHierarchy")) return value;
+      }
+      return null;
+    };
+    const gameFriendsButton = () => firstLive(cls(img, "MainMenuOverlayController").type.object, (c) => {
+      const view = call(c, "get__overlayView");
+      return alive(view) ? view.field("_friendsBtn").value : null;
+    });
+    const gameFriendsWindow = () => firstLive(cls(img, "SPTESL.MainMenu").type.object, (m) => m.field("_friendsWin").value);
+    const originals = /* @__PURE__ */ new Map();
+    const original = (component, read) => {
+      const key = component.handle.toString();
+      if (!originals.has(key)) originals.set(key, read());
+      return originals.get(key);
+    };
+    function raise(go, order, layer) {
+      const canvasType = ucls("UnityEngine.Canvas").type.object, rayType = ucls("UnityEngine.UI.GraphicRaycaster").type.object;
+      let canvas = go.method("GetComponent").overload("System.Type").invoke(canvasType), saved;
+      if (alive(canvas)) saved = original(canvas, () => ({ override: Boolean(call(canvas, "get_overrideSorting")), order: Number(call(canvas, "get_sortingOrder")), layer: Number(call(canvas, "get_sortingLayerID")) }));
+      else {
+        canvas = uiAdd(go, "UnityEngine.Canvas");
+        saved = original(canvas, () => ({ override: false, order: 0, layer: 0 }));
+      }
+      let ray = go.method("GetComponent").overload("System.Type").invoke(rayType), rayEnabled;
+      if (alive(ray)) rayEnabled = original(ray, () => Boolean(call(ray, "get_enabled")));
+      else {
+        ray = uiAdd(go, "UnityEngine.UI.GraphicRaycaster");
+        rayEnabled = original(ray, () => true);
+      }
+      const item = { go: go.ref(false), canvas: canvas.ref(false), ray: ray.ref(false), ...saved, rayEnabled };
+      call(canvas, "set_overrideSorting", true);
+      call(canvas, "set_sortingLayerID", layer);
+      call(canvas, "set_sortingOrder", order);
+      call(ray, "set_enabled", true);
+      return item;
+    }
+    function lower(item) {
+      try {
+        if (alive(item.canvas.target)) {
+          call(item.canvas.target, "set_sortingLayerID", item.layer);
+          call(item.canvas.target, "set_sortingOrder", item.order);
+          call(item.canvas.target, "set_overrideSorting", item.override);
+        }
+        if (alive(item.ray.target)) call(item.ray.target, "set_enabled", item.rayEnabled);
+      } finally {
+        item.go.free();
+        item.canvas.free();
+        item.ray.free();
+      }
+    }
+    function restore(record, source) {
+      log(`matching friends: lowered (${source}; ${record.items.length} item${record.items.length === 1 ? "" : "s"})`);
+      for (const item of record.items) try {
+        lower(item);
+      } catch (error) {
+        log(`matching friends: lower (${source}) failed: ${error}`);
+      }
+      record.window.free();
+    }
+    const show = seeking.method("Show");
+    hookAttach(show.virtualAddress, { onEnter(args) {
+      this.self = args[0];
+    }, onLeave() {
+      const ref = new Il2Cpp.Object(this.self).ref(false);
+      schedule(0, () => {
+        let record = null, key = "";
+        try {
+          const go = call(ref.target, "get_gameObject");
+          key = go.handle.toString();
+          if (!call(go, "get_activeInHierarchy")) return;
+          if (records.has(key)) {
+            const stale = records.get(key);
+            records.delete(key);
+            restore(stale, "search reopened");
+          }
+          const window = ref.target.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+          if (!alive(window)) throw Error("search window has no Canvas");
+          const root = call(window, "get_rootCanvas");
+          const order = Math.max(Number(call(window, "get_sortingOrder")), alive(root) ? Number(call(root, "get_sortingOrder")) : 0) + 10, layer = Number(call(window, "get_sortingLayerID"));
+          const button = gameFriendsButton();
+          if (!button) throw Error("the menu's _friendsBtn is unavailable");
+          record = { items: [], window: ref.target.ref(false) };
+          record.items.push(raise(call(button, "get_gameObject"), order, layer));
+          const friends = gameFriendsWindow();
+          if (friends) record.items.push(raise(call(friends, "get_gameObject"), order + 1, layer));
+          records.set(key, record);
+          armWatch();
+          log(`matching friends: raised above the search window (order ${order}${friends ? "" : ", no friends window"})`);
+        } catch (error) {
+          if (record) {
+            records.delete(key);
+            restore(record, "show failure rollback");
+          }
+          log(`matching friends: ${error}`);
+        } finally {
+          ref.free();
+        }
+      }, "matching friends show");
+    } });
+    const closed = [], absent = [];
+    for (const name of ["OnDisable", "OnDestroy", "HandleOnCancelSearch"]) {
+      const method = seeking.tryMethod(name, 0);
+      if (!method || method.virtualAddress.isNull()) {
+        absent.push(name);
+        continue;
+      }
+      closed.push(name);
+      hookAttach(method.virtualAddress, { onEnter(args) {
+        try {
+          const key = call(new Il2Cpp.Object(args[0]), "get_gameObject").handle.toString(), record = records.get(key);
+          if (record) {
+            records.delete(key);
+            schedule(0, () => restore(record, name), "matching friends restore");
+          }
+        } catch (error) {
+          log(`matching friends restore: ${error}`);
+        }
+      } });
+    }
+    log(`matching friends: close hooks ${closed.join(", ")}${absent.length ? ` (missing ${absent.join(", ")})` : ""}`);
+    let watching = false;
+    const armWatch = () => {
+      if (records.size && !watching) {
+        watching = true;
+        schedule(1e3, watch, "matching friends watchdog");
+      }
+    };
+    const watch = () => {
+      watching = false;
+      for (const [key, record] of records) {
+        let live = false;
+        try {
+          live = alive(record.window.target) && call(call(record.window.target, "get_gameObject"), "get_activeInHierarchy");
         } catch (_) {
         }
-        for (let depth = 0; depth < 10 && !isNull(node); depth++, node = call(node, "get_parent")) {
-          const name = String(call(node, "get_name")?.content || "");
-          if (!/^SettingsWin[_ -]?Mobile(?:\(Clone\))?$/i.test(name) && !/^SettingsWin(?:\(Clone\))?$/i.test(name)) continue;
-          const action = [buttonName, ...names].join(" ");
-          log(`settings button: ${action.slice(0, 240)}`);
-          if (/cancel|close|back|negative|dismiss|\bok\b|confirm|accept/i.test(action)) settingsClosing(call(node, "get_gameObject"), action);
-          return;
-        }
-      } catch (error) {
-        log(`settings button trace: ${error}`);
+        if (live) continue;
+        records.delete(key);
+        restore(record, "watchdog");
       }
+      armWatch();
+    };
+  });
+  section("native Settings language selection", () => {
+    const owner = img.classes.find((c) => c.name === "LanguageSelectDropdown");
+    const handler = owner?.tryMethod("HandleLanguageOnValueChanged", 1);
+    if (!handler || handler.virtualAddress.isNull()) return;
+    let selecting = 0, selectionHooks = 0;
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) try {
+      const method = ucls(name).tryMethod("OnSelectItem", 1);
+      if (!method || method.virtualAddress.isNull()) continue;
+      hookAttach(method.virtualAddress, { onEnter() {
+        selecting++;
+      }, onLeave() {
+        selecting = Math.max(0, selecting - 1);
+      } });
+      selectionHooks++;
+    } catch (_) {
     }
-    const gameDataLabels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
-    section("settings: Video tab text", () => {
-      const getText = cls(img, "LocalizationManager").method("GetText", 1);
-      const state = Memory.alloc(8 + 8 + 2 * 64);
-      const cm = new CModule(`
+    if (!selectionHooks) return;
+    handler.implementation = function(index) {
+      if (!selecting) return handler.invokeRaw(this.handle, index);
+      try {
+        let dropdown = this;
+        try {
+          call(dropdown, "get_options");
+        } catch (_) {
+          const field = this.class.fields.find((f) => !f.isStatic && /^(UnityEngine.UI.Dropdown|TMPro.TMP_Dropdown)$/.test(f.type.name));
+          dropdown = field ? this.field(field.name).value : null;
+        }
+        if (isNull(dropdown)) throw Error("Language dropdown instance unavailable");
+        const options = call(dropdown, "get_options"), count = Number(call(options, "get_Count"));
+        if (index < 0 || index >= count || count > 32) return;
+        const label = String(call(call(options, "get_Item", index), "get_text")?.content || "");
+        const code = languageLabel(label);
+        if (!code) throw Error("Unknown language label " + JSON.stringify(label.slice(0, 120)));
+        if (code === resourceLanguage()) return;
+        log(`native language dropdown: selected ${code}`);
+        schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string(languageSetupUri("language=" + code + "&apply=1"))));
+      } catch (error) {
+        log(`native language dropdown: ${error}`);
+        schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string(languageSetupUri("chooseLanguage=1"))));
+      }
+    };
+    globalThis.__teslNativeLanguageCallback = true;
+  });
+  const closingSettings = /* @__PURE__ */ new Set();
+  function settingsWindowKey(self) {
+    return (self.class?.type.name === "UnityEngine.GameObject" ? self : call(self, "get_gameObject")).handle.toString();
+  }
+  function settingsClosing(self, reason) {
+    const key = settingsWindowKey(self);
+    if (closingSettings.size > 128) closingSettings.clear();
+    closingSettings.add(key);
+    const root = call(self, "get_transform"), child = call(root, "Find", Il2Cpp.string("RebornGameData"));
+    if (resourceSettingsWindow && resourceSettingsWindow.target.handle.toString() === key) {
+      resourceSettingsWindow.free();
+      resourceSettingsWindow = null;
+    }
+    log(`settings UI: ${reason}; custom control suspended`);
+  }
+  function settingsButtonPressed(button) {
+    try {
+      let node = call(button, "get_transform"), names = [];
+      const buttonName = String(call(node, "get_name")?.content || "");
+      try {
+        const event = call(button, "get_onClick");
+        const countMethod = event.tryMethod("GetPersistentEventCount", 0);
+        const nameMethod = event.tryMethod("GetPersistentMethodName", 1);
+        if (countMethod && nameMethod) {
+          const count = Math.min(32, Number(countMethod.invoke()));
+          for (let i = 0; i < count; i++) names.push(String(nameMethod.invoke(i)?.content || ""));
+        } else {
+          const fields = Array.from(event.class.hierarchy()).flatMap((c) => c.fields);
+          const groupField = fields.find((f) => !f.isStatic && /PersistentCallGroup$/.test(f.type.name));
+          const group = groupField && event.field(groupField.name).value;
+          if (!isNull(group)) {
+            const listField = group.class.fields.find((f) => !f.isStatic && /List.*PersistentCall/.test(f.type.name));
+            const list = listField && group.field(listField.name).value;
+            if (!isNull(list)) for (let i = 0, count = Math.min(32, Number(call(list, "get_Count"))); i < count; i++) {
+              const entry = call(list, "get_Item", i), field = entry.class.fields.find((f) => !f.isStatic && /methodname/i.test(f.name) && f.type.name === "System.String");
+              if (field) names.push(String(entry.field(field.name).value?.content || ""));
+            }
+          }
+        }
+      } catch (_) {
+      }
+      for (let depth = 0; depth < 10 && !isNull(node); depth++, node = call(node, "get_parent")) {
+        const name = String(call(node, "get_name")?.content || "");
+        if (!/^SettingsWin[_ -]?Mobile(?:\(Clone\))?$/i.test(name) && !/^SettingsWin(?:\(Clone\))?$/i.test(name)) continue;
+        const action = [buttonName, ...names].join(" ");
+        log(`settings button: ${action.slice(0, 240)}`);
+        if (/cancel|close|back|negative|dismiss|\bok\b|confirm|accept/i.test(action)) settingsClosing(call(node, "get_gameObject"), action);
+        return;
+      }
+    } catch (error) {
+      log(`settings button trace: ${error}`);
+    }
+  }
+  const gameDataLabels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
+  section("settings: Video tab text", () => {
+    const getText = cls(img, "LocalizationManager").method("GetText", 1);
+    const state = Memory.alloc(8 + 8 + 2 * 64);
+    const cm = new CModule(`
 #include <gum/guminterceptor.h>
 typedef unsigned short u16;
 typedef struct { void * answer; int length; int pad; u16 chars[64]; } State;
@@ -7983,918 +7935,918 @@ void onLeave (GumInvocationContext * ic) {
   if (GUM_IC_GET_INVOCATION_DATA (ic, int)[0]) gum_invocation_context_replace_return_value (ic, state.answer);
 }
 `, { state });
-      let answer = null;
-      const file = `${persistentPath()}/tesl-reborn-ui-keys.json`;
-      const use = (key) => {
-        if (!key || key.length > 64) return;
-        if (!answer) answer = new Il2Cpp.Object(Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data").handle).ref(true);
-        state.writePointer(answer.target.handle);
-        state.add(8).writeS32(key.length);
-        for (let i = 0; i < key.length; i++) state.add(16 + i * 2).writeU16(key.charCodeAt(i));
-      };
-      let known = "settings.video";
+    let answer = null;
+    const file = `${persistentPath()}/tesl-reborn-ui-keys.json`;
+    const use = (key) => {
+      if (!key || key.length > 64) return;
+      if (!answer) answer = new Il2Cpp.Object(Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data").handle).ref(true);
+      state.writePointer(answer.target.handle);
+      state.add(8).writeS32(key.length);
+      for (let i = 0; i < key.length; i++) state.add(16 + i * 2).writeU16(key.charCodeAt(i));
+    };
+    let known = "settings.video";
+    try {
+      known = JSON.parse(readTextFile(file) || "{}")?.videoTab || known;
+    } catch (_) {
+    }
+    if (known) use(known);
+    globalThis.__teslVideoTabKey = (key) => {
+      if (key === known) return;
+      known = key;
+      use(key);
       try {
-        known = JSON.parse(readTextFile(file) || "{}")?.videoTab || known;
+        writeTextFile(file, JSON.stringify({ videoTab: key }));
       } catch (_) {
       }
-      if (known) use(known);
-      globalThis.__teslVideoTabKey = (key) => {
-        if (key === known) return;
-        known = key;
-        use(key);
-        try {
-          writeTextFile(file, JSON.stringify({ videoTab: key }));
-        } catch (_) {
+      log(`settings data: Video tab key ${key} answered with Game data`);
+    };
+    Interceptor.attach(getText.virtualAddress, cm);
+    globalThis.__teslVideoTabKeep = cm;
+    log(`settings data: Video tab text override ${known ? "for " + known : "waits for the key"}`);
+  });
+  let videoKeyReported = false;
+  function videoTabAsGameData(self) {
+    let video = null, dropdown = null;
+    try {
+      video = self.field("_videoButton").value;
+      dropdown = self.field("_qualityDropdown").value;
+    } catch (_) {
+      return false;
+    }
+    if (!unityAlive(video)) return false;
+    if (!Boolean(call(video, "get_activeSelf"))) call(video, "SetActive", true);
+    const text = Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data");
+    for (const type of ["TMPro.TextMeshProUGUI", "UnityEngine.UI.Text"]) {
+      try {
+        const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
+        for (let i = 0; i < labels.length; i++) {
+          const label = labels.get(i);
+          call(label, "set_text", text);
         }
-        log(`settings data: Video tab key ${key} answered with Game data`);
-      };
-      Interceptor.attach(getText.virtualAddress, cm);
-      globalThis.__teslVideoTabKeep = cm;
-      log(`settings data: Video tab text override ${known ? "for " + known : "waits for the key"}`);
+      } catch (_) {
+      }
+    }
+    if (unityAlive(dropdown)) {
+      const go = call(dropdown, "get_gameObject");
+      if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false);
+    }
+    try {
+      const found = [];
+      for (const name of ["LocalizeTextMeshProUGUI", "LocalizeTextMeshPro", "LocalizeTextUGUI"]) {
+        const klass = img.classes.find((c) => c.name === name);
+        if (!klass) continue;
+        const parts = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(klass.type.object, true);
+        for (let j = 0; j < parts.length; j++) {
+          const key = String(parts.get(j).field("_key").value?.content || "");
+          found.push(`${name}:${key || "-"}`);
+          if (key) globalThis.__teslVideoTabKey?.(key);
+        }
+      }
+      if (!found.length && !videoKeyReported) {
+        videoKeyReported = true;
+        log("settings data: no localization component under the Video tab");
+      }
+    } catch (error) {
+      if (!videoKeyReported) {
+        videoKeyReported = true;
+        log(`settings data: Video tab key unreadable: ${error}`);
+      }
+    }
+    try {
+      const active = enumVal(self.field("_activeTabIndex").value);
+      const toggles = self.field("_tabNavigation").value.field("_toggles").value;
+      if (active > 0 && active < toggles.length) {
+        const toggle = toggles.get(active);
+        if (unityAlive(toggle) && !Boolean(call(toggle, "get_isOn"))) call(toggle, "set_isOn", true);
+      }
+    } catch (_) {
+    }
+    const old = findGameDataButton(call(self, "get_transform"));
+    if (!isNull(old)) {
+      const go = call(old, "get_gameObject");
+      call(go, "set_name", Il2Cpp.string("RebornGameDataOld"));
+      call(go, "SetActive", false);
+      ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go);
+    }
+    return true;
+  }
+  function installSettingsDataButton(self) {
+    if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
+    if (closingSettings.has(settingsWindowKey(self))) return;
+    const root = call(self, "get_transform");
+    const rootName = String(call(root, "get_name")?.content || "");
+    const typeName = String(self.class?.name || "");
+    const compactName = rootName.replace(/\(Clone\)$/i, "").replace(/[_ -]/g, "");
+    if (typeName === "OptionsWin" || /^OptionsWin(?:Mobile)?$/i.test(compactName)) {
+      const old = findGameDataButton(root);
+      if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
+      return;
+    }
+    if (typeName !== "SettingsWin" && !/^SettingsWin(?:Mobile)?$/i.test(compactName)) return;
+    const window = call(root, "get_gameObject");
+    if ((typeof liveSettingsWindow === "function" ? liveSettingsWindow() : resourceSettingsWindow) && !resourceSettingsWindow.target.handle.equals(window.handle)) {
+      try {
+        const previous = call(resourceSettingsWindow.target, "get_transform");
+        if (Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")) && Boolean(call(previous, "IsChildOf", root))) return;
+        if (Boolean(call(root, "IsChildOf", previous))) {
+          const old = findGameDataButton(previous);
+          if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
+        }
+      } catch (_) {
+      }
+    }
+    if (!isNull(window) && (!resourceSettingsWindow || !resourceSettingsWindow.target.handle.equals(window.handle))) {
+      if (resourceSettingsWindow) resourceSettingsWindow.free();
+      resourceSettingsWindow = window.ref(false);
+    }
+    try {
+      if (videoTabAsGameData(self)) return;
+    } catch (error) {
+      log(`settings data: video tab: ${error}`);
+    }
+    const existing = findGameDataButton(root);
+    if (!isNull(existing)) {
+      const go = call(existing, "get_gameObject");
+      if (!call(go, "get_activeSelf")) call(go, "SetActive", true);
+      return;
+    }
+    const labels = gameDataLabels;
+    const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
+      ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
     });
-    let videoKeyReported = false;
-    function videoTabAsGameData(self) {
-      let video = null, dropdown = null;
-      try {
-        video = self.field("_videoButton").value;
-        dropdown = self.field("_qualityDropdown").value;
-      } catch (_) {
-        return false;
-      }
-      if (!unityAlive(video)) return false;
-      if (!Boolean(call(video, "get_activeSelf"))) call(video, "SetActive", true);
-      const text = Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data");
-      for (const type of ["TMPro.TextMeshProUGUI", "UnityEngine.UI.Text"]) {
-        try {
-          const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
-          for (let i = 0; i < labels.length; i++) {
-            const label = labels.get(i);
-            call(label, "set_text", text);
-          }
-        } catch (_) {
-        }
-      }
-      if (unityAlive(dropdown)) {
-        const go = call(dropdown, "get_gameObject");
-        if (Boolean(call(go, "get_activeSelf"))) call(go, "SetActive", false);
-      }
-      try {
-        const found = [];
-        for (const name of ["LocalizeTextMeshProUGUI", "LocalizeTextMeshPro", "LocalizeTextUGUI"]) {
-          const klass = img.classes.find((c) => c.name === name);
-          if (!klass) continue;
-          const parts = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(klass.type.object, true);
-          for (let j = 0; j < parts.length; j++) {
-            const key = String(parts.get(j).field("_key").value?.content || "");
-            found.push(`${name}:${key || "-"}`);
-            if (key) globalThis.__teslVideoTabKey?.(key);
-          }
-        }
-        if (!found.length && !videoKeyReported) {
-          videoKeyReported = true;
-          log("settings data: no localization component under the Video tab");
-        }
-      } catch (error) {
-        if (!videoKeyReported) {
-          videoKeyReported = true;
-          log(`settings data: Video tab key unreadable: ${error}`);
-        }
-      }
-      try {
-        const active = enumVal(self.field("_activeTabIndex").value);
-        const toggles = self.field("_tabNavigation").value.field("_toggles").value;
-        if (active > 0 && active < toggles.length) {
-          const toggle = toggles.get(active);
-          if (unityAlive(toggle) && !Boolean(call(toggle, "get_isOn"))) call(toggle, "set_isOn", true);
-        }
-      } catch (_) {
-      }
-      const old = findGameDataButton(call(self, "get_transform"));
-      if (!isNull(old)) {
-        const go = call(old, "get_gameObject");
-        call(go, "set_name", Il2Cpp.string("RebornGameDataOld"));
-        call(go, "SetActive", false);
-        ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go);
-      }
-      return true;
+    uiPlace(button, 1, 1, 1, 1, -18, -74, 180, 48);
+    const layout = uiAdd(button, "UnityEngine.UI.LayoutElement");
+    call(layout, "set_ignoreLayout", true);
+    try {
+      styleAsSettingsTab(self, button, layout);
+    } catch (error) {
+      log(`settings button: kept the plain Game data button: ${error}`);
     }
-    function installSettingsDataButton(self) {
-      if (!fileExists(`${persistentPath()}/tesl-reborn-setup.json`)) return;
-      if (closingSettings.has(settingsWindowKey(self))) return;
-      const root = call(self, "get_transform");
-      const rootName = String(call(root, "get_name")?.content || "");
-      const typeName = String(self.class?.name || "");
-      const compactName = rootName.replace(/\(Clone\)$/i, "").replace(/[_ -]/g, "");
-      if (typeName === "OptionsWin" || /^OptionsWin(?:Mobile)?$/i.test(compactName)) {
-        const old = findGameDataButton(root);
-        if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
-        return;
-      }
-      if (typeName !== "SettingsWin" && !/^SettingsWin(?:Mobile)?$/i.test(compactName)) return;
-      const window = call(root, "get_gameObject");
-      if ((typeof liveSettingsWindow === "function" ? liveSettingsWindow() : resourceSettingsWindow) && !resourceSettingsWindow.target.handle.equals(window.handle)) {
-        try {
-          const previous = call(resourceSettingsWindow.target, "get_transform");
-          if (Boolean(call(resourceSettingsWindow.target, "get_activeInHierarchy")) && Boolean(call(previous, "IsChildOf", root))) return;
-          if (Boolean(call(root, "IsChildOf", previous))) {
-            const old = findGameDataButton(previous);
-            if (!isNull(old)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(old, "get_gameObject"));
-          }
-        } catch (_) {
-        }
-      }
-      if (!isNull(window) && (!resourceSettingsWindow || !resourceSettingsWindow.target.handle.equals(window.handle))) {
-        if (resourceSettingsWindow) resourceSettingsWindow.free();
-        resourceSettingsWindow = window.ref(false);
-      }
-      try {
-        if (videoTabAsGameData(self)) return;
-      } catch (error) {
-        log(`settings data: video tab: ${error}`);
-      }
-      const existing = findGameDataButton(root);
-      if (!isNull(existing)) {
-        const go = call(existing, "get_gameObject");
-        if (!call(go, "get_activeSelf")) call(go, "SetActive", true);
-        return;
-      }
-      const labels = gameDataLabels;
-      const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
-        ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
-      });
-      uiPlace(button, 1, 1, 1, 1, -18, -74, 180, 48);
-      const layout = uiAdd(button, "UnityEngine.UI.LayoutElement");
-      call(layout, "set_ignoreLayout", true);
-      try {
-        styleAsSettingsTab(self, button, layout);
-      } catch (error) {
-        log(`settings button: kept the plain Game data button: ${error}`);
-      }
-    }
-    function styleAsSettingsTab(self, button, layout) {
-      let step = "tab group";
-      try {
-        const group = self.field("_tabNavigation").value;
-        if (isNull(group)) throw Error("no _tabNavigation");
-        const toggles = group.field("_toggles").value;
-        if (isNull(toggles) || !toggles.length) throw Error("no settings tabs");
-        const first = toggles.get(0), last = toggles.get(toggles.length - 1);
-        const firstNode = call(call(first, "get_gameObject"), "get_transform"), lastNode = call(call(last, "get_gameObject"), "get_transform");
-        const row = call(lastNode, "get_parent");
-        if (isNull(row)) throw Error("settings tab has no row");
-        step = "frame";
-        const art = call(first, "get_targetGraphic"), image = uiComponent(button, "UnityEngine.UI.Image");
-        if (!isNull(art) && art.class.type.name === "UnityEngine.UI.Image" && !isNull(image)) {
-          call(image, "set_sprite", call(art, "get_sprite"));
-          call(image, "set_type", call(art, "get_type"));
-          call(image, "set_color", call(art, "get_color"));
-        }
-        step = "label";
-        const tmp = ucls("TMPro.TextMeshProUGUI").type.object;
-        const firstIn = (go) => {
-          const all = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tmp, true);
-          return all.length ? all.get(0) : null;
-        };
-        const tabLabel = firstIn(call(first, "get_gameObject"));
-        const label = firstIn(button);
-        if (!isNull(tabLabel) && !isNull(label)) {
-          call(label, "set_font", call(tabLabel, "get_font"));
-          call(label, "set_color", call(tabLabel, "get_color"));
-          const copy = (name) => {
-            const get = tabLabel.tryMethod("get_" + name, 0), set = label.tryMethod("set_" + name, 1);
-            if (get && set) set.invoke(get.invoke());
-          };
-          for (const name of ["enableAutoSizing", "fontSizeMin", "fontSizeMax", "fontSize"]) copy(name);
-        }
-        step = "size";
-        const bounds = call(lastNode, "get_rect");
-        const width = Number(bounds.field("m_Width").value), height = Number(bounds.field("m_Height").value);
-        const vec = (value) => ({ x: Number(value.field("x").value), y: Number(value.field("y").value) });
-        step = "row";
-        const node = call(button, "get_transform");
-        node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(row, false);
-        call(node, "SetAsLastSibling");
-        call(node, "set_localScale", call(lastNode, "get_localScale"));
-        for (const name of ["anchorMin", "anchorMax", "pivot"]) call(node, "set_" + name, call(lastNode, "get_" + name));
-        call(node, "set_sizeDelta", call(lastNode, "get_sizeDelta"));
-        call(layout, "set_preferredWidth", width);
-        call(layout, "set_preferredHeight", height);
-        const flow = uiComponent(call(row, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup");
-        if (!isNull(flow)) {
-          call(layout, "set_ignoreLayout", false);
-          log(`settings button: third tab in the row layout (${Math.round(width)}x${Math.round(height)})`);
-          return;
-        }
-        step = "position";
-        const a = vec(call(firstNode, "get_anchoredPosition")), b = vec(call(lastNode, "get_anchoredPosition"));
-        const gap = toggles.length > 1 ? (b.x - a.x) / (toggles.length - 1) : width + 16;
-        call(node, "set_anchoredPosition", vec2(b.x + gap, b.y));
-        const rowPos = vec(call(row, "get_anchoredPosition"));
-        call(row, "set_anchoredPosition", vec2(rowPos.x - gap / 2, rowPos.y));
-        log(`settings button: third tab at step ${Math.round(gap)} (${Math.round(width)}x${Math.round(height)}), row centred`);
-      } catch (error) {
-        throw Error(`${step}: ${error}`);
-      }
-    }
-    function layoutGameDataTab(self) {
+  }
+  function styleAsSettingsTab(self, button, layout) {
+    let step = "tab group";
+    try {
       const group = self.field("_tabNavigation").value;
-      const button = findGameDataButton(call(self, "get_transform"));
-      if (isNull(group) || isNull(button)) return null;
-      const buttonObject = call(button, "get_gameObject");
-      if (!Boolean(call(buttonObject, "get_activeSelf"))) {
-        call(buttonObject, "SetActive", true);
-        log("settings data: Game data tab shown again");
+      if (isNull(group)) throw Error("no _tabNavigation");
+      const toggles = group.field("_toggles").value;
+      if (isNull(toggles) || !toggles.length) throw Error("no settings tabs");
+      const first = toggles.get(0), last = toggles.get(toggles.length - 1);
+      const firstNode = call(call(first, "get_gameObject"), "get_transform"), lastNode = call(call(last, "get_gameObject"), "get_transform");
+      const row = call(lastNode, "get_parent");
+      if (isNull(row)) throw Error("settings tab has no row");
+      step = "frame";
+      const art = call(first, "get_targetGraphic"), image = uiComponent(button, "UnityEngine.UI.Image");
+      if (!isNull(art) && art.class.type.name === "UnityEngine.UI.Image" && !isNull(image)) {
+        call(image, "set_sprite", call(art, "get_sprite"));
+        call(image, "set_type", call(art, "get_type"));
+        call(image, "set_color", call(art, "get_color"));
       }
-      const toggles = group.field("_toggles").value, shown = [];
-      for (let i = 0; i < toggles.length; i++) {
-        const node = call(call(toggles.get(i), "get_gameObject"), "get_transform");
-        if (call(call(node, "get_gameObject"), "get_activeInHierarchy")) shown.push(node);
-      }
-      if (shown.length < 2) return null;
-      const tabRow = call(shown[0], "get_parent");
-      const buttonParent = call(button, "get_parent");
-      const rowLaidOut = !isNull(uiComponent(call(tabRow, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup"));
-      const inRow = !rowLaidOut || !isNull(buttonParent) && call(buttonParent, "GetInstanceID") === call(tabRow, "GetInstanceID");
-      if (!inRow || !Boolean(call(buttonObject, "get_activeInHierarchy"))) {
-        log(`settings data: Game data tab ${inRow ? "hidden by its parents" : "outside the tab row"}; installed again`);
-        call(buttonObject, "set_name", Il2Cpp.string("RebornGameDataOld"));
-        call(buttonObject, "SetActive", false);
-        ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(buttonObject);
-        return null;
-      }
-      const size = call(shown[0], "get_rect"), width = Number(size.field("m_Width").value), height = Number(size.field("m_Height").value);
-      if (width > 0 && height > 0) {
-        const layout = uiComponent(call(button, "get_gameObject"), "UnityEngine.UI.LayoutElement");
-        if (!isNull(layout)) {
-          call(layout, "set_preferredWidth", width);
-          call(layout, "set_preferredHeight", height);
-        }
-        call(button, "set_sizeDelta", call(shown[0], "get_sizeDelta"));
-      }
-      const flowRow = call(shown[0], "get_parent");
-      if (!isNull(uiComponent(call(flowRow, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup"))) {
-        ucls("UnityEngine.UI.LayoutRebuilder").method("MarkLayoutForRebuild", 1).invoke(flowRow);
-        return `${shown.length + 1} tabs in the row layout`;
-      }
-      const at = (node) => {
-        const p = call(node, "get_position");
-        return { x: Number(p.field("x").value), y: Number(p.field("y").value), z: Number(p.field("z").value) };
+      step = "label";
+      const tmp = ucls("TMPro.TextMeshProUGUI").type.object;
+      const firstIn = (go) => {
+        const all = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(tmp, true);
+        return all.length ? all.get(0) : null;
       };
-      const first = at(shown[0]), last = at(shown[shown.length - 1]);
-      const gap = (last.x - first.x) / (shown.length - 1);
-      call(button, "set_position", unityStruct("UnityEngine.Vector3", { x: last.x + gap, y: last.y, z: last.z }));
-      const row = call(shown[0], "get_parent"), centre = at(call(self, "get_transform")).x;
-      const shift = centre - (first.x + last.x + gap) / 2, rowAt = at(row);
-      if (Math.abs(shift) > 1e-3) call(row, "set_position", unityStruct("UnityEngine.Vector3", { x: rowAt.x + shift, y: rowAt.y, z: rowAt.z }));
-      return `${shown.length + 1} tabs, step ${gap.toFixed(3)}`;
-    }
-    function findGameDataButton(root) {
-      const direct = call(root, "Find", Il2Cpp.string("RebornGameData"));
-      if (!isNull(direct)) return direct;
-      const buttons = call(root, "get_gameObject").method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.UI.Button").type.object, true);
-      for (let i = 0; i < buttons.length; i++) {
-        const node = call(buttons.get(i), "get_transform");
-        if (String(call(node, "get_name")?.content || "") === "RebornGameData") return node;
+      const tabLabel = firstIn(call(first, "get_gameObject"));
+      const label = firstIn(button);
+      if (!isNull(tabLabel) && !isNull(label)) {
+        call(label, "set_font", call(tabLabel, "get_font"));
+        call(label, "set_color", call(tabLabel, "get_color"));
+        const copy = (name) => {
+          const get = tabLabel.tryMethod("get_" + name, 0), set = label.tryMethod("set_" + name, 1);
+          if (get && set) set.invoke(get.invoke());
+        };
+        for (const name of ["enableAutoSizing", "fontSizeMin", "fontSizeMax", "fontSize"]) copy(name);
       }
+      step = "size";
+      const bounds = call(lastNode, "get_rect");
+      const width = Number(bounds.field("m_Width").value), height = Number(bounds.field("m_Height").value);
+      const vec = (value) => ({ x: Number(value.field("x").value), y: Number(value.field("y").value) });
+      step = "row";
+      const node = call(button, "get_transform");
+      node.method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(row, false);
+      call(node, "SetAsLastSibling");
+      call(node, "set_localScale", call(lastNode, "get_localScale"));
+      for (const name of ["anchorMin", "anchorMax", "pivot"]) call(node, "set_" + name, call(lastNode, "get_" + name));
+      call(node, "set_sizeDelta", call(lastNode, "get_sizeDelta"));
+      call(layout, "set_preferredWidth", width);
+      call(layout, "set_preferredHeight", height);
+      const flow = uiComponent(call(row, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup");
+      if (!isNull(flow)) {
+        call(layout, "set_ignoreLayout", false);
+        log(`settings button: third tab in the row layout (${Math.round(width)}x${Math.round(height)})`);
+        return;
+      }
+      step = "position";
+      const a = vec(call(firstNode, "get_anchoredPosition")), b = vec(call(lastNode, "get_anchoredPosition"));
+      const gap = toggles.length > 1 ? (b.x - a.x) / (toggles.length - 1) : width + 16;
+      call(node, "set_anchoredPosition", vec2(b.x + gap, b.y));
+      const rowPos = vec(call(row, "get_anchoredPosition"));
+      call(row, "set_anchoredPosition", vec2(rowPos.x - gap / 2, rowPos.y));
+      log(`settings button: third tab at step ${Math.round(gap)} (${Math.round(width)}x${Math.round(height)}), row centred`);
+    } catch (error) {
+      throw Error(`${step}: ${error}`);
+    }
+  }
+  function layoutGameDataTab(self) {
+    const group = self.field("_tabNavigation").value;
+    const button = findGameDataButton(call(self, "get_transform"));
+    if (isNull(group) || isNull(button)) return null;
+    const buttonObject = call(button, "get_gameObject");
+    if (!Boolean(call(buttonObject, "get_activeSelf"))) {
+      call(buttonObject, "SetActive", true);
+      log("settings data: Game data tab shown again");
+    }
+    const toggles = group.field("_toggles").value, shown = [];
+    for (let i = 0; i < toggles.length; i++) {
+      const node = call(call(toggles.get(i), "get_gameObject"), "get_transform");
+      if (call(call(node, "get_gameObject"), "get_activeInHierarchy")) shown.push(node);
+    }
+    if (shown.length < 2) return null;
+    const tabRow = call(shown[0], "get_parent");
+    const buttonParent = call(button, "get_parent");
+    const rowLaidOut = !isNull(uiComponent(call(tabRow, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup"));
+    const inRow = !rowLaidOut || !isNull(buttonParent) && call(buttonParent, "GetInstanceID") === call(tabRow, "GetInstanceID");
+    if (!inRow || !Boolean(call(buttonObject, "get_activeInHierarchy"))) {
+      log(`settings data: Game data tab ${inRow ? "hidden by its parents" : "outside the tab row"}; installed again`);
+      call(buttonObject, "set_name", Il2Cpp.string("RebornGameDataOld"));
+      call(buttonObject, "SetActive", false);
+      ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(buttonObject);
       return null;
     }
-    section("settings game data", () => {
-      const classes = img.classes.filter((c) => /^(?:Game)?(?:Options|Settings)(?:Win|Window|Panel|Dialog)$/.test(c.name)).filter((c) => Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"));
-      let hooks = 0;
-      for (const owner of classes) for (const method of owner.methods.filter((m) => ["Show", "OnEnable", "Awake", "Start"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            this.self = args[0];
-            if (method.name === "Show" || method.name === "OnEnable") {
-              try {
-                closingSettings.delete(settingsWindowKey(new Il2Cpp.Object(this.self)));
-              } catch (_) {
-              }
-            }
-          },
-          onLeave() {
-            const retained = new Il2Cpp.Object(this.self).ref(false);
-            schedule(0, () => {
-              try {
-                installSettingsDataButton(retained.target);
-              } catch (e) {
-                log(`settings data: ${e}`);
-              } finally {
-                retained.free();
-              }
-            });
-          }
-        });
-        hooks++;
+    const size = call(shown[0], "get_rect"), width = Number(size.field("m_Width").value), height = Number(size.field("m_Height").value);
+    if (width > 0 && height > 0) {
+      const layout = uiComponent(call(button, "get_gameObject"), "UnityEngine.UI.LayoutElement");
+      if (!isNull(layout)) {
+        call(layout, "set_preferredWidth", width);
+        call(layout, "set_preferredHeight", height);
       }
-      const closeAddresses = /* @__PURE__ */ new Set();
-      for (const owner of classes) for (const method of owner.methods.filter((m) => /^(?:(?:On|Handle)?(?:Cancel|Close|Hide)(?:Button)?(?:Click|Clicked|Pressed)?|OnDisable|OnDestroy)$/i.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
-        const key = method.virtualAddress.toString();
-        if (closeAddresses.has(key)) continue;
-        closeAddresses.add(key);
-        hookAttach(method.virtualAddress, { onEnter(args) {
-          try {
-            settingsClosing(new Il2Cpp.Object(args[0]), owner.name + "." + method.name);
-          } catch (error) {
-            log(`settings UI close trace: ${error}`);
-          }
-        } });
-      }
-      let last = 0;
-      const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
-      if (!hooks) hookAttach(update.virtualAddress, { onLeave() {
-        if (Date.now() - last < 1e3) return;
-        last = Date.now();
-        try {
-          const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-          if (classes.length) {
-            for (const owner of classes) {
-              const windows = find.invoke(owner.type.object);
-              for (let i = 0; i < windows.length; i++) {
-                const window = windows.get(i);
-                if (Boolean(call(call(window, "get_gameObject"), "get_activeInHierarchy"))) installSettingsDataButton(window);
-              }
-            }
-            return;
-          }
-          const objects = find.invoke(ucls("UnityEngine.UI.Button").type.object), visited = /* @__PURE__ */ new Set();
-          for (let i = 0; i < objects.length; i++) {
-            const go = call(objects.get(i), "get_gameObject");
-            if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
-            let node = call(go, "get_transform");
-            for (let depth = 0; depth < 8 && !isNull(node); depth++, node = call(node, "get_parent")) {
-              const key = node.handle.toString();
-              if (visited.has(key)) break;
-              visited.add(key);
-              if (!/^(?:OptionsWinMobile|SettingsWin_Mobile|SettingsWin|OptionsWin)$/i.test(String(call(node, "get_name")?.content || "").replace(/\(Clone\)$/i, "").trim())) continue;
-              const root = call(node, "get_gameObject"), rect = uiRect(root), bounds = call(rect, "get_rect");
-              if (Number(bounds.field("m_Width").value) < 300 || Number(bounds.field("m_Height").value) < 200) continue;
-              installSettingsDataButton(root);
-            }
-          }
-        } catch (_) {
-        }
-      } });
-      log(`settings game data: ${hooks} window hooks, ${closeAddresses.size} close hooks and prefab fallback`);
-    });
-    function graphicsFrameRate(text) {
-      try {
-        const value = JSON.parse(text || "null")?.frameRate;
-        return Number.isInteger(value) && value >= 20 && value <= 240 ? value : null;
-      } catch (_) {
-        return null;
-      }
+      call(button, "set_sizeDelta", call(shown[0], "get_sizeDelta"));
     }
-    function graphicsQuality(text) {
-      try {
-        const value = JSON.parse(text || "null")?.quality;
-        return Number.isInteger(value) && value >= 0 && value <= 3 ? value : null;
-      } catch (_) {
-        return null;
-      }
+    const flowRow = call(shown[0], "get_parent");
+    if (!isNull(uiComponent(call(flowRow, "get_gameObject"), "UnityEngine.UI.HorizontalLayoutGroup"))) {
+      ucls("UnityEngine.UI.LayoutRebuilder").method("MarkLayoutForRebuild", 1).invoke(flowRow);
+      return `${shown.length + 1} tabs in the row layout`;
     }
-    function graphicsRenderScale(text) {
-      try {
-        const value = JSON.parse(text || "null")?.renderScale;
-        return Number.isInteger(value) && value >= 30 && value < 100 ? value : null;
-      } catch (_) {
-        return null;
-      }
+    const at = (node) => {
+      const p = call(node, "get_position");
+      return { x: Number(p.field("x").value), y: Number(p.field("y").value), z: Number(p.field("z").value) };
+    };
+    const first = at(shown[0]), last = at(shown[shown.length - 1]);
+    const gap = (last.x - first.x) / (shown.length - 1);
+    call(button, "set_position", unityStruct("UnityEngine.Vector3", { x: last.x + gap, y: last.y, z: last.z }));
+    const row = call(shown[0], "get_parent"), centre = at(call(self, "get_transform")).x;
+    const shift = centre - (first.x + last.x + gap) / 2, rowAt = at(row);
+    if (Math.abs(shift) > 1e-3) call(row, "set_position", unityStruct("UnityEngine.Vector3", { x: rowAt.x + shift, y: rowAt.y, z: rowAt.z }));
+    return `${shown.length + 1} tabs, step ${gap.toFixed(3)}`;
+  }
+  function findGameDataButton(root) {
+    const direct = call(root, "Find", Il2Cpp.string("RebornGameData"));
+    if (!isNull(direct)) return direct;
+    const buttons = call(root, "get_gameObject").method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.UI.Button").type.object, true);
+    for (let i = 0; i < buttons.length; i++) {
+      const node = call(buttons.get(i), "get_transform");
+      if (String(call(node, "get_name")?.content || "") === "RebornGameData") return node;
     }
-    function scaledResolution(state, width, height, percent) {
-      if (width * height > state.width * state.height) {
-        state.width = width;
-        state.height = height;
-      }
-      const target = { width: Math.round(state.width * percent / 100), height: Math.round(state.height * percent / 100) };
-      return width > target.width ? target : { width, height };
-    }
-    section("graphics: render resolution", () => {
-      if (graphicsRenderScale(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`)))
-        log("graphics: saved render resolution ignored (setting removed)");
-      const percent = 0;
-      if (!percent) return;
-      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
-      const name = "UnityEngine.Screen::SetResolution(System.Int32,System.Int32,System.Boolean,System.Int32)";
-      const at = resolve(Memory.allocUtf8String(name));
-      if (at.isNull()) {
-        log("graphics: render resolution unavailable (no engine SetResolution)");
-        return;
-      }
-      const state = { width: 0, height: 0 };
-      globalThis.__teslScaledSize = (width, height) => scaledResolution(state, width, height, percent);
-      hookAttach(at, {
+    return null;
+  }
+  section("settings game data", () => {
+    const classes = img.classes.filter((c) => /^(?:Game)?(?:Options|Settings)(?:Win|Window|Panel|Dialog)$/.test(c.name)).filter((c) => Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"));
+    let hooks = 0;
+    for (const owner of classes) for (const method of owner.methods.filter((m) => ["Show", "OnEnable", "Awake", "Start"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+      hookAttach(method.virtualAddress, {
         onEnter(args) {
-          const width = args[0].toInt32(), height = args[1].toInt32();
-          const size = scaledResolution(state, width, height, percent);
-          if (size.width === width) return;
-          args[0] = ptr(size.width);
-          args[1] = ptr(size.height);
-          log(`graphics: render resolution ${width}x${height} -> ${size.width}x${size.height} (${percent}%)`);
-          schedule(300, () => globalThis.__teslApplyRate?.("after resolution"), "graphics rate after resolution");
+          this.self = args[0];
+          if (method.name === "Show" || method.name === "OnEnable") {
+            try {
+              closingSettings.delete(settingsWindowKey(new Il2Cpp.Object(this.self)));
+            } catch (_) {
+            }
+          }
+        },
+        onLeave() {
+          const retained = new Il2Cpp.Object(this.self).ref(false);
+          schedule(0, () => {
+            try {
+              installSettingsDataButton(retained.target);
+            } catch (e) {
+              log(`settings data: ${e}`);
+            } finally {
+              retained.free();
+            }
+          });
         }
       });
-      const setResolution = new NativeFunction(at, "void", ["int", "int", "bool", "int"]);
-      schedule(0, () => {
+      hooks++;
+    }
+    const closeAddresses = /* @__PURE__ */ new Set();
+    for (const owner of classes) for (const method of owner.methods.filter((m) => /^(?:(?:On|Handle)?(?:Cancel|Close|Hide)(?:Button)?(?:Click|Clicked|Pressed)?|OnDisable|OnDestroy)$/i.test(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+      const key = method.virtualAddress.toString();
+      if (closeAddresses.has(key)) continue;
+      closeAddresses.add(key);
+      hookAttach(method.virtualAddress, { onEnter(args) {
         try {
-          const screen = ucls("UnityEngine.Screen");
-          const width = Number(screen.method("get_width", 0).invoke()), height = Number(screen.method("get_height", 0).invoke());
-          const fullscreen = Boolean(screen.method("get_fullScreen", 0).invoke());
-          setResolution(width, height, fullscreen ? 1 : 0, 0);
+          settingsClosing(new Il2Cpp.Object(args[0]), owner.name + "." + method.name);
         } catch (error) {
-          log(`graphics: render resolution failed: ${error}`);
+          log(`settings UI close trace: ${error}`);
         }
-      }, "graphics render resolution");
+      } });
+    }
+    let last = 0;
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    if (!hooks) hookAttach(update.virtualAddress, { onLeave() {
+      if (Date.now() - last < 1e3) return;
+      last = Date.now();
+      try {
+        const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+        if (classes.length) {
+          for (const owner of classes) {
+            const windows = find.invoke(owner.type.object);
+            for (let i = 0; i < windows.length; i++) {
+              const window = windows.get(i);
+              if (Boolean(call(call(window, "get_gameObject"), "get_activeInHierarchy"))) installSettingsDataButton(window);
+            }
+          }
+          return;
+        }
+        const objects = find.invoke(ucls("UnityEngine.UI.Button").type.object), visited = /* @__PURE__ */ new Set();
+        for (let i = 0; i < objects.length; i++) {
+          const go = call(objects.get(i), "get_gameObject");
+          if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
+          let node = call(go, "get_transform");
+          for (let depth = 0; depth < 8 && !isNull(node); depth++, node = call(node, "get_parent")) {
+            const key = node.handle.toString();
+            if (visited.has(key)) break;
+            visited.add(key);
+            if (!/^(?:OptionsWinMobile|SettingsWin_Mobile|SettingsWin|OptionsWin)$/i.test(String(call(node, "get_name")?.content || "").replace(/\(Clone\)$/i, "").trim())) continue;
+            const root = call(node, "get_gameObject"), rect = uiRect(root), bounds = call(rect, "get_rect");
+            if (Number(bounds.field("m_Width").value) < 300 || Number(bounds.field("m_Height").value) < 200) continue;
+            installSettingsDataButton(root);
+          }
+        }
+      } catch (_) {
+      }
+    } });
+    log(`settings game data: ${hooks} window hooks, ${closeAddresses.size} close hooks and prefab fallback`);
+  });
+  function graphicsFrameRate(text) {
+    try {
+      const value = JSON.parse(text || "null")?.frameRate;
+      return Number.isInteger(value) && value >= 20 && value <= 240 ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function graphicsQuality(text) {
+    try {
+      const value = JSON.parse(text || "null")?.quality;
+      return Number.isInteger(value) && value >= 0 && value <= 3 ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function graphicsRenderScale(text) {
+    try {
+      const value = JSON.parse(text || "null")?.renderScale;
+      return Number.isInteger(value) && value >= 30 && value < 100 ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function scaledResolution(state, width, height, percent) {
+    if (width * height > state.width * state.height) {
+      state.width = width;
+      state.height = height;
+    }
+    const target = { width: Math.round(state.width * percent / 100), height: Math.round(state.height * percent / 100) };
+    return width > target.width ? target : { width, height };
+  }
+  section("graphics: render resolution", () => {
+    if (graphicsRenderScale(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`)))
+      log("graphics: saved render resolution ignored (setting removed)");
+    const percent = 0;
+    if (!percent) return;
+    const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+    const name = "UnityEngine.Screen::SetResolution(System.Int32,System.Int32,System.Boolean,System.Int32)";
+    const at = resolve(Memory.allocUtf8String(name));
+    if (at.isNull()) {
+      log("graphics: render resolution unavailable (no engine SetResolution)");
+      return;
+    }
+    const state = { width: 0, height: 0 };
+    globalThis.__teslScaledSize = (width, height) => scaledResolution(state, width, height, percent);
+    hookAttach(at, {
+      onEnter(args) {
+        const width = args[0].toInt32(), height = args[1].toInt32();
+        const size = scaledResolution(state, width, height, percent);
+        if (size.width === width) return;
+        args[0] = ptr(size.width);
+        args[1] = ptr(size.height);
+        log(`graphics: render resolution ${width}x${height} -> ${size.width}x${size.height} (${percent}%)`);
+        schedule(300, () => globalThis.__teslApplyRate?.("after resolution"), "graphics rate after resolution");
+      }
     });
-    section("graphics: frame rate and quality", () => {
-      const file = `${persistentPath()}/tesl-reborn-graphics.json`;
+    const setResolution = new NativeFunction(at, "void", ["int", "int", "bool", "int"]);
+    schedule(0, () => {
       try {
-        const saved = JSON.parse(readTextFile(file) || "{}") || {};
-        if (saved.frameRateReset !== 173) {
-          const had = saved.frameRate;
-          delete saved.frameRate;
-          saved.frameRateReset = 173;
-          writeTextFile(file, JSON.stringify(saved));
-          if (had !== void 0) log(`graphics: chosen frame rate ${had} reset to the default (once, patch 173)`);
-        }
-      } catch (_) {
+        const screen = ucls("UnityEngine.Screen");
+        const width = Number(screen.method("get_width", 0).invoke()), height = Number(screen.method("get_height", 0).invoke());
+        const fullscreen = Boolean(screen.method("get_fullScreen", 0).invoke());
+        setResolution(width, height, fullscreen ? 1 : 0, 0);
+      } catch (error) {
+        log(`graphics: render resolution failed: ${error}`);
       }
-      const rate = graphicsFrameRate(readTextFile(file));
-      globalThis.__teslTargetRate = rate || 60;
-      let chosenQuality = 3;
-      let allowMsaa = false;
+    }, "graphics render resolution");
+  });
+  section("graphics: frame rate and quality", () => {
+    const file = `${persistentPath()}/tesl-reborn-graphics.json`;
+    try {
+      const saved = JSON.parse(readTextFile(file) || "{}") || {};
+      if (saved.frameRateReset !== 173) {
+        const had = saved.frameRate;
+        delete saved.frameRate;
+        saved.frameRateReset = 173;
+        writeTextFile(file, JSON.stringify(saved));
+        if (had !== void 0) log(`graphics: chosen frame rate ${had} reset to the default (once, patch 173)`);
+      }
+    } catch (_) {
+    }
+    const rate = graphicsFrameRate(readTextFile(file));
+    globalThis.__teslTargetRate = rate || 60;
+    let chosenQuality = 3;
+    let allowMsaa = false;
+    try {
+      allowMsaa = JSON.parse(readTextFile(file) || "{}")?.msaa === true;
+    } catch (_) {
+    }
+    const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+    const icall = (names, ret, args) => {
+      for (const name of names) {
+        const at = resolve(Memory.allocUtf8String(name));
+        if (!at.isNull()) return new NativeFunction(at, ret, args);
+      }
+      return null;
+    };
+    const setVSync = icall(["UnityEngine.QualitySettings::set_vSyncCount(System.Int32)", "UnityEngine.QualitySettings::set_vSyncCount"], "void", ["int"]);
+    globalThis.__teslSetAntiAliasing = icall(["UnityEngine.QualitySettings::set_antiAliasing(System.Int32)", "UnityEngine.QualitySettings::set_antiAliasing"], "void", ["int"]);
+    const getVSync = icall(["UnityEngine.QualitySettings::get_vSyncCount()", "UnityEngine.QualitySettings::get_vSyncCount"], "int", []);
+    const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
+    const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
+    const getterFields = {};
+    function getterField(names) {
+      const key = names[0];
+      if (key in getterFields) return getterFields[key];
+      let found = null;
+      const trace = [];
       try {
-        allowMsaa = JSON.parse(readTextFile(file) || "{}")?.msaa === true;
-      } catch (_) {
-      }
-      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
-      const icall = (names, ret, args) => {
-        for (const name of names) {
-          const at = resolve(Memory.allocUtf8String(name));
-          if (!at.isNull()) return new NativeFunction(at, ret, args);
-        }
-        return null;
-      };
-      const setVSync = icall(["UnityEngine.QualitySettings::set_vSyncCount(System.Int32)", "UnityEngine.QualitySettings::set_vSyncCount"], "void", ["int"]);
-      globalThis.__teslSetAntiAliasing = icall(["UnityEngine.QualitySettings::set_antiAliasing(System.Int32)", "UnityEngine.QualitySettings::set_antiAliasing"], "void", ["int"]);
-      const getVSync = icall(["UnityEngine.QualitySettings::get_vSyncCount()", "UnityEngine.QualitySettings::get_vSyncCount"], "int", []);
-      const engineSetRate = icall(["UnityEngine.Application::set_targetFrameRate(System.Int32)"], "void", ["int"]);
-      const getRate = icall(["UnityEngine.Application::get_targetFrameRate()", "UnityEngine.Application::get_targetFrameRate"], "int", []);
-      const getterFields = {};
-      function getterField(names) {
-        const key = names[0];
-        if (key in getterFields) return getterFields[key];
-        let found = null;
-        const trace = [];
-        try {
-          let at = null;
-          for (const name of names) {
-            const p = resolve(Memory.allocUtf8String(name));
-            if (!p.isNull()) {
-              at = p;
-              break;
-            }
-          }
-          if (!at) throw Error("getter not found");
-          const start = at;
-          let owner = null;
-          for (let i = 0; i < 24 && !found; i++) {
-            const ins = Instruction.parse(at);
-            trace.push(`${ins.mnemonic} ${ins.opStr}`);
-            if (ins.mnemonic === "ret") break;
-            if (!owner && ins.mnemonic === "b") {
-              at = ptr(ins.opStr.replace("#", ""));
-              continue;
-            }
-            if (!owner && ins.mnemonic === "bl") owner = ptr(ins.opStr.replace("#", ""));
-            else if (owner && /^ldr/.test(ins.mnemonic)) {
-              const m = ins.opStr.match(/^([ws])0, \[x0(?:, #(0x[0-9a-f]+|\d+))?\]$/);
-              if (m) {
-                const kind = m[1] === "s" ? "float" : "int";
-                found = { owner: new NativeFunction(owner, "pointer", []), offset: Number(m[2] || 0), kind, read: new NativeFunction(start, kind, []) };
-              }
-            }
-            at = ins.next;
-          }
-          if (!found) throw Error("no field load");
-        } catch (error) {
-          log(`engine: ${key} field unknown: ${error}; ${trace.join("; ")}`);
-        }
-        return getterFields[key] = found;
-      }
-      function writeField(names, value) {
-        const field = getterField(names);
-        if (!field) return false;
-        const owner = field.owner();
-        if (owner.isNull()) return false;
-        const at = owner.add(field.offset), now = field.read();
-        const held = field.kind === "float" ? at.readFloat() : at.readS32();
-        if (Math.abs(held - now) > 1e-6) {
-          log(`engine: ${names[0]} field +${field.offset} holds ${held}, getter ${now}; not written`);
-          getterFields[names[0]] = null;
-          return false;
-        }
-        if (field.kind === "float") at.writeFloat(value);
-        else at.writeS32(value);
-        return field.read();
-      }
-      const antiAliasingNames = ["UnityEngine.QualitySettings::get_antiAliasing()", "UnityEngine.QualitySettings::get_antiAliasing"];
-      const fixedStepNames = ["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"];
-      const currentRate = () => {
-        const cap = globalThis.__teslRateCap;
-        return cap ? Math.min(rate || 60, cap) : rate;
-      };
-      function applyRate(why) {
-        const effective = currentRate() || (["cap lifted", "resumed", "after resolution", "drift"].includes(why) ? 60 : 0);
-        if (!effective) return;
-        if (!allowMsaa) try {
-          const samples = antiAliasingOff();
-          if (samples) log(`graphics: antiAliasing ${samples}x -> off (${why})`);
-        } catch (_) {
-        }
-        try {
-          if (setVSync) setVSync(0);
-          if (engineSetRate) engineSetRate(effective);
-          else setRate.invoke(effective);
-          log(`graphics: frame rate ${effective} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
-        } catch (error) {
-          log(`graphics: frame rate failed: ${error}`);
-        }
-      }
-      const autoFile = `${persistentPath()}/tesl-reborn-graphics-auto.json`;
-      const ceiling = rate || 60;
-      const ladder = [120, 90, 75];
-      for (let step = 60; step >= 30; step -= 5) ladder.push(step);
-      let auto = {};
-      try {
-        auto = JSON.parse(readTextFile(autoFile) || "{}") || {};
-      } catch (_) {
-      }
-      const renderScale = graphicsRenderScale(readTextFile(file)) || 100;
-      if (auto.at && (auto.renderScale || 100) !== renderScale) {
-        log(`graphics: render scale ${auto.renderScale || 100}% -> ${renderScale}%, learned frame rates reset`);
-        auto = { msaaOff: auto.msaaOff };
-      }
-      const learning = 173;
-      if (auto.at && auto.learning !== learning) {
-        log(`graphics: learned frame rates from before patch ${learning} reset`);
-        auto = { msaaOff: auto.msaaOff, relearn: true };
-      }
-      let oneFastest = false;
-      try {
-        const max = [];
-        for (let cpu = 0; cpu < 16; cpu++) {
-          try {
-            max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
-          } catch (_) {
-          }
-        }
-        const top = Math.max(...max);
-        oneFastest = top > 0 && max.filter((f) => f === top).length === 1;
-      } catch (_) {
-      }
-      if (oneFastest) log("graphics: automatic frame rate caps off (one fastest core)");
-      const modes = {
-        menu: { cap: 0, low: 0, steady: 0, best: 0 },
-        battle: { cap: 0, low: 0, steady: 0, best: 0 }
-      };
-      let msaaOff = auto.msaaOff === true, mode = "menu", boardType = null;
-      globalThis.__teslRateCap = modes.menu.cap;
-      if (modes.menu.cap || modes.battle.cap || msaaOff) {
-        log(`graphics: auto frame rate menu ${modes.menu.cap || ceiling}, battle ${modes.battle.cap || ceiling} of ${ceiling} (learned ${auto.at || "earlier"})${msaaOff ? ", antiAliasing off" : ""}`);
-        if (!rate && modes.menu.cap) schedule(0, () => applyRate("auto start"), "graphics auto rate");
-      }
-      const saveAuto = () => {
-        try {
-          writeTextFile(autoFile, JSON.stringify({
-            menu: { rate: modes.menu.cap || ceiling },
-            battle: { rate: modes.battle.cap || ceiling },
-            msaaOff,
-            renderScale,
-            learning,
-            at: (/* @__PURE__ */ new Date()).toISOString()
-          }));
-        } catch (_) {
-        }
-      };
-      if (auto.relearn) saveAuto();
-      function antiAliasingOff() {
-        const quality2 = ucls("UnityEngine.QualitySettings"), samples = Number(quality2.method("get_antiAliasing", 0).invoke());
-        if (samples <= 0) return 0;
-        const managed = quality2.tryMethod("set_antiAliasing", 1);
-        if (managed) managed.invoke(0);
-        else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
-        else if (!levelAntiAliasingOff(quality2)) throw Error("no antiAliasing setter");
-        return samples;
-      }
-      function levelAntiAliasingOff(quality2) {
         let at = null;
-        for (const name of antiAliasingNames) {
+        for (const name of names) {
           const p = resolve(Memory.allocUtf8String(name));
           if (!p.isNull()) {
             at = p;
             break;
           }
         }
-        if (!at) return false;
-        const code = [];
-        for (let i = 0; i < 16; i++) {
+        if (!at) throw Error("getter not found");
+        const start = at;
+        let owner = null;
+        for (let i = 0; i < 24 && !found; i++) {
           const ins = Instruction.parse(at);
-          code.push(`${ins.mnemonic} ${ins.opStr}`);
+          trace.push(`${ins.mnemonic} ${ins.opStr}`);
           if (ins.mnemonic === "ret") break;
+          if (!owner && ins.mnemonic === "b") {
+            at = ptr(ins.opStr.replace("#", ""));
+            continue;
+          }
+          if (!owner && ins.mnemonic === "bl") owner = ptr(ins.opStr.replace("#", ""));
+          else if (owner && /^ldr/.test(ins.mnemonic)) {
+            const m = ins.opStr.match(/^([ws])0, \[x0(?:, #(0x[0-9a-f]+|\d+))?\]$/);
+            if (m) {
+              const kind = m[1] === "s" ? "float" : "int";
+              found = { owner: new NativeFunction(owner, "pointer", []), offset: Number(m[2] || 0), kind, read: new NativeFunction(start, kind, []) };
+            }
+          }
           at = ins.next;
         }
-        const text = code.join("; ");
-        const num = (re) => {
-          const m = text.match(re);
-          return m ? Number(m[1]) : null;
-        };
-        const owner = (text.match(/bl #(0x[0-9a-f]+)/) || [])[1];
-        const current = num(/ldrsw x8, \[x0, #(0x[0-9a-f]+|\d+)\]/), levels = num(/ldr x9, \[x0, #(0x[0-9a-f]+|\d+)\]/);
-        const stride = num(/mov w10, #(0x[0-9a-f]+|\d+)/), field = num(/ldr w0, \[x8, #(0x[0-9a-f]+|\d+)\]/);
-        if (!owner || [current, levels, stride, field].includes(null)) {
-          log(`engine: antiAliasing layout unknown: ${text}`);
-          return false;
-        }
-        const manager2 = new NativeFunction(ptr(owner), "pointer", [])();
-        const index = manager2.add(current).readS32(), entry = manager2.add(levels).readPointer().add(index * stride + field);
-        const before = Number(quality2.method("get_antiAliasing", 0).invoke());
-        if (entry.readS32() !== before) {
-          log(`engine: antiAliasing entry holds ${entry.readS32()}, getter ${before}; not written`);
-          return false;
-        }
-        entry.writeS32(0);
+        if (!found) throw Error("no field load");
+      } catch (error) {
+        log(`engine: ${key} field unknown: ${error}; ${trace.join("; ")}`);
+      }
+      return getterFields[key] = found;
+    }
+    function writeField(names, value) {
+      const field = getterField(names);
+      if (!field) return false;
+      const owner = field.owner();
+      if (owner.isNull()) return false;
+      const at = owner.add(field.offset), now = field.read();
+      const held = field.kind === "float" ? at.readFloat() : at.readS32();
+      if (Math.abs(held - now) > 1e-6) {
+        log(`engine: ${names[0]} field +${field.offset} holds ${held}, getter ${now}; not written`);
+        getterFields[names[0]] = null;
+        return false;
+      }
+      if (field.kind === "float") at.writeFloat(value);
+      else at.writeS32(value);
+      return field.read();
+    }
+    const antiAliasingNames = ["UnityEngine.QualitySettings::get_antiAliasing()", "UnityEngine.QualitySettings::get_antiAliasing"];
+    const fixedStepNames = ["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"];
+    const currentRate = () => {
+      const cap = globalThis.__teslRateCap;
+      return cap ? Math.min(rate || 60, cap) : rate;
+    };
+    function applyRate(why) {
+      const effective = currentRate() || (["cap lifted", "resumed", "after resolution", "drift"].includes(why) ? 60 : 0);
+      if (!effective) return;
+      if (!allowMsaa) try {
+        const samples = antiAliasingOff();
+        if (samples) log(`graphics: antiAliasing ${samples}x -> off (${why})`);
+      } catch (_) {
+      }
+      try {
+        if (setVSync) setVSync(0);
+        if (engineSetRate) engineSetRate(effective);
+        else setRate.invoke(effective);
+        log(`graphics: frame rate ${effective} (${why}): target ${getRate ? getRate() : "?"}, vSync ${getVSync ? getVSync() : "?"}`);
+      } catch (error) {
+        log(`graphics: frame rate failed: ${error}`);
+      }
+    }
+    const autoFile = `${persistentPath()}/tesl-reborn-graphics-auto.json`;
+    const ceiling = rate || 60;
+    const ladder = [120, 90, 75];
+    for (let step = 60; step >= 30; step -= 5) ladder.push(step);
+    let auto = {};
+    try {
+      auto = JSON.parse(readTextFile(autoFile) || "{}") || {};
+    } catch (_) {
+    }
+    const renderScale = graphicsRenderScale(readTextFile(file)) || 100;
+    if (auto.at && (auto.renderScale || 100) !== renderScale) {
+      log(`graphics: render scale ${auto.renderScale || 100}% -> ${renderScale}%, learned frame rates reset`);
+      auto = { msaaOff: auto.msaaOff };
+    }
+    const learning = 173;
+    if (auto.at && auto.learning !== learning) {
+      log(`graphics: learned frame rates from before patch ${learning} reset`);
+      auto = { msaaOff: auto.msaaOff, relearn: true };
+    }
+    let oneFastest = false;
+    try {
+      const max = [];
+      for (let cpu = 0; cpu < 16; cpu++) {
         try {
-          quality2.method("SetQualityLevel", 2).invoke(index, true);
-        } catch (error) {
-          log(`engine: quality reapply failed: ${error}`);
-        }
-        try {
-          if (setVSync) setVSync(0);
+          max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
         } catch (_) {
         }
-        const after = Number(quality2.method("get_antiAliasing", 0).invoke());
-        log(`engine: level ${index} antiAliasing ${before} -> ${after} (entry)`);
-        return after === 0;
       }
-      let mainCpu = null, mainSamples = 0, mainReported = "", mainWidened = false;
-      function mainThreadReport() {
-        if (mainSamples++ % 4) return;
+      const top = Math.max(...max);
+      oneFastest = top > 0 && max.filter((f) => f === top).length === 1;
+    } catch (_) {
+    }
+    if (oneFastest) log("graphics: automatic frame rate caps off (one fastest core)");
+    const modes = {
+      menu: { cap: 0, low: 0, steady: 0, best: 0 },
+      battle: { cap: 0, low: 0, steady: 0, best: 0 }
+    };
+    let msaaOff = auto.msaaOff === true, mode = "menu", boardType = null;
+    globalThis.__teslRateCap = modes.menu.cap;
+    if (modes.menu.cap || modes.battle.cap || msaaOff) {
+      log(`graphics: auto frame rate menu ${modes.menu.cap || ceiling}, battle ${modes.battle.cap || ceiling} of ${ceiling} (learned ${auto.at || "earlier"})${msaaOff ? ", antiAliasing off" : ""}`);
+      if (!rate && modes.menu.cap) schedule(0, () => applyRate("auto start"), "graphics auto rate");
+    }
+    const saveAuto = () => {
+      try {
+        writeTextFile(autoFile, JSON.stringify({
+          menu: { rate: modes.menu.cap || ceiling },
+          battle: { rate: modes.battle.cap || ceiling },
+          msaaOff,
+          renderScale,
+          learning,
+          at: (/* @__PURE__ */ new Date()).toISOString()
+        }));
+      } catch (_) {
+      }
+    };
+    if (auto.relearn) saveAuto();
+    function antiAliasingOff() {
+      const quality2 = ucls("UnityEngine.QualitySettings"), samples = Number(quality2.method("get_antiAliasing", 0).invoke());
+      if (samples <= 0) return 0;
+      const managed = quality2.tryMethod("set_antiAliasing", 1);
+      if (managed) managed.invoke(0);
+      else if (globalThis.__teslSetAntiAliasing) globalThis.__teslSetAntiAliasing(0);
+      else if (!levelAntiAliasingOff(quality2)) throw Error("no antiAliasing setter");
+      return samples;
+    }
+    function levelAntiAliasingOff(quality2) {
+      let at = null;
+      for (const name of antiAliasingNames) {
+        const p = resolve(Memory.allocUtf8String(name));
+        if (!p.isNull()) {
+          at = p;
+          break;
+        }
+      }
+      if (!at) return false;
+      const code = [];
+      for (let i = 0; i < 16; i++) {
+        const ins = Instruction.parse(at);
+        code.push(`${ins.mnemonic} ${ins.opStr}`);
+        if (ins.mnemonic === "ret") break;
+        at = ins.next;
+      }
+      const text = code.join("; ");
+      const num = (re) => {
+        const m = text.match(re);
+        return m ? Number(m[1]) : null;
+      };
+      const owner = (text.match(/bl #(0x[0-9a-f]+)/) || [])[1];
+      const current = num(/ldrsw x8, \[x0, #(0x[0-9a-f]+|\d+)\]/), levels = num(/ldr x9, \[x0, #(0x[0-9a-f]+|\d+)\]/);
+      const stride = num(/mov w10, #(0x[0-9a-f]+|\d+)/), field = num(/ldr w0, \[x8, #(0x[0-9a-f]+|\d+)\]/);
+      if (!owner || [current, levels, stride, field].includes(null)) {
+        log(`engine: antiAliasing layout unknown: ${text}`);
+        return false;
+      }
+      const manager2 = new NativeFunction(ptr(owner), "pointer", [])();
+      const index = manager2.add(current).readS32(), entry = manager2.add(levels).readPointer().add(index * stride + field);
+      const before = Number(quality2.method("get_antiAliasing", 0).invoke());
+      if (entry.readS32() !== before) {
+        log(`engine: antiAliasing entry holds ${entry.readS32()}, getter ${before}; not written`);
+        return false;
+      }
+      entry.writeS32(0);
+      try {
+        quality2.method("SetQualityLevel", 2).invoke(index, true);
+      } catch (error) {
+        log(`engine: quality reapply failed: ${error}`);
+      }
+      try {
+        if (setVSync) setVSync(0);
+      } catch (_) {
+      }
+      const after = Number(quality2.method("get_antiAliasing", 0).invoke());
+      log(`engine: level ${index} antiAliasing ${before} -> ${after} (entry)`);
+      return after === 0;
+    }
+    let mainCpu = null, mainSamples = 0, mainReported = "", mainWidened = false;
+    function mainThreadReport() {
+      if (mainSamples++ % 4) return;
+      try {
+        if (mainCpu === null) mainCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
+        let allowed = "?";
         try {
-          if (mainCpu === null) mainCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []);
-          let allowed = "?";
+          allowed = (String(File.readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || "?";
+        } catch (_) {
+        }
+        if (/^\d+$/.test(allowed) && !mainWidened) {
+          mainWidened = true;
           try {
-            allowed = (String(File.readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || "?";
-          } catch (_) {
+            const max = [];
+            for (let cpu = 0; cpu < 16; cpu++) {
+              try {
+                max[cpu] = Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0;
+              } catch (_) {
+                max[cpu] = 0;
+              }
+            }
+            const top = Math.max(...max), cores = max.map((f, cpu) => f >= top * 0.8 ? cpu : -1).filter((cpu) => cpu >= 0);
+            if (cores.length > 1) {
+              const mask = Memory.alloc(128);
+              for (const cpu of cores) mask.add(cpu >> 3).writeU8(mask.add(cpu >> 3).readU8() | 1 << (cpu & 7));
+              const setAffinity = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_setaffinity"), "int", ["int", "size_t", "pointer"]);
+              const result = setAffinity(0, 128, mask);
+              log(`graphics: main thread allowed ${allowed} -> ${cores.join(",")} (${result === 0 ? "set" : "refused " + result})`);
+              try {
+                allowed = (String(File.readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || allowed;
+              } catch (_) {
+              }
+            }
+          } catch (error) {
+            log(`graphics: main thread affinity unchanged: ${error}`);
           }
-          if (/^\d+$/.test(allowed) && !mainWidened) {
-            mainWidened = true;
-            try {
-              const max = [];
-              for (let cpu = 0; cpu < 16; cpu++) {
-                try {
-                  max[cpu] = Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0;
-                } catch (_) {
-                  max[cpu] = 0;
-                }
-              }
-              const top = Math.max(...max), cores = max.map((f, cpu) => f >= top * 0.8 ? cpu : -1).filter((cpu) => cpu >= 0);
-              if (cores.length > 1) {
-                const mask = Memory.alloc(128);
-                for (const cpu of cores) mask.add(cpu >> 3).writeU8(mask.add(cpu >> 3).readU8() | 1 << (cpu & 7));
-                const setAffinity = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_setaffinity"), "int", ["int", "size_t", "pointer"]);
-                const result = setAffinity(0, 128, mask);
-                log(`graphics: main thread allowed ${allowed} -> ${cores.join(",")} (${result === 0 ? "set" : "refused " + result})`);
-                try {
-                  allowed = (String(File.readAllText("/proc/thread-self/status")).match(/Cpus_allowed_list:\s*(\S+)/) || [])[1] || allowed;
-                } catch (_) {
-                }
-              }
-            } catch (error) {
-              log(`graphics: main thread affinity unchanged: ${error}`);
+        }
+        const line = `main thread on ${mainCpu()}, allowed ${allowed}`;
+        if (line !== mainReported || mainSamples % 20 === 1) {
+          mainReported = line;
+          log(`graphics: ${mode}, ${line}`);
+        }
+      } catch (error) {
+        if (mainReported !== "failed") {
+          mainReported = "failed";
+          log(`graphics: main thread cpu unavailable: ${error}`);
+        }
+      }
+    }
+    function inBattle() {
+      if (typeof globalThis.__teslInBattle === "boolean") return globalThis.__teslInBattle;
+      if (boardType === null) boardType = img.classes.find((c) => c.name === "BoardInputController")?.type.object || false;
+      if (!boardType) return false;
+      const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(boardType);
+      return !isNull(found);
+    }
+    let msaaCameras = null, msaaReported = "";
+    function camerasWithoutMsaa() {
+      if (allowMsaa) return;
+      let state;
+      try {
+        const camera = ucls("UnityEngine.Camera");
+        if (msaaCameras === null) {
+          const get = camera.tryMethod("get_allowMSAA", 0), set = camera.tryMethod("set_allowMSAA", 1);
+          msaaCameras = get && set ? { get, set, all: camera.method("get_allCameras", 0) } : false;
+        }
+        if (!msaaCameras) state = "camera allowMSAA unavailable";
+        else {
+          const cameras = msaaCameras.all.invoke();
+          let changed = 0;
+          for (let i = 0; i < cameras.length; i++) {
+            const item = cameras.get(i);
+            if (Boolean(msaaCameras.get.bind(item).invoke())) {
+              msaaCameras.set.bind(item).invoke(false);
+              changed++;
             }
           }
-          const line = `main thread on ${mainCpu()}, allowed ${allowed}`;
-          if (line !== mainReported || mainSamples % 20 === 1) {
-            mainReported = line;
-            log(`graphics: ${mode}, ${line}`);
-          }
-        } catch (error) {
-          if (mainReported !== "failed") {
-            mainReported = "failed";
-            log(`graphics: main thread cpu unavailable: ${error}`);
-          }
+          state = changed ? `MSAA off on ${changed} of ${cameras.length} cameras` : "";
         }
+      } catch (error) {
+        state = `camera MSAA failed: ${error}`;
       }
-      function inBattle() {
-        if (typeof globalThis.__teslInBattle === "boolean") return globalThis.__teslInBattle;
-        if (boardType === null) boardType = img.classes.find((c) => c.name === "BoardInputController")?.type.object || false;
-        if (!boardType) return false;
-        const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(boardType);
-        return !isNull(found);
+      if (state && state !== msaaReported) {
+        msaaReported = state;
+        log(`graphics: ${state}`);
       }
-      let msaaCameras = null, msaaReported = "";
-      function camerasWithoutMsaa() {
-        if (allowMsaa) return;
-        let state;
+    }
+    function renderSnapshot() {
+      const show = (value) => {
+        if (value === void 0) return "?";
+        if (typeof value === "number" || typeof value === "boolean") return String(value);
+        if (isNull(value)) return "null";
         try {
-          const camera = ucls("UnityEngine.Camera");
-          if (msaaCameras === null) {
-            const get = camera.tryMethod("get_allowMSAA", 0), set = camera.tryMethod("set_allowMSAA", 1);
-            msaaCameras = get && set ? { get, set, all: camera.method("get_allCameras", 0) } : false;
-          }
-          if (!msaaCameras) state = "camera allowMSAA unavailable";
-          else {
-            const cameras = msaaCameras.all.invoke();
-            let changed = 0;
-            for (let i = 0; i < cameras.length; i++) {
-              const item = cameras.get(i);
-              if (Boolean(msaaCameras.get.bind(item).invoke())) {
-                msaaCameras.set.bind(item).invoke(false);
-                changed++;
+          if (value.class?.isEnum) return String(enumVal(value));
+        } catch (_) {
+        }
+        return String(value.content ?? value);
+      };
+      const read = (target, name) => {
+        try {
+          const m = target.tryMethod(name, 0);
+          return m ? show(m.invoke()) : "-";
+        } catch (_) {
+          return "!";
+        }
+      };
+      const quality2 = ucls("UnityEngine.QualitySettings");
+      const settings = [
+        "GetQualityLevel",
+        "get_shadows",
+        "get_shadowResolution",
+        "get_shadowDistance",
+        "get_shadowCascades",
+        "get_pixelLightCount",
+        "get_antiAliasing",
+        "get_anisotropicFiltering",
+        "get_softParticles",
+        "get_lodBias",
+        "get_masterTextureLimit",
+        "get_realtimeReflectionProbes",
+        "get_billboardsFaceCameraPosition"
+      ].map((name) => `${name.replace(/^get_/, "")}=${read(quality2, name)}`).join(" ");
+      log(`render: quality ${settings}`);
+      const screen = ucls("UnityEngine.Screen");
+      log(`render: screen ${read(screen, "get_width")}x${read(screen, "get_height")}`);
+      const ppClass = img.classes.find((c) => c.name === "PostProcessingBehaviour");
+      const models = [
+        "fog",
+        "antialiasing",
+        "ambientOcclusion",
+        "screenSpaceReflection",
+        "depthOfField",
+        "motionBlur",
+        "eyeAdaptation",
+        "bloom",
+        "colorGrading",
+        "userLut",
+        "chromaticAberration",
+        "grain",
+        "vignette",
+        "dithering"
+      ];
+      const cameras = ucls("UnityEngine.Camera").method("get_allCameras", 0).invoke();
+      for (let i = 0; i < cameras.length; i++) {
+        const camera = cameras.get(i), go = call(camera, "get_gameObject");
+        const target = camera.method("get_targetTexture", 0).invoke();
+        let line = `render: camera "${call(go, "get_name").content}" depth=${read(camera, "get_depth")} clear=${read(camera, "get_clearFlags")} mask=${read(camera, "get_cullingMask")} path=${read(camera, "get_actualRenderingPath")} hdr=${read(camera, "get_allowHDR")} px=${read(camera, "get_pixelWidth")}x${read(camera, "get_pixelHeight")} target=${isNull(target) ? "screen" : `${read(target, "get_width")}x${read(target, "get_height")}`}`;
+        if (ppClass) {
+          const behaviour = go.method("GetComponent").overload("System.Type").invoke(ppClass.type.object);
+          if (!isNull(behaviour)) {
+            const profile = behaviour.field("profile").value;
+            const on = isNull(profile) ? [] : models.filter((name) => {
+              try {
+                return Boolean(call(profile.field(name).value, "get_enabled"));
+              } catch (_) {
+                return false;
               }
-            }
-            state = changed ? `MSAA off on ${changed} of ${cameras.length} cameras` : "";
+            });
+            line += ` post=${read(behaviour, "get_enabled")} [${on.join(",")}]`;
           }
-        } catch (error) {
-          state = `camera MSAA failed: ${error}`;
         }
-        if (state && state !== msaaReported) {
-          msaaReported = state;
-          log(`graphics: ${state}`);
-        }
+        log(line);
       }
-      function renderSnapshot() {
-        const show = (value) => {
-          if (value === void 0) return "?";
-          if (typeof value === "number" || typeof value === "boolean") return String(value);
-          if (isNull(value)) return "null";
-          try {
-            if (value.class?.isEnum) return String(enumVal(value));
-          } catch (_) {
-          }
-          return String(value.content ?? value);
-        };
-        const read = (target, name) => {
-          try {
-            const m = target.tryMethod(name, 0);
-            return m ? show(m.invoke()) : "-";
-          } catch (_) {
-            return "!";
-          }
-        };
-        const quality2 = ucls("UnityEngine.QualitySettings");
-        const settings = [
-          "GetQualityLevel",
-          "get_shadows",
-          "get_shadowResolution",
-          "get_shadowDistance",
-          "get_shadowCascades",
-          "get_pixelLightCount",
-          "get_antiAliasing",
-          "get_anisotropicFiltering",
-          "get_softParticles",
-          "get_lodBias",
-          "get_masterTextureLimit",
-          "get_realtimeReflectionProbes",
-          "get_billboardsFaceCameraPosition"
-        ].map((name) => `${name.replace(/^get_/, "")}=${read(quality2, name)}`).join(" ");
-        log(`render: quality ${settings}`);
-        const screen = ucls("UnityEngine.Screen");
-        log(`render: screen ${read(screen, "get_width")}x${read(screen, "get_height")}`);
-        const ppClass = img.classes.find((c) => c.name === "PostProcessingBehaviour");
-        const models = [
-          "fog",
-          "antialiasing",
-          "ambientOcclusion",
-          "screenSpaceReflection",
-          "depthOfField",
-          "motionBlur",
-          "eyeAdaptation",
-          "bloom",
-          "colorGrading",
-          "userLut",
-          "chromaticAberration",
-          "grain",
-          "vignette",
-          "dithering"
-        ];
-        const cameras = ucls("UnityEngine.Camera").method("get_allCameras", 0).invoke();
-        for (let i = 0; i < cameras.length; i++) {
-          const camera = cameras.get(i), go = call(camera, "get_gameObject");
-          const target = camera.method("get_targetTexture", 0).invoke();
-          let line = `render: camera "${call(go, "get_name").content}" depth=${read(camera, "get_depth")} clear=${read(camera, "get_clearFlags")} mask=${read(camera, "get_cullingMask")} path=${read(camera, "get_actualRenderingPath")} hdr=${read(camera, "get_allowHDR")} px=${read(camera, "get_pixelWidth")}x${read(camera, "get_pixelHeight")} target=${isNull(target) ? "screen" : `${read(target, "get_width")}x${read(target, "get_height")}`}`;
-          if (ppClass) {
-            const behaviour = go.method("GetComponent").overload("System.Type").invoke(ppClass.type.object);
-            if (!isNull(behaviour)) {
-              const profile = behaviour.field("profile").value;
-              const on = isNull(profile) ? [] : models.filter((name) => {
-                try {
-                  return Boolean(call(profile.field(name).value, "get_enabled"));
-                } catch (_) {
-                  return false;
-                }
-              });
-              line += ` post=${read(behaviour, "get_enabled")} [${on.join(",")}]`;
-            }
-          }
-          log(line);
-        }
-        const count = (type, test = null) => {
-          try {
-            const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls(type).type.object);
-            if (!test) return all.length;
-            let n = 0;
-            for (let i = 0; i < all.length; i++) if (test(all.get(i))) n++;
-            return n;
-          } catch (_) {
-            return "?";
-          }
-        };
-        log(`render: lights ${count("UnityEngine.Light")} (shadowed ${count("UnityEngine.Light", (l) => enumVal(call(l, "get_shadows")) !== 0)}), particle systems ${count("UnityEngine.ParticleSystem")}, mesh renderers ${count("UnityEngine.MeshRenderer")}, skinned ${count("UnityEngine.SkinnedMeshRenderer")}, projectors ${count("UnityEngine.Projector")}`);
+      const count = (type, test = null) => {
         try {
-          const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls("UnityEngine.Renderer").type.object);
-          const layers = /* @__PURE__ */ new Map();
-          for (let i = 0; i < all.length; i++) {
-            const renderer = all.get(i), go = call(renderer, "get_gameObject");
-            if (!Boolean(call(renderer, "get_enabled")) || !Boolean(call(go, "get_activeInHierarchy"))) continue;
-            const layer = Number(call(go, "get_layer"));
-            layers.set(layer, (layers.get(layer) || 0) + 1);
-          }
-          const row = Array.from(layers.entries()).sort((a, b) => a[0] - b[0]).map(([layer, n]) => `${layer}:${n}`).join(" ");
-          log(`render: active renderers by layer ${row}; Camera_Targeting=18 Camera_Drag=19 Camera_Ortho=16 UI=5`);
-        } catch (error) {
-          log(`render: layer count failed: ${error}`);
+          const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls(type).type.object);
+          if (!test) return all.length;
+          let n = 0;
+          for (let i = 0; i < all.length; i++) if (test(all.get(i))) n++;
+          return n;
+        } catch (_) {
+          return "?";
         }
-        log(`render: particles playing ${count("UnityEngine.ParticleSystem", (p) => Boolean(call(p, "get_isPlaying")))}, alive ${count("UnityEngine.ParticleSystem", (p) => Number(call(p, "get_particleCount")) > 0)}, visible renderers ${count("UnityEngine.ParticleSystemRenderer", (r) => Boolean(call(r, "get_isVisible")))}`);
+      };
+      log(`render: lights ${count("UnityEngine.Light")} (shadowed ${count("UnityEngine.Light", (l) => enumVal(call(l, "get_shadows")) !== 0)}), particle systems ${count("UnityEngine.ParticleSystem")}, mesh renderers ${count("UnityEngine.MeshRenderer")}, skinned ${count("UnityEngine.SkinnedMeshRenderer")}, projectors ${count("UnityEngine.Projector")}`);
+      try {
+        const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls("UnityEngine.Renderer").type.object);
+        const layers = /* @__PURE__ */ new Map();
+        for (let i = 0; i < all.length; i++) {
+          const renderer = all.get(i), go = call(renderer, "get_gameObject");
+          if (!Boolean(call(renderer, "get_enabled")) || !Boolean(call(go, "get_activeInHierarchy"))) continue;
+          const layer = Number(call(go, "get_layer"));
+          layers.set(layer, (layers.get(layer) || 0) + 1);
+        }
+        const row = Array.from(layers.entries()).sort((a, b) => a[0] - b[0]).map(([layer, n]) => `${layer}:${n}`).join(" ");
+        log(`render: active renderers by layer ${row}; Camera_Targeting=18 Camera_Drag=19 Camera_Ortho=16 UI=5`);
+      } catch (error) {
+        log(`render: layer count failed: ${error}`);
       }
-      let profiled = false;
-      function profileMainThread() {
-        if (profiled) return;
-        profiled = true;
-        let step = "methods";
+      log(`render: particles playing ${count("UnityEngine.ParticleSystem", (p) => Boolean(call(p, "get_isPlaying")))}, alive ${count("UnityEngine.ParticleSystem", (p) => Number(call(p, "get_particleCount")) > 0)}, visible renderers ${count("UnityEngine.ParticleSystemRenderer", (r) => Boolean(call(r, "get_isVisible")))}`);
+    }
+    let profiled = false;
+    function profileMainThread() {
+      if (profiled) return;
+      profiled = true;
+      let step = "methods";
+      try {
+        profileSteps((name) => {
+          step = name;
+        });
+      } catch (error) {
+        log(`profile: failed at ${step}: ${error}`);
+      }
+    }
+    function profileSteps(at) {
+      const batch = (fn) => {
+        const begin = Interceptor.beginTransaction, end = Interceptor.endTransaction;
+        if (typeof begin !== "function" || typeof end !== "function") return fn();
+        begin.call(Interceptor);
         try {
-          profileSteps((name) => {
-            step = name;
-          });
-        } catch (error) {
-          log(`profile: failed at ${step}: ${error}`);
+          return fn();
+        } finally {
+          end.call(Interceptor);
+        }
+      };
+      const targets = [];
+      const seen = /* @__PURE__ */ new Set();
+      const add = (method, label) => {
+        if (!method || method.isStatic || method.virtualAddress.isNull()) return;
+        const key = method.virtualAddress.toString();
+        if (seen.has(key)) return;
+        seen.add(key);
+        targets.push({ at: method.virtualAddress, label });
+      };
+      for (const klass of img.classes) {
+        if (klass.name === "ServicesManager") continue;
+        try {
+          for (const method of klass.methods)
+            if (method.parameterCount === 0 && ["Update", "LateUpdate", "FixedUpdate"].includes(method.name))
+              add(method, `${klass.name}.${method.name}`);
+        } catch (_) {
         }
       }
-      function profileSteps(at) {
-        const batch = (fn) => {
-          const begin = Interceptor.beginTransaction, end = Interceptor.endTransaction;
-          if (typeof begin !== "function" || typeof end !== "function") return fn();
-          begin.call(Interceptor);
-          try {
-            return fn();
-          } finally {
-            end.call(Interceptor);
-          }
-        };
-        const targets = [];
-        const seen = /* @__PURE__ */ new Set();
-        const add = (method, label) => {
-          if (!method || method.isStatic || method.virtualAddress.isNull()) return;
-          const key = method.virtualAddress.toString();
-          if (seen.has(key)) return;
-          seen.add(key);
-          targets.push({ at: method.virtualAddress, label });
-        };
-        for (const klass of img.classes) {
-          if (klass.name === "ServicesManager") continue;
-          try {
-            for (const method of klass.methods)
-              if (method.parameterCount === 0 && ["Update", "LateUpdate", "FixedUpdate"].includes(method.name))
-                add(method, `${klass.name}.${method.name}`);
-          } catch (_) {
-          }
+      at("engine methods");
+      for (const [type, name] of [
+        ["UnityEngine.UI.CanvasUpdateRegistry", "PerformUpdate"],
+        ["TMPro.TMP_UpdateManager", "DoRebuilds"],
+        ["UnityEngine.Canvas", "SendWillRenderCanvases"],
+        ["UnityEngine.UI.Graphic", "SetVerticesDirty"],
+        ["UnityEngine.UI.Graphic", "SetMaterialDirty"],
+        ["UnityEngine.UI.Graphic", "SetLayoutDirty"],
+        ["TMPro.TMP_Text", "SetVerticesDirty"],
+        ["TMPro.TextMeshPro", "SetVerticesDirty"],
+        ["TMPro.TextMeshProUGUI", "SetVerticesDirty"],
+        ["TMPro.TextMeshPro", "Rebuild"],
+        ["TMPro.TextMeshProUGUI", "Rebuild"],
+        ["UnityEngine.UI.Graphic", "Rebuild"]
+      ]) {
+        try {
+          const k = ucls(type);
+          add(k.methods.find((m) => m.name === name && m.parameterCount <= 1), `${k.name}.${name}`);
+        } catch (_) {
         }
-        at("engine methods");
-        for (const [type, name] of [
-          ["UnityEngine.UI.CanvasUpdateRegistry", "PerformUpdate"],
-          ["TMPro.TMP_UpdateManager", "DoRebuilds"],
-          ["UnityEngine.Canvas", "SendWillRenderCanvases"],
-          ["UnityEngine.UI.Graphic", "SetVerticesDirty"],
-          ["UnityEngine.UI.Graphic", "SetMaterialDirty"],
-          ["UnityEngine.UI.Graphic", "SetLayoutDirty"],
-          ["TMPro.TMP_Text", "SetVerticesDirty"],
-          ["TMPro.TextMeshPro", "SetVerticesDirty"],
-          ["TMPro.TextMeshProUGUI", "SetVerticesDirty"],
-          ["TMPro.TextMeshPro", "Rebuild"],
-          ["TMPro.TextMeshProUGUI", "Rebuild"],
-          ["UnityEngine.UI.Graphic", "Rebuild"]
-        ]) {
-          try {
-            const k = ucls(type);
-            add(k.methods.find((m) => m.name === name && m.parameterCount <= 1), `${k.name}.${name}`);
-          } catch (_) {
-          }
-        }
-        at("native timer");
-        const count = targets.length;
-        const totals = Memory.alloc(count * 8), calls = Memory.alloc(count * 4);
-        const cm = new CModule(`
+      }
+      at("native timer");
+      const count = targets.length;
+      const totals = Memory.alloc(count * 8), calls = Memory.alloc(count * 4);
+      const cm = new CModule(`
         #include <gum/guminterceptor.h>
         struct ts { long sec; long nsec; };
         extern int clock_gettime(int, struct ts *);
@@ -8907,169 +8859,169 @@ void onLeave (GumInvocationContext * ic) {
           totals[i] += now() - *GUM_IC_GET_INVOCATION_DATA(ic, long long);
           calls[i]++;
         }`, { clock_gettime: Process.getModuleByName("libc.so").getExportByName("clock_gettime"), totals, calls });
-        at("attach");
-        const listeners = [];
-        let attachError = null;
-        batch(() => targets.forEach((target, i) => {
-          try {
-            listeners.push(Interceptor.attach(target.at, { onEnter: cm.onEnter, onLeave: cm.onLeave }, ptr(i)));
-          } catch (error) {
-            attachError = attachError || error;
-          }
-        }));
-        if (!listeners.length) throw Error(`no method could be timed: ${attachError}`);
-        const started = Date.now();
-        log(`profile: timing ${listeners.length} of ${count} main-thread methods for 45 s`);
-        schedule(45e3, () => {
-          batch(() => {
-            for (const listener of listeners) listener.detach();
-          });
-          const seconds = (Date.now() - started) / 1e3;
-          const rows = targets.map((target, i) => ({
-            label: target.label,
-            ms: totals.add(i * 8).readS64().toNumber() / 1e6 / seconds,
-            calls: calls.add(i * 4).readS32() / seconds
-          })).filter((row) => row.ms > 0.05).sort((a, b) => b.ms - a.ms);
-          let sum = 0;
-          for (const row of rows) sum += row.ms;
-          log(`profile: ${sum.toFixed(0)} ms/s in timed methods (nested calls counted in each)`);
-          for (const row of rows.slice(0, 25)) log(`profile: ${row.ms.toFixed(1)} ms/s ${Math.round(row.calls)}/s ${row.label}`);
-          profileKeep = cm;
-        }, "main thread profile");
-      }
-      let profileKeep = null;
-      const setFixedStep = icall(["UnityEngine.Time::set_fixedDeltaTime(System.Single)", "UnityEngine.Time::set_fixedDeltaTime"], "void", ["float"]);
-      const getFixedStep = icall(["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"], "float", []);
-      const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
-      const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
-      let animatorType = null, engineCutsReported = "";
-      function engineCuts() {
-        const notes = [];
+      at("attach");
+      const listeners = [];
+      let attachError = null;
+      batch(() => targets.forEach((target, i) => {
         try {
-          if (setFixedStep && getFixedStep) {
-            const step = getFixedStep();
-            if (step < 1 / 30 - 5e-4) {
-              setFixedStep(1 / 30);
-              notes.push(`physics step ${(step * 1e3).toFixed(1)} -> 33.3 ms`);
-            }
-          } else {
-            const field = getterField(fixedStepNames), step = field ? field.read() : 0;
-            if (field && step < 1 / 30 - 5e-4) {
-              const now = writeField(fixedStepNames, 1 / 30);
-              notes.push(now === false ? "physics step not set" : `physics step ${(step * 1e3).toFixed(1)} -> ${(now * 1e3).toFixed(1)} ms (field)`);
-            }
-          }
+          listeners.push(Interceptor.attach(target.at, { onEnter: cm.onEnter, onLeave: cm.onLeave }, ptr(i)));
         } catch (error) {
-          notes.push(`physics step failed: ${error}`);
+          attachError = attachError || error;
         }
-        try {
-          if (animatorMode && setAnimatorMode) {
-            if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
-            const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);
-            let changed = 0;
-            for (let i = 0; i < all.length; i++) {
-              const item = all.get(i);
-              if (animatorMode(item.handle) === 0) {
-                setAnimatorMode(item.handle, 1);
-                changed++;
-              }
-            }
-            if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
-          } else notes.push("animator culling stripped");
-        } catch (error) {
-          notes.push(`animator culling failed: ${error}`);
-        }
-        const line = notes.join(", ");
-        if (line && line !== engineCutsReported) {
-          engineCutsReported = line;
-          log(`engine: ${line}`);
-        }
-      }
-      schedule(5e3, engineCuts, "engine cuts");
+      }));
+      if (!listeners.length) throw Error(`no method could be timed: ${attachError}`);
+      const started = Date.now();
+      log(`profile: timing ${listeners.length} of ${count} main-thread methods for 45 s`);
+      schedule(45e3, () => {
+        batch(() => {
+          for (const listener of listeners) listener.detach();
+        });
+        const seconds = (Date.now() - started) / 1e3;
+        const rows = targets.map((target, i) => ({
+          label: target.label,
+          ms: totals.add(i * 8).readS64().toNumber() / 1e6 / seconds,
+          calls: calls.add(i * 4).readS32() / seconds
+        })).filter((row) => row.ms > 0.05).sort((a, b) => b.ms - a.ms);
+        let sum = 0;
+        for (const row of rows) sum += row.ms;
+        log(`profile: ${sum.toFixed(0)} ms/s in timed methods (nested calls counted in each)`);
+        for (const row of rows.slice(0, 25)) log(`profile: ${row.ms.toFixed(1)} ms/s ${Math.round(row.calls)}/s ${row.label}`);
+        profileKeep = cm;
+      }, "main thread profile");
+    }
+    let profileKeep = null;
+    const setFixedStep = icall(["UnityEngine.Time::set_fixedDeltaTime(System.Single)", "UnityEngine.Time::set_fixedDeltaTime"], "void", ["float"]);
+    const getFixedStep = icall(["UnityEngine.Time::get_fixedDeltaTime()", "UnityEngine.Time::get_fixedDeltaTime"], "float", []);
+    const animatorMode = icall(["UnityEngine.Animator::get_cullingMode()", "UnityEngine.Animator::get_cullingMode"], "int", ["pointer"]);
+    const setAnimatorMode = icall(["UnityEngine.Animator::set_cullingMode(UnityEngine.AnimatorCullingMode)", "UnityEngine.Animator::set_cullingMode"], "void", ["pointer", "int"]);
+    let animatorType = null, engineCutsReported = "";
+    function engineCuts() {
+      const notes = [];
       try {
-        const unity = Process.getModuleByName("libunity.so");
-        const simulate = unity.base.add(2664160), sync = unity.base.add(2666996);
-        const same = (at, hex) => Array.from(new Uint8Array(at.readByteArray(16))).map((b) => b.toString(16).padStart(2, "0")).join("") === hex;
-        if (same(simulate, "e923b96dfc6f01a9fa6702a9f85f03a9") && same(sync, "fa67bba9f85f01a9f65702a9f44f03a9")) {
-          const original = simulate.readU32();
-          const branch = (335544320 | sync.sub(simulate).toInt32() >> 2 & 67108863) >>> 0;
-          let skipping = false;
-          globalThis.__teslPhysicsInBattle = (battle) => {
-            if (battle === skipping) return;
-            Memory.patchCode(simulate, 4, (code) => {
-              code.writeU32(battle ? branch : original);
-            });
-            skipping = battle;
-            log(`engine: physics ${battle ? "syncs transforms only (battle)" : "steps normally"}`);
-          };
-          const physicsSkip = experiment("physicsSkip");
-          const board = img.classes.find((c) => c.name === "BoardInputController");
-          if (board) {
-            let live = null, timer = null;
-            hookAttach(board.method("Awake", 0).virtualAddress, { onEnter(args) {
-              try {
-                if (live) live.free();
-                live = new Il2Cpp.Object(args[0]).ref(false);
-                globalThis.__teslInBattle = true;
-                if (physicsSkip) globalThis.__teslPhysicsInBattle(true);
-                if (!timer) timer = setInterval(() => {
-                  let gone = true;
-                  try {
-                    gone = !live || live.target.field("m_CachedPtr").value.isNull();
-                  } catch (_) {
-                  }
-                  if (!gone) return;
-                  clearInterval(timer);
-                  timer = null;
-                  if (live) {
-                    live.free();
-                    live = null;
-                  }
-                  globalThis.__teslInBattle = false;
-                  if (physicsSkip) globalThis.__teslPhysicsInBattle(false);
-                }, 500);
-              } catch (error) {
-                log(`engine: battle physics switch failed: ${error}`);
-              }
-            } });
+        if (setFixedStep && getFixedStep) {
+          const step = getFixedStep();
+          if (step < 1 / 30 - 5e-4) {
+            setFixedStep(1 / 30);
+            notes.push(`physics step ${(step * 1e3).toFixed(1)} -> 33.3 ms`);
           }
-        } else log("engine: physics stepping kept (another libunity build)");
+        } else {
+          const field = getterField(fixedStepNames), step = field ? field.read() : 0;
+          if (field && step < 1 / 30 - 5e-4) {
+            const now = writeField(fixedStepNames, 1 / 30);
+            notes.push(now === false ? "physics step not set" : `physics step ${(step * 1e3).toFixed(1)} -> ${(now * 1e3).toFixed(1)} ms (field)`);
+          }
+        }
       } catch (error) {
-        log(`engine: physics replace failed: ${error}`);
+        notes.push(`physics step failed: ${error}`);
       }
       try {
-        const unity = Process.getModuleByName("libunity.so"), at = unity.base.add(4322700);
-        const bytes = Array.from(new Uint8Array(at.readByteArray(16))).map((b) => b.toString(16).padStart(2, "0")).join("");
-        let fastest = 0, cores = 0;
-        try {
-          const max = [];
-          for (let cpu = 0; cpu < 16; cpu++) {
+        if (animatorMode && setAnimatorMode) {
+          if (!animatorType) animatorType = ucls("UnityEngine.Animator").type.object;
+          const all = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(animatorType);
+          let changed = 0;
+          for (let i = 0; i < all.length; i++) {
+            const item = all.get(i);
+            if (animatorMode(item.handle) === 0) {
+              setAnimatorMode(item.handle, 1);
+              changed++;
+            }
+          }
+          if (changed) notes.push(`${changed} of ${all.length} animators cull off-screen updates`);
+        } else notes.push("animator culling stripped");
+      } catch (error) {
+        notes.push(`animator culling failed: ${error}`);
+      }
+      const line = notes.join(", ");
+      if (line && line !== engineCutsReported) {
+        engineCutsReported = line;
+        log(`engine: ${line}`);
+      }
+    }
+    schedule(5e3, engineCuts, "engine cuts");
+    try {
+      const unity = Process.getModuleByName("libunity.so");
+      const simulate = unity.base.add(2664160), sync = unity.base.add(2666996);
+      const same = (at, hex) => Array.from(new Uint8Array(at.readByteArray(16))).map((b) => b.toString(16).padStart(2, "0")).join("") === hex;
+      if (same(simulate, "e923b96dfc6f01a9fa6702a9f85f03a9") && same(sync, "fa67bba9f85f01a9f65702a9f44f03a9")) {
+        const original = simulate.readU32();
+        const branch = (335544320 | sync.sub(simulate).toInt32() >> 2 & 67108863) >>> 0;
+        let skipping = false;
+        globalThis.__teslPhysicsInBattle = (battle) => {
+          if (battle === skipping) return;
+          Memory.patchCode(simulate, 4, (code) => {
+            code.writeU32(battle ? branch : original);
+          });
+          skipping = battle;
+          log(`engine: physics ${battle ? "syncs transforms only (battle)" : "steps normally"}`);
+        };
+        const physicsSkip = experiment("physicsSkip");
+        const board = img.classes.find((c) => c.name === "BoardInputController");
+        if (board) {
+          let live = null, timer = null;
+          hookAttach(board.method("Awake", 0).virtualAddress, { onEnter(args) {
             try {
-              max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
-            } catch (_) {
+              if (live) live.free();
+              live = new Il2Cpp.Object(args[0]).ref(false);
+              globalThis.__teslInBattle = true;
+              if (physicsSkip) globalThis.__teslPhysicsInBattle(true);
+              if (!timer) timer = setInterval(() => {
+                let gone = true;
+                try {
+                  gone = !live || live.target.field("m_CachedPtr").value.isNull();
+                } catch (_) {
+                }
+                if (!gone) return;
+                clearInterval(timer);
+                timer = null;
+                if (live) {
+                  live.free();
+                  live = null;
+                }
+                globalThis.__teslInBattle = false;
+                if (physicsSkip) globalThis.__teslPhysicsInBattle(false);
+              }, 500);
+            } catch (error) {
+              log(`engine: battle physics switch failed: ${error}`);
             }
-          }
-          const top = Math.max(...max);
-          cores = max.filter((f) => f > 0).length;
-          fastest = max.filter((f) => f === top).length;
-        } catch (_) {
+          } });
         }
-        if (bytes === "882240b980c200911f01186b0131981a") {
-          Memory.patchCode(at, 4, (code) => {
-            code.writeU32(1384120392);
-          });
-          log("engine: job groups wake at most 2 workers");
-        } else log("engine: job wake count kept (another libunity build)");
-      } catch (error) {
-        log(`engine: job wake patch failed: ${error}`);
-      }
+      } else log("engine: physics stepping kept (another libunity build)");
+    } catch (error) {
+      log(`engine: physics replace failed: ${error}`);
+    }
+    try {
+      const unity = Process.getModuleByName("libunity.so"), at = unity.base.add(4322700);
+      const bytes = Array.from(new Uint8Array(at.readByteArray(16))).map((b) => b.toString(16).padStart(2, "0")).join("");
+      let fastest = 0, cores = 0;
       try {
-        const unity = Process.getModuleByName("libunity.so");
-        const cull = unity.base.add(2076280), render = unity.base.add(2091484);
-        const hex = (at) => Array.from(new Uint8Array(at.readByteArray(8))).map((b) => b.toString(16).padStart(2, "0")).join("");
-        if (hex(cull) === "fc6fbba9f85f01a9" && hex(render) === "e923b96dfc6f01a9") {
-          const table = Memory.alloc(8 * 32), libc = Process.getModuleByName("libc.so");
-          const source = `
+        const max = [];
+        for (let cpu = 0; cpu < 16; cpu++) {
+          try {
+            max.push(Number(String(File.readAllText(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq`)).trim()) || 0);
+          } catch (_) {
+          }
+        }
+        const top = Math.max(...max);
+        cores = max.filter((f) => f > 0).length;
+        fastest = max.filter((f) => f === top).length;
+      } catch (_) {
+      }
+      if (bytes === "882240b980c200911f01186b0131981a") {
+        Memory.patchCode(at, 4, (code) => {
+          code.writeU32(1384120392);
+        });
+        log("engine: job groups wake at most 2 workers");
+      } else log("engine: job wake count kept (another libunity build)");
+    } catch (error) {
+      log(`engine: job wake patch failed: ${error}`);
+    }
+    try {
+      const unity = Process.getModuleByName("libunity.so");
+      const cull = unity.base.add(2076280), render = unity.base.add(2091484);
+      const hex = (at) => Array.from(new Uint8Array(at.readByteArray(8))).map((b) => b.toString(16).padStart(2, "0")).join("");
+      if (hex(cull) === "fc6fbba9f85f01a9" && hex(render) === "e923b96dfc6f01a9") {
+        const table = Memory.alloc(8 * 32), libc = Process.getModuleByName("libc.so");
+        const source = `
 #include <gum/guminterceptor.h>
 typedef struct { long s; long ns; } ts_t;
 typedef struct { void * camera; unsigned long long cull_us; unsigned long long render_us; unsigned culls; unsigned renders; } Slot;
@@ -9086,1131 +9038,1318 @@ void cull_leave (GumInvocationContext * ic) { Slot * s = slot (cull_camera); if 
 void render_enter (GumInvocationContext * ic) { render_camera = gum_invocation_context_get_nth_argument (ic, 0); render_start = now_us (); }
 void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera); if (s) { s->render_us += now_us () - render_start; s->renders++; } }
 `;
-          const cm = new CModule(source, { table, clock_gettime: libc.getExportByName("clock_gettime") });
-          let listeners = [];
-          const names = () => {
-            const map = /* @__PURE__ */ new Map();
+        const cm = new CModule(source, { table, clock_gettime: libc.getExportByName("clock_gettime") });
+        let listeners = [];
+        const names = () => {
+          const map = /* @__PURE__ */ new Map();
+          try {
+            const all = ucls("UnityEngine.Camera").method("get_allCameras", 0).invoke();
+            for (let i = 0; i < all.length; i++) {
+              const camera = all.get(i);
+              map.set(camera.field("m_CachedPtr").value.toString(), String(call(call(camera, "get_gameObject"), "get_name")?.content || "?"));
+            }
+          } catch (_) {
+          }
+          return map;
+        };
+        let reports = 0, since = 0, timer = null;
+        const report = () => {
+          const seconds = (Date.now() - since) / 1e3, map = names(), rows = [];
+          for (let i = 0; i < 8; i++) {
+            const at = table.add(i * 32), camera = at.readPointer();
+            if (camera.isNull()) continue;
+            const cullMs = at.add(8).readU64().toNumber() / 1e3 / seconds, renderMs = at.add(16).readU64().toNumber() / 1e3 / seconds;
+            rows.push(`${map.get(camera.toString()) || camera} cull ${cullMs.toFixed(1)} render ${renderMs.toFixed(1)} ms/s (${Math.round(at.add(24).readU32() / seconds)}/s)`);
+          }
+          log(`cameras: ${rows.join("; ")}`);
+          table.writeByteArray(new Array(8 * 32).fill(0));
+          since = Date.now();
+          if (++reports >= 4) {
+            clearInterval(timer);
+            timer = null;
+            for (const l of listeners) l.detach();
+            listeners = [];
+          }
+        };
+        globalThis.__teslCameraProbe = () => {
+          if (timer) return;
+          reports = 0;
+          table.writeByteArray(new Array(8 * 32).fill(0));
+          since = Date.now();
+          listeners = [
+            Interceptor.attach(cull, { onEnter: cm.cull_enter, onLeave: cm.cull_leave }),
+            Interceptor.attach(render, { onEnter: cm.render_enter, onLeave: cm.render_leave })
+          ];
+          timer = setInterval(() => {
             try {
-              const all = ucls("UnityEngine.Camera").method("get_allCameras", 0).invoke();
-              for (let i = 0; i < all.length; i++) {
-                const camera = all.get(i);
-                map.set(camera.field("m_CachedPtr").value.toString(), String(call(call(camera, "get_gameObject"), "get_name")?.content || "?"));
-              }
-            } catch (_) {
+              report();
+            } catch (error) {
+              log(`cameras: ${error}`);
             }
-            return map;
-          };
-          let reports = 0, since = 0, timer = null;
-          const report = () => {
-            const seconds = (Date.now() - since) / 1e3, map = names(), rows = [];
-            for (let i = 0; i < 8; i++) {
-              const at = table.add(i * 32), camera = at.readPointer();
-              if (camera.isNull()) continue;
-              const cullMs = at.add(8).readU64().toNumber() / 1e3 / seconds, renderMs = at.add(16).readU64().toNumber() / 1e3 / seconds;
-              rows.push(`${map.get(camera.toString()) || camera} cull ${cullMs.toFixed(1)} render ${renderMs.toFixed(1)} ms/s (${Math.round(at.add(24).readU32() / seconds)}/s)`);
-            }
-            log(`cameras: ${rows.join("; ")}`);
-            table.writeByteArray(new Array(8 * 32).fill(0));
-            since = Date.now();
-            if (++reports >= 4) {
-              clearInterval(timer);
-              timer = null;
-              for (const l of listeners) l.detach();
-              listeners = [];
-            }
-          };
-          globalThis.__teslCameraProbe = () => {
-            if (timer) return;
-            reports = 0;
-            table.writeByteArray(new Array(8 * 32).fill(0));
-            since = Date.now();
-            listeners = [
-              Interceptor.attach(cull, { onEnter: cm.cull_enter, onLeave: cm.cull_leave }),
-              Interceptor.attach(render, { onEnter: cm.render_enter, onLeave: cm.render_leave })
-            ];
-            timer = setInterval(() => {
-              try {
-                report();
-              } catch (error) {
-                log(`cameras: ${error}`);
-              }
-            }, 15e3);
-          };
-          globalThis.__teslCameraProbeKeep = cm;
-        }
-      } catch (error) {
-        log(`cameras: probe unavailable: ${error}`);
+          }, 15e3);
+        };
+        globalThis.__teslCameraProbeKeep = cm;
       }
-      schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
-      globalThis.__teslGovernor = (measured, loading) => {
-        camerasWithoutMsaa();
+    } catch (error) {
+      log(`cameras: probe unavailable: ${error}`);
+    }
+    schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
+    globalThis.__teslGovernor = (measured, loading) => {
+      camerasWithoutMsaa();
+      try {
+        engineCuts();
+      } catch (_) {
+      }
+      if (loading) return;
+      mainThreadReport();
+      let next = mode;
+      try {
+        next = inBattle() ? "battle" : "menu";
+      } catch (_) {
+      }
+      if (next !== mode) {
+        mode = next;
+        const state2 = modes[mode];
+        state2.low = 0;
+        state2.steady = 0;
+        globalThis.__teslRateCap = state2.cap;
+        log(`graphics: ${mode}, frame rate ${state2.cap || ceiling}`);
+        if (mode === "battle") for (const at of [8e3, 6e4, 12e4]) schedule(at, () => {
+          try {
+            if (inBattle()) renderSnapshot();
+          } catch (error) {
+            log(`render: snapshot failed: ${error}`);
+          }
+        }, "graphics render snapshot");
+        if (mode === "battle" && experiment("mainThreadProfile")) schedule(1e4, () => {
+          try {
+            profileMainThread();
+          } catch (error) {
+            log(`profile: failed: ${error}`);
+          }
+        }, "main thread profile start");
+        applyRate(state2.cap ? `${mode} rate` : "cap lifted");
+        return;
+      }
+      const state = modes[mode];
+      if (measured > (currentRate() || 60) * 1.2) {
+        applyRate("drift");
+        return;
+      }
+      if (oneFastest) return;
+      if (msaaOff) {
         try {
-          engineCuts();
+          const samples = antiAliasingOff();
+          if (samples) log(`graphics: antiAliasing ${samples}x -> off (remembered)`);
         } catch (_) {
         }
-        if (loading) return;
-        mainThreadReport();
-        let next = mode;
-        try {
-          next = inBattle() ? "battle" : "menu";
-        } catch (_) {
-        }
-        if (next !== mode) {
-          mode = next;
-          const state2 = modes[mode];
-          state2.low = 0;
-          state2.steady = 0;
-          globalThis.__teslRateCap = state2.cap;
-          log(`graphics: ${mode}, frame rate ${state2.cap || ceiling}`);
-          if (mode === "battle") for (const at of [8e3, 6e4, 12e4]) schedule(at, () => {
-            try {
-              if (inBattle()) renderSnapshot();
-            } catch (error) {
-              log(`render: snapshot failed: ${error}`);
-            }
-          }, "graphics render snapshot");
-          if (mode === "battle" && experiment("mainThreadProfile")) schedule(1e4, () => {
-            try {
-              profileMainThread();
-            } catch (error) {
-              log(`profile: failed: ${error}`);
-            }
-          }, "main thread profile start");
-          applyRate(state2.cap ? `${mode} rate` : "cap lifted");
-          return;
-        }
-        const state = modes[mode];
-        if (measured > (currentRate() || 60) * 1.2) {
-          applyRate("drift");
-          return;
-        }
-        if (oneFastest) return;
-        if (msaaOff) {
+      }
+      const effective = currentRate() || 60;
+      state.best = Math.max(state.best, Math.min(measured, effective));
+      const reference = Math.min(effective, state.best);
+      if (measured < reference * 0.75) {
+        state.low++;
+        state.steady = 0;
+      } else {
+        state.low = 0;
+        state.steady = measured >= effective * 0.8 ? state.steady + 1 : Math.max(0, state.steady - 2);
+      }
+      if (state.low >= 2) {
+        state.low = 0;
+        if (!msaaOff) {
           try {
             const samples = antiAliasingOff();
-            if (samples) log(`graphics: antiAliasing ${samples}x -> off (remembered)`);
-          } catch (_) {
-          }
-        }
-        const effective = currentRate() || 60;
-        state.best = Math.max(state.best, Math.min(measured, effective));
-        const reference = Math.min(effective, state.best);
-        if (measured < reference * 0.75) {
-          state.low++;
-          state.steady = 0;
-        } else {
-          state.low = 0;
-          state.steady = measured >= effective * 0.8 ? state.steady + 1 : Math.max(0, state.steady - 2);
-        }
-        if (state.low >= 2) {
-          state.low = 0;
-          if (!msaaOff) {
-            try {
-              const samples = antiAliasingOff();
-              msaaOff = true;
-              saveAuto();
-              if (samples) {
-                log(`graphics: antiAliasing ${samples}x -> off (${mode} fps ${measured} of ${reference} for 30 s)`);
-                return;
-              }
-            } catch (error) {
-              log(`graphics: antiAliasing drop failed: ${error}`);
+            msaaOff = true;
+            saveAuto();
+            if (samples) {
+              log(`graphics: antiAliasing ${samples}x -> off (${mode} fps ${measured} of ${reference} for 30 s)`);
+              return;
             }
+          } catch (error) {
+            log(`graphics: antiAliasing drop failed: ${error}`);
           }
-          const lower = ladder.find((step) => step < effective && step <= Math.max(30, measured + 2));
-          if (!lower) return;
-          state.cap = globalThis.__teslRateCap = lower;
-          saveAuto();
-          log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
-          applyRate("auto down");
-        } else if (state.steady >= 8 && state.cap) {
-          state.steady = 0;
-          const higher = ladder.filter((step) => step > effective && step <= ceiling).pop();
-          if (!higher) return;
-          state.cap = globalThis.__teslRateCap = higher >= ceiling ? 0 : higher;
-          saveAuto();
-          log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 2 min)`);
-          applyRate(state.cap ? "auto up" : "cap lifted");
         }
+        const lower = ladder.find((step) => step < effective && step <= Math.max(30, measured + 2));
+        if (!lower) return;
+        state.cap = globalThis.__teslRateCap = lower;
+        saveAuto();
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${lower} (fps ${measured} of ${reference} for 30 s)`);
+        applyRate("auto down");
+      } else if (state.steady >= 8 && state.cap) {
+        state.steady = 0;
+        const higher = ladder.filter((step) => step > effective && step <= ceiling).pop();
+        if (!higher) return;
+        state.cap = globalThis.__teslRateCap = higher >= ceiling ? 0 : higher;
+        saveAuto();
+        log(`graphics: auto ${mode} frame rate ${effective} -> ${higher} (held ${measured} for 2 min)`);
+        applyRate(state.cap ? "auto up" : "cap lifted");
+      }
+    };
+    globalThis.__teslApplyRate = applyRate;
+    (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => applyRate("resumed"));
+    const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
+    const setRate = application.method("set_targetFrameRate", 1);
+    if (rate) {
+      const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
+      if (!engineAt.isNull()) hookAttach(engineAt, { onEnter(args) {
+        args[0] = ptr(currentRate());
+      } });
+      schedule(0, () => applyRate("start"), "graphics frame rate");
+      log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
+    }
+    {
+      const pace = () => {
+        const limit = currentRate() || 60;
+        frameBus.setFrameUs(limit >= 120 ? 0 : 1e6 / limit);
       };
-      globalThis.__teslApplyRate = applyRate;
-      (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => applyRate("resumed"));
-      const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
-      const setRate = application.method("set_targetFrameRate", 1);
-      if (rate) {
-        const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
-        if (!engineAt.isNull()) hookAttach(engineAt, { onEnter(args) {
-          args[0] = ptr(currentRate());
-        } });
-        schedule(0, () => applyRate("start"), "graphics frame rate");
-        log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
+      pace();
+      setInterval(pace, 250);
+      if (rate && rate < 60) log(`graphics: frame limiter at ${rate} FPS`);
+    }
+    const manager = cls(img, "SettingsManager");
+    const recommended = cls(img, "ScalabilityUtils").tryMethod("GetRecommendedVideoQualitySettings", 0);
+    if (recommended) hookAttach(recommended.virtualAddress, {
+      onLeave(result) {
+        if (chosenQuality !== null) result.replace(ptr(chosenQuality));
       }
-      {
-        const pace = () => {
-          const limit = currentRate() || 60;
-          frameBus.setFrameUs(limit >= 120 ? 0 : 1e6 / limit);
-        };
-        pace();
-        setInterval(pace, 250);
-        if (rate && rate < 60) log(`graphics: frame limiter at ${rate} FPS`);
-      }
-      const manager = cls(img, "SettingsManager");
-      const recommended = cls(img, "ScalabilityUtils").tryMethod("GetRecommendedVideoQualitySettings", 0);
-      if (recommended) hookAttach(recommended.virtualAddress, {
-        onLeave(result) {
-          if (chosenQuality !== null) result.replace(ptr(chosenQuality));
-        }
-      });
-      const updateQuality = manager.tryMethod("UpdateUnityQuality", 1);
-      if (updateQuality) hookAttach(updateQuality.virtualAddress, {
-        onLeave() {
-          schedule(0, () => applyRate("after quality"), "graphics rate after quality");
-        }
-      });
-      const setQuality = manager.tryMethod("SetQuality", 1);
-      if (setQuality) hookAttach(setQuality.virtualAddress, {
-        onEnter(args) {
-          const self = new Il2Cpp.Object(args[0]).ref(false);
-          let value = args[1].toInt32();
-          schedule(0, () => {
-            try {
-              chosenQuality = 3;
-              value = 3;
-              let saved = {};
-              try {
-                saved = JSON.parse(readTextFile(file) || "{}") || {};
-              } catch (_) {
-              }
-              if (chosenQuality === null) delete saved.quality;
-              else saved.quality = chosenQuality;
-              writeTextFile(file, JSON.stringify(saved));
-              self.target.method("UpdateUnityQuality", 1).invoke(value);
-            } catch (error) {
-              log(`graphics: quality apply failed: ${error}`);
-            } finally {
-              self.free();
-            }
-          }, "graphics quality choice");
-        }
-      });
-      const updateUi = cls(img, "SettingsWin").tryMethod("UpdateUi", 0);
-      if (!updateUi || updateUi.virtualAddress.isNull()) return;
-      let reported = "";
-      const onTab = cls(img, "SettingsWin").tryMethod("HandleOnTabSelected", 1);
-      if (onTab && !onTab.virtualAddress.isNull()) hookAttach(onTab.virtualAddress, {
-        onEnter(args) {
-          if (args[1].toInt32() !== 0) return;
-          let current = 1;
-          try {
-            current = enumVal(new Il2Cpp.Object(args[0]).field("_activeTabIndex").value) || 1;
-          } catch (_) {
-          }
-          args[1] = ptr(current);
-          schedule(0, () => {
-            try {
-              ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
-            } catch (error) {
-              log(`settings data: open failed: ${error}`);
-            }
-          }, "game data tab");
-        }
-      });
-      const onQuality = cls(img, "SettingsWin").tryMethod("HandleQualityOnValueChanged", 1);
-      if (onQuality && !onQuality.virtualAddress.isNull()) hookAttach(onQuality.virtualAddress, {
-        onLeave() {
-          schedule(0, () => {
-            const read = (name) => {
-              try {
-                return String(quality.method(name, 0).invoke());
-              } catch (_) {
-                return "?";
-              }
-            };
-            log(`graphics: quality level ${read("GetQualityLevel")}, antiAliasing ${read("get_antiAliasing")}, textureLimit ${read("get_masterTextureLimit")}`);
-          }, "graphics quality applied");
-        }
-      });
-      hookAttach(updateUi.virtualAddress, {
-        onEnter(args) {
-          this.self = args[0];
-        },
-        onLeave() {
-          const window = new Il2Cpp.Object(this.self).ref(false);
-          schedule(0, () => {
-            try {
-              const dropdown = window.target.field("_qualityDropdown").value;
-              let state;
-              if (!unityAlive(dropdown)) state = "no quality dropdown in this window";
-              else {
-                let tabs = "";
-                try {
-                  tabs = videoTabAsGameData(window.target) ? "video tab is Game data" : "no video tab";
-                } catch (error) {
-                  tabs = `video tab: ${error}`;
-                }
-                state = `quality dropdown hidden, ${tabs}`;
-              }
-              if (state !== reported) {
-                reported = state;
-                log(`graphics: ${state}`);
-              }
-              try {
-                const root = call(window.target, "get_transform"), button = findGameDataButton(root);
-                const name = (node) => String(call(node, "get_name")?.content || "?");
-                let where = "none";
-                if (!isNull(button)) {
-                  const go = call(button, "get_gameObject"), parent = call(button, "get_parent");
-                  const p = call(button, "get_position"), sd = call(button, "get_sizeDelta");
-                  where = `parent ${isNull(parent) ? "-" : name(parent)}, active ${call(go, "get_activeSelf")}/${call(go, "get_activeInHierarchy")}, at ${Number(p.field("x").value).toFixed(2)},${Number(p.field("y").value).toFixed(2)}, size ${Number(sd.field("x").value).toFixed(0)}x${Number(sd.field("y").value).toFixed(0)}`;
-                }
-                log(`settings data: window ${call(window.target, "GetInstanceID")} (${name(root)}), Game data ${where}`);
-              } catch (error) {
-                log(`settings data: check failed: ${error}`);
-              }
-            } catch (error) {
-              log(`graphics: quality check failed: ${error}`);
-            } finally {
-              window.free();
-            }
-          }, "graphics quality");
-        }
-      });
     });
-    section("settings and language diagnostics", () => {
-      let lastPoll = 0, lastRequest = "";
-      function collect(request) {
-        const report = {
-          schema: 1,
-          label: request.label,
-          requestId: request.id,
-          at: (/* @__PURE__ */ new Date()).toISOString(),
-          buttons: [],
-          classes: [],
-          localizationFiles: []
-        };
-        try {
-          const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
-          report.choice = choice && { language: choice.language, system: choice.system };
-        } catch (_) {
-        }
-        try {
-          const status = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-update-status.json`) || "null");
-          report.core = status?.current && { revision: status.current.revision, version: status.current.version };
-        } catch (_) {
-        }
-        try {
-          const owner = cls(img, "LocalizationManager");
-          const nativeType = owner.method("SetLanguage", 2).parameters[0].type;
-          report.languageType = { name: nativeType.name, isEnum: nativeType.class.isEnum, fields: nativeType.class.fields.map((f) => ({ name: f.name, type: f.type.name, static: f.isStatic, value: nativeType.class.isEnum && f.isStatic ? enumVal(f.value) : void 0 })) };
-          report.localizationMethods = owner.methods.filter((m) => /language|locale|updateobjects/i.test(m.name)).slice(0, 40).map((m) => ({ name: m.name, parameters: m.parameters.map((p) => p.type.name), returns: m.returnType.name }));
-          const manager = owner.method("get_Instance", 0).invoke();
-          if (!isNull(manager)) report.managerLanguage = String(call(manager, "get_CurrentLanguageCode")?.content || "");
-        } catch (error) {
-          report.managerError = String(error).slice(0, 300);
-        }
-        for (const code of ["en_us", "ru_ru"]) {
+    const updateQuality = manager.tryMethod("UpdateUnityQuality", 1);
+    if (updateQuality) hookAttach(updateQuality.virtualAddress, {
+      onLeave() {
+        schedule(0, () => applyRate("after quality"), "graphics rate after quality");
+      }
+    });
+    const setQuality = manager.tryMethod("SetQuality", 1);
+    if (setQuality) hookAttach(setQuality.virtualAddress, {
+      onEnter(args) {
+        const self = new Il2Cpp.Object(args[0]).ref(false);
+        let value = args[1].toInt32();
+        schedule(0, () => {
           try {
-            const text = readTextFile(`${persistentPath()}/tesl-localization-${code}.json`);
-            const values = Object.values(JSON.parse(text || "{}"));
-            report.localizationFiles.push({
-              language: code,
-              entries: values.length,
-              cyrillicValues: values.filter((value) => /[а-яё]/i.test(String(value))).length
-            });
-          } catch (_) {
-            report.localizationFiles.push({ language: code, error: "unreadable" });
-          }
-        }
-        for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name)).slice(0, 80)) {
-          report.classes.push({ name: owner.name, methods: owner.methods.filter((m) => /language|locale|select|click|show|settings/i.test(m.name)).slice(0, 40).map((m) => ({ name: m.name, parameters: m.parameters.map((p) => p.type.name), returns: m.returnType.name })) });
-        }
-        try {
-          const buttons = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Button").type.object);
-          for (let i = 0; i < buttons.length && report.buttons.length < 160; i++) {
-            const button = buttons.get(i), go = call(button, "get_gameObject");
-            if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
-            let node = call(button, "get_transform");
-            const path = [];
-            for (let depth = 0; depth < 14 && !isNull(node); depth++, node = call(node, "get_parent"))
-              path.unshift(String(call(node, "get_name")?.content || "").slice(0, 120));
-            const entry = { path: path.join("/"), callbacks: [] };
+            chosenQuality = 3;
+            value = 3;
+            let saved = {};
             try {
-              const event = call(button, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
-              for (let j = 0; j < Math.min(count, 12); j++) {
-                const target = call(event, "GetPersistentTarget", j);
-                entry.callbacks.push({ method: String(call(event, "GetPersistentMethodName", j)?.content || ""), class: isNull(target) ? null : target.class.name });
-              }
+              saved = JSON.parse(readTextFile(file) || "{}") || {};
             } catch (_) {
             }
-            report.buttons.push(entry);
+            if (chosenQuality === null) delete saved.quality;
+            else saved.quality = chosenQuality;
+            writeTextFile(file, JSON.stringify(saved));
+            self.target.method("UpdateUnityQuality", 1).invoke(value);
+          } catch (error) {
+            log(`graphics: quality apply failed: ${error}`);
+          } finally {
+            self.free();
           }
-        } catch (error) {
-          report.uiError = String(error).slice(0, 300);
-        }
-        writeTextFile(`${persistentPath()}/tesl-reborn-settings-report-${request.label}.json`, JSON.stringify(report, null, 2));
+        }, "graphics quality choice");
       }
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
-        if (Date.now() - lastPoll < 1e3) return;
-        lastPoll = Date.now();
+    });
+    const updateUi = cls(img, "SettingsWin").tryMethod("UpdateUi", 0);
+    if (!updateUi || updateUi.virtualAddress.isNull()) return;
+    let reported = "";
+    const onTab = cls(img, "SettingsWin").tryMethod("HandleOnTabSelected", 1);
+    if (onTab && !onTab.virtualAddress.isNull()) hookAttach(onTab.virtualAddress, {
+      onEnter(args) {
+        if (args[1].toInt32() !== 0) return;
+        let current = 1;
         try {
-          const request = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-inspect-request.json`) || "null");
-          if (!request || typeof request.id !== "string" || request.id.length > 80 || request.id === lastRequest || !/^(gear|settings|english|russian)$/.test(request.label)) return;
-          lastRequest = request.id;
-          schedule(0, () => {
+          current = enumVal(new Il2Cpp.Object(args[0]).field("_activeTabIndex").value) || 1;
+        } catch (_) {
+        }
+        args[1] = ptr(current);
+        schedule(0, () => {
+          try {
+            ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
+          } catch (error) {
+            log(`settings data: open failed: ${error}`);
+          }
+        }, "game data tab");
+      }
+    });
+    const onQuality = cls(img, "SettingsWin").tryMethod("HandleQualityOnValueChanged", 1);
+    if (onQuality && !onQuality.virtualAddress.isNull()) hookAttach(onQuality.virtualAddress, {
+      onLeave() {
+        schedule(0, () => {
+          const read = (name) => {
             try {
-              collect(request);
-            } catch (error) {
-              log(`settings diagnostic failed: ${error}`);
+              return String(quality.method(name, 0).invoke());
+            } catch (_) {
+              return "?";
             }
+          };
+          log(`graphics: quality level ${read("GetQualityLevel")}, antiAliasing ${read("get_antiAliasing")}, textureLimit ${read("get_masterTextureLimit")}`);
+        }, "graphics quality applied");
+      }
+    });
+    hookAttach(updateUi.virtualAddress, {
+      onEnter(args) {
+        this.self = args[0];
+      },
+      onLeave() {
+        const window = new Il2Cpp.Object(this.self).ref(false);
+        schedule(0, () => {
+          try {
+            const dropdown = window.target.field("_qualityDropdown").value;
+            let state;
+            if (!unityAlive(dropdown)) state = "no quality dropdown in this window";
+            else {
+              let tabs = "";
+              try {
+                tabs = videoTabAsGameData(window.target) ? "video tab is Game data" : "no video tab";
+              } catch (error) {
+                tabs = `video tab: ${error}`;
+              }
+              state = `quality dropdown hidden, ${tabs}`;
+            }
+            if (state !== reported) {
+              reported = state;
+              log(`graphics: ${state}`);
+            }
+            try {
+              const root = call(window.target, "get_transform"), button = findGameDataButton(root);
+              const name = (node) => String(call(node, "get_name")?.content || "?");
+              let where = "none";
+              if (!isNull(button)) {
+                const go = call(button, "get_gameObject"), parent = call(button, "get_parent");
+                const p = call(button, "get_position"), sd = call(button, "get_sizeDelta");
+                where = `parent ${isNull(parent) ? "-" : name(parent)}, active ${call(go, "get_activeSelf")}/${call(go, "get_activeInHierarchy")}, at ${Number(p.field("x").value).toFixed(2)},${Number(p.field("y").value).toFixed(2)}, size ${Number(sd.field("x").value).toFixed(0)}x${Number(sd.field("y").value).toFixed(0)}`;
+              }
+              log(`settings data: window ${call(window.target, "GetInstanceID")} (${name(root)}), Game data ${where}`);
+            } catch (error) {
+              log(`settings data: check failed: ${error}`);
+            }
+          } catch (error) {
+            log(`graphics: quality check failed: ${error}`);
+          } finally {
+            window.free();
+          }
+        }, "graphics quality");
+      }
+    });
+  });
+  section("settings and language diagnostics", () => {
+    let lastPoll = 0, lastRequest = "";
+    function collect(request) {
+      const report = {
+        schema: 1,
+        label: request.label,
+        requestId: request.id,
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        buttons: [],
+        classes: [],
+        localizationFiles: []
+      };
+      try {
+        const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
+        report.choice = choice && { language: choice.language, system: choice.system };
+      } catch (_) {
+      }
+      try {
+        const status = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-update-status.json`) || "null");
+        report.core = status?.current && { revision: status.current.revision, version: status.current.version };
+      } catch (_) {
+      }
+      try {
+        const owner = cls(img, "LocalizationManager");
+        const nativeType = owner.method("SetLanguage", 2).parameters[0].type;
+        report.languageType = { name: nativeType.name, isEnum: nativeType.class.isEnum, fields: nativeType.class.fields.map((f) => ({ name: f.name, type: f.type.name, static: f.isStatic, value: nativeType.class.isEnum && f.isStatic ? enumVal(f.value) : void 0 })) };
+        report.localizationMethods = owner.methods.filter((m) => /language|locale|updateobjects/i.test(m.name)).slice(0, 40).map((m) => ({ name: m.name, parameters: m.parameters.map((p) => p.type.name), returns: m.returnType.name }));
+        const manager = owner.method("get_Instance", 0).invoke();
+        if (!isNull(manager)) report.managerLanguage = String(call(manager, "get_CurrentLanguageCode")?.content || "");
+      } catch (error) {
+        report.managerError = String(error).slice(0, 300);
+      }
+      for (const code of ["en_us", "ru_ru"]) {
+        try {
+          const text = readTextFile(`${persistentPath()}/tesl-localization-${code}.json`);
+          const values = Object.values(JSON.parse(text || "{}"));
+          report.localizationFiles.push({
+            language: code,
+            entries: values.length,
+            cyrillicValues: values.filter((value) => /[а-яё]/i.test(String(value))).length
           });
         } catch (_) {
+          report.localizationFiles.push({ language: code, error: "unreadable" });
         }
-      } });
-    });
-    section("sound settings saved", () => {
-      const manager = cls(img, "SettingsManager"), prefs = ucls("UnityEngine.PlayerPrefs");
-      let pending2 = 0;
-      for (const name of ["SetMasterVolume", "SetIsMasterVolumeMuted", "SetMusicVolume", "SetIsMusicMuted", "SetIsPlaySoundInBackground", "SetAutoMuteOpponentEmotes", "SetShowSubtitles"]) {
-        const method = manager.tryMethod(name, 1);
-        if (!method) {
-          log(`sound settings: ${name} not found`);
-          continue;
-        }
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            const self = new Il2Cpp.Object(args[0]).ref(false), ticket = ++pending2;
-            schedule(1e3, () => {
-              if (ticket !== pending2) return;
-              try {
-                const live = self.target;
-                if (!live || live.isNull()) return;
-                live.method("SaveSettings").invoke();
-                prefs.method("Save").invoke();
-                log(`sound settings: saved after ${name}`);
-              } catch (error) {
-                log(`sound settings: save failed: ${error}`);
-              }
-            }, "sound settings save");
-          }
-        });
       }
-    });
-    const historyRows = /* @__PURE__ */ new Map(), historyTargets = /* @__PURE__ */ new Map();
-    let historyUiReports = 0, historyPopup = null, historyActiveKey = null, historyLastFetch = 0;
-    let historyUsingNative = false, historyNativeFailureReported = false;
-    const historyTriggerOwners = /* @__PURE__ */ new Map();
-    function historyReleaseTrigger(key, record) {
-      if (!record.triggerKey) return;
-      const owner = historyTriggerOwners.get(record.triggerKey);
-      if (owner) {
-        owner.users.delete(key);
-        if (!owner.users.size) {
+      for (const owner of img.classes.filter((c) => /settings|options|language/i.test(c.name)).slice(0, 80)) {
+        report.classes.push({ name: owner.name, methods: owner.methods.filter((m) => /language|locale|select|click|show|settings/i.test(m.name)).slice(0, 40).map((m) => ({ name: m.name, parameters: m.parameters.map((p) => p.type.name), returns: m.returnType.name })) });
+      }
+      try {
+        const buttons = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls("UnityEngine.UI.Button").type.object);
+        for (let i = 0; i < buttons.length && report.buttons.length < 160; i++) {
+          const button = buttons.get(i), go = call(button, "get_gameObject");
+          if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
+          let node = call(button, "get_transform");
+          const path = [];
+          for (let depth = 0; depth < 14 && !isNull(node); depth++, node = call(node, "get_parent"))
+            path.unshift(String(call(node, "get_name")?.content || "").slice(0, 120));
+          const entry = { path: path.join("/"), callbacks: [] };
           try {
-            if (!isNull(owner.trigger.target)) call(owner.trigger.target, "set_enabled", owner.wasEnabled);
-          } catch (_) {
-          }
-          owner.trigger.free();
-          historyTriggerOwners.delete(record.triggerKey);
-        }
-      }
-      record.triggerKey = null;
-    }
-    function historyOwnTrigger(key, record, trigger) {
-      const id = trigger.handle.toString();
-      if (record.triggerKey !== id) historyReleaseTrigger(key, record);
-      let owner = historyTriggerOwners.get(id);
-      if (!owner) {
-        owner = { trigger: trigger.ref(false), wasEnabled: Boolean(call(trigger, "get_enabled")), users: /* @__PURE__ */ new Set() };
-        historyTriggerOwners.set(id, owner);
-      }
-      owner.users.add(key);
-      record.triggerKey = id;
-      call(trigger, "set_enabled", false);
-    }
-    function historyNativeManager() {
-      return cls(img, "TooltipManager").method("get_Instance", 0).invoke();
-    }
-    function historyTryNative(record) {
-      let manager = null, boxHandle = null, messageHandle = null;
-      try {
-        manager = historyNativeManager();
-        if (isNull(manager)) throw Error("TooltipManager is not ready");
-        call(manager, "HideTooltip");
-        const settingsClass = cls(img, "TooltipShowSettings"), settings = settingsClass.alloc();
-        boxHandle = settings.ref(false);
-        settings.field("anchorRectTransform").value = record.hits[0].rect.target;
-        for (const [name, number] of [["anchorEdge", 2], ["tooltipEdge", 3]]) {
-          const field = settings.field(name);
-          field.value = enumBox(field.type.class, number);
-        }
-        settings.field("anchorEdgeOffset").value = 0.5;
-        settings.field("tooltipEdgeOffset").value = 0.5;
-        settings.field("distanceFromAnchor").value = 5;
-        settings.field("locKeys").value = uiList(Il2Cpp.corlib.class("System.String"));
-        const messages = uiList(Il2Cpp.corlib.class("System.String"));
-        messageHandle = messages.ref(false);
-        call(messages, "Add", Il2Cpp.string(record.text));
-        settings.unbox().method("SetLocalizedMessages", 1).invoke(messages);
-        manager.method("ShowTooltip").overload(settingsClass.type.name, "UnityEngine.GameObject", "System.Boolean").invoke(settings.unbox(), call(record.hits[0].rect.target, "get_gameObject"), true);
-        return true;
-      } catch (error) {
-        if (manager) {
-          try {
-            call(manager, "HideTooltip");
-          } catch (_) {
-          }
-        }
-        if (!historyNativeFailureReported) {
-          historyNativeFailureReported = true;
-          log(`history UI: native popup unavailable; using single fallback: ${error}`);
-        }
-        return false;
-      } finally {
-        if (messageHandle) messageHandle.free();
-        if (boxHandle) boxHandle.free();
-      }
-    }
-    function historyPopupOpened(key, record, provider) {
-      historyActiveKey = key;
-      log(`history UI: popup opened index=${record.index} side=${record.side} hasName=${record.hasName} provider=${provider}`);
-      if (!record.hasName && Date.now() - historyLastFetch > 5e3) {
-        historyLastFetch = Date.now();
-        schedule(0, () => refreshMatchEntries());
-      }
-    }
-    function historyTooltipText(name, stats, deleted = false) {
-      if (!name) return "No deck data available";
-      const title = `<b>${uiPlain(name)}</b>`;
-      if (stats) return `${title}
-${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
-      return deleted ? `${title}
-<color=#FF6666>deleted</color>` : title;
-    }
-    function historyHidePopup() {
-      if (historyUsingNative) {
-        try {
-          call(historyNativeManager(), "HideTooltip");
-        } catch (_) {
-        }
-      }
-      if (historyPopup && unityAlive(historyPopup.go.target)) call(historyPopup.go.target, "SetActive", false);
-      historyActiveKey = null;
-      historyUsingNative = false;
-    }
-    function historyDropTarget(key) {
-      const record = historyTargets.get(key);
-      if (!record) return;
-      if (historyActiveKey === key) historyHidePopup();
-      historyReleaseTrigger(key, record);
-      for (const hit of record.hits) {
-        try {
-          const go = hit.go.target;
-          if (!isNull(go)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go);
-        } catch (_) {
-        }
-        hit.go.free();
-        hit.rect.free();
-      }
-      record.row.free();
-      historyTargets.delete(key);
-    }
-    function historyCanvas(component) {
-      let canvas = component.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
-      if (isNull(canvas)) throw Error("History canvas not found");
-      const root = canvas.tryMethod("get_rootCanvas", 0);
-      if (root) canvas = root.invoke();
-      return canvas;
-    }
-    function historyShowPopup(key, toggle = true) {
-      const record = historyTargets.get(key);
-      if (!record) return;
-      if (toggle && historyActiveKey === key) {
-        historyHidePopup();
-        return;
-      }
-      historyHidePopup();
-      if (historyTryNative(record)) {
-        historyUsingNative = true;
-        historyPopupOpened(key, record, "native");
-        return;
-      }
-      const canvas = historyCanvas(record.hits[0].rect.target);
-      const canvasTransform = call(canvas, "get_transform"), canvasKey = canvas.handle.toString();
-      if (historyPopup && historyPopup.canvasKey !== canvasKey) {
-        ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(historyPopup.go.target);
-        historyPopup.go.free();
-        historyPopup.label.free();
-        historyPopup.rect.free();
-        historyPopup = null;
-      }
-      if (!historyPopup) {
-        const go = uiNew("RebornHistoryDeckPopup", canvasTransform);
-        uiPlace(go, 0.5, 0.5, 0.5, 0.5, 0, 0, 360, 100);
-        call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-        const background = uiAdd(go, "UnityEngine.UI.Image");
-        call(background, "set_color", rgba(0.035, 0.03, 0.02, 0.98));
-        const labelGO = uiNew("Text", call(go, "get_transform"));
-        const rect = uiRect(labelGO);
-        uiStretch(rect);
-        call(rect, "set_offsetMin", vec2(12, 10));
-        call(rect, "set_offsetMax", vec2(-12, -10));
-        const label = uiText(labelGO, "", 23);
-        call(label, "set_richText", true);
-        call(label, "set_enableWordWrapping", true);
-        const autoContainer = label.tryMethod("set_autoSizeTextContainer", 1);
-        if (autoContainer) {
-          try {
-            autoContainer.invoke(false);
-          } catch (_) {
-          }
-        }
-        call(rect, "set_anchorMin", vec2(0, 0));
-        call(rect, "set_anchorMax", vec2(1, 1));
-        call(rect, "set_pivot", vec2(0.5, 0.5));
-        call(rect, "set_sizeDelta", vec2(-24, -20));
-        call(rect, "set_anchoredPosition", vec2(0, 0));
-        historyPopup = { go: go.ref(false), label: label.ref(false), rect: uiRect(go).ref(false), canvasKey };
-      }
-      const area = call(uiRect(call(canvasTransform, "get_gameObject")), "get_rect");
-      const width = Number(area.field("m_Width").value), height = Number(area.field("m_Height").value);
-      const panelWidth = Math.max(100, Math.min(420, width - 24));
-      call(historyPopup.label.target, "set_text", Il2Cpp.string(record.text));
-      let panelHeight = 100;
-      try {
-        const label = historyPopup.label.target;
-        const size = label.method("GetPreferredValues").overload("System.String", "System.Single", "System.Single").invoke(Il2Cpp.string(record.text), panelWidth - 24, 1e5);
-        panelHeight = Math.max(64, Math.min(height - 24, uiXY(size).y + 24));
-      } catch (_) {
-      }
-      let x = 0, y = 0;
-      try {
-        const point = canvasTransform.method("InverseTransformPoint").overload("UnityEngine.Vector3").invoke(call(record.hits[0].rect.target, "get_position"));
-        const local = uiXY(point);
-        x = local.x - Number(area.field("m_XMin").value) - width / 2;
-        y = local.y - Number(area.field("m_YMin").value) - height / 2 + panelHeight / 2 + 28;
-      } catch (_) {
-      }
-      x = Math.max(-width / 2 + panelWidth / 2 + 8, Math.min(width / 2 - panelWidth / 2 - 8, x));
-      y = Math.max(-height / 2 + panelHeight / 2 + 8, Math.min(height / 2 - panelHeight / 2 - 8, y));
-      call(historyPopup.rect.target, "set_sizeDelta", vec2(panelWidth, panelHeight));
-      call(historyPopup.rect.target, "set_anchoredPosition", vec2(x, y));
-      call(historyPopup.go.target, "SetActive", true);
-      call(call(historyPopup.go.target, "get_transform"), "SetAsLastSibling");
-      historyPopupOpened(key, record, "fallback");
-    }
-    function setHistoryDeckTooltip(row, fieldName, name, stats, index = -1, deleted = false) {
-      const images = row.field(fieldName).value;
-      if (isNull(images)) return;
-      const count = Number(call(images, "get_Count")), key = `${row.handle}:${fieldName}`;
-      if (!count) {
-        historyDropTarget(key);
-        return;
-      }
-      const imageKeys = [];
-      for (let i = 0; i < count; i++) imageKeys.push(images.method("get_Item", 1).invoke(i).handle.toString());
-      const signature = imageKeys.join(",");
-      let record = historyTargets.get(key);
-      if (record && record.signature !== signature) {
-        historyDropTarget(key);
-        record = null;
-      }
-      if (!record) {
-        record = { row: row.weakRef(false), hits: [], signature, side: fieldName === "_userDeckImages" ? "user" : "opponent" };
-        historyTargets.set(key, record);
-        for (let i = 0; i < count; i++) {
-          const image = images.method("get_Item", 1).invoke(i);
-          const hit = uiNew("RebornDeckTap", call(image, "get_transform")), rect = uiRect(hit);
-          uiStretch(rect);
-          call(rect, "set_offsetMin", vec2(-5, -5));
-          call(rect, "set_offsetMax", vec2(5, 5));
-          call(uiAdd(hit, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-          const graphic = uiAdd(hit, "UnityEngine.UI.Image");
-          call(graphic, "set_color", rgba(1, 1, 1, 0));
-          call(graphic, "set_raycastTarget", true);
-          uiButton(hit, graphic, () => historyShowPopup(key));
-          record.hits.push({ go: hit.ref(false), rect: rect.ref(false) });
-        }
-      }
-      record.text = historyTooltipText(name, stats, deleted);
-      record.hasName = Boolean(name);
-      record.index = index;
-      try {
-        let parent = call(images.method("get_Item", 1).invoke(0), "get_transform"), tooltip = null;
-        for (let i = 0; i < 4 && !isNull(parent); i++) {
-          parent = call(parent, "get_parent");
-          if (!isNull(parent)) tooltip = parent.method("GetComponent").overload("System.Type").invoke(cls(img, "TooltipTrigger").type.object);
-          if (!isNull(tooltip)) break;
-        }
-        if (!isNull(tooltip)) {
-          historyOwnTrigger(key, record, tooltip);
-        }
-      } catch (error) {
-        log(`history UI: automatic tooltip suppression failed: ${error}`);
-      }
-      if (historyActiveKey === key) historyShowPopup(key, false);
-    }
-    function updateHistoryTooltips(row, match) {
-      let index = -1;
-      try {
-        const manager = cls(img, "SparkleServices.ServicesManager").method("get_Instance").invoke();
-        const history = call(manager.field("Stats").value, "get_MatchHistory");
-        index = Number(history.method("IndexOf", 1).invoke(match));
-      } catch (error) {
-        log(`history UI: service index failed: ${error}`);
-      }
-      const extra = index >= 0 && index < matchEntryData.length ? matchEntryData[index] : null;
-      setHistoryDeckTooltip(row, "_userDeckImages", extra?.deckName || "", extra?.deckStats || null, index, extra?.deckId === -1);
-      const difficulty = String(match.field("aiDifficulty").value?.content || "");
-      if (!difficulty || difficulty === "None")
-        setHistoryDeckTooltip(row, "_opponentDeckImages", extra?.opponentDeckName || "", extra?.opponentDeckStats || null, index);
-      else historyDropTarget(`${row.handle}:_opponentDeckImages`);
-      if (historyUiReports++ < 12) log(`history UI: tap targets index=${index} extended=${Boolean(extra)}`);
-    }
-    function refreshHistoryTooltips() {
-      for (const [key, handles] of historyRows) {
-        try {
-          const row = handles.row.target, match = handles.match.target;
-          if (!isNull(row) && !isNull(match)) {
-            updateHistoryTooltips(row, match);
-            continue;
-          }
-        } catch (error) {
-          log(`history UI: refresh failed: ${error}`);
-        }
-        historyDropTarget(`${key}:_userDeckImages`);
-        historyDropTarget(`${key}:_opponentDeckImages`);
-        handles.row.free();
-        handles.match.free();
-        historyRows.delete(key);
-      }
-    }
-    function historyPoll() {
-      if (!historyActiveKey || !historyUsingNative && !historyPopup) return;
-      try {
-        const record = historyTargets.get(historyActiveKey);
-        if (!record || !unityAlive(record.row.target) || !Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) {
-          historyHidePopup();
-          return;
-        }
-        const input = ucls("UnityEngine.Input");
-        let point, down;
-        if (Number(input.method("get_touchCount", 0).invoke()) > 0) {
-          const touch = input.method("GetTouch", 1).invoke(0);
-          down = enumVal(touch.method("get_phase", 0).invoke()) === 0;
-          point = uiXY(touch.method("get_position", 0).invoke());
-        } else {
-          down = Boolean(input.method("GetMouseButtonDown", 1).invoke(0));
-          point = uiXY(input.method("get_mousePosition", 0).invoke());
-        }
-        if (!down) return;
-        if (!record.hits.length || !unityAlive(record.hits[0].rect.target)) {
-          historyHidePopup();
-          return;
-        }
-        const canvas = historyCanvas(record.hits[0].rect.target), camera = call(canvas, "get_worldCamera");
-        if (!historyUsingNative && unityAlive(historyPopup.rect.target) && chatContains(historyPopup.rect.target, point, camera)) return;
-        for (const target of historyTargets.values()) for (const hit of target.hits) {
-          if (!unityAlive(hit.go.target) || !unityAlive(hit.rect.target)) continue;
-          if (Boolean(call(hit.go.target, "get_activeInHierarchy")) && chatContains(hit.rect.target, point, camera)) return;
-        }
-        historyHidePopup();
-      } catch (error) {
-        log(`history UI: popup input failed: ${error}`);
-        historyHidePopup();
-      }
-    }
-    section("match history deck tooltips", () => {
-      const klass = cls(img, "MatchEntry"), seen = /* @__PURE__ */ new Set();
-      for (const method of klass.methods.filter((m) => ["UpdateUi", "SetData"].includes(m.name) && !m.isStatic && m.parameterCount === 1 && m.parameters[0].type.name === "SparkleServices.Stats.MatchEntry")) {
-        const address = method.virtualAddress.toString();
-        if (method.virtualAddress.isNull() || seen.has(address)) continue;
-        seen.add(address);
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            this.row = args[0];
-            this.match = args[1];
-          },
-          onLeave() {
-            try {
-              const row = new Il2Cpp.Object(this.row), match = new Il2Cpp.Object(this.match);
-              const key = row.handle.toString(), old = historyRows.get(key);
-              if (old) {
-                old.row.free();
-                old.match.free();
-              }
-              historyRows.set(key, { row: row.weakRef(false), match: match.weakRef(false) });
-              updateHistoryTooltips(row, match);
-            } catch (error) {
-              log(`history UI: binding failed: ${error}`);
+            const event = call(button, "get_onClick"), count = Number(call(event, "GetPersistentEventCount"));
+            for (let j = 0; j < Math.min(count, 12); j++) {
+              const target = call(event, "GetPersistentTarget", j);
+              entry.callbacks.push({ method: String(call(event, "GetPersistentMethodName", j)?.content || ""), class: isNull(target) ? null : target.class.name });
             }
+          } catch (_) {
+          }
+          report.buttons.push(entry);
+        }
+      } catch (error) {
+        report.uiError = String(error).slice(0, 300);
+      }
+      writeTextFile(`${persistentPath()}/tesl-reborn-settings-report-${request.label}.json`, JSON.stringify(report, null, 2));
+    }
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
+      if (Date.now() - lastPoll < 1e3) return;
+      lastPoll = Date.now();
+      try {
+        const request = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-inspect-request.json`) || "null");
+        if (!request || typeof request.id !== "string" || request.id.length > 80 || request.id === lastRequest || !/^(gear|settings|english|russian)$/.test(request.label)) return;
+        lastRequest = request.id;
+        schedule(0, () => {
+          try {
+            collect(request);
+          } catch (error) {
+            log(`settings diagnostic failed: ${error}`);
           }
         });
+      } catch (_) {
       }
-      if (!seen.size) throw Error("MatchEntry data callbacks not found");
-      log(`history UI: tap hooks installed callbacks=${seen.size}`);
-      const update = cls(img, "SparkleServices.ServicesManager").methods.find((m) => m.name === "Update" && m.parameterCount === 0);
-      if (!update) throw Error("ServicesManager.Update not found");
-      hookAttach(update.virtualAddress, { onLeave() {
-        historyPoll();
-      } });
-    });
-    function titleDataByName(name) {
-      const manager = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
-      const titles = manager.field("Config").value.field("Titles").value;
-      const count = Number(call(titles, "get_Count"));
-      for (let i = 0; i < count; i++) {
-        const title = titles.method("get_Item", 1).invoke(i);
-        const id = title.field("ResourceId").value;
-        if (String(id.field("UniqueName").value?.content || "") === name) return title;
+    } });
+  });
+  section("sound settings saved", () => {
+    const manager = cls(img, "SettingsManager"), prefs = ucls("UnityEngine.PlayerPrefs");
+    let pending2 = 0;
+    for (const name of ["SetMasterVolume", "SetIsMasterVolumeMuted", "SetMusicVolume", "SetIsMusicMuted", "SetIsPlaySoundInBackground", "SetAutoMuteOpponentEmotes", "SetShowSubtitles"]) {
+      const method = manager.tryMethod(name, 1);
+      if (!method) {
+        log(`sound settings: ${name} not found`);
+        continue;
       }
-      return null;
-    }
-    section("match intro title colour", () => {
-      const sequence = cls(img, "SPTESL.SequenceMatchIntro");
-      const execute = sequence.methods.find((m) => m.name === "Execute" && m.parameterCount === 2 && /MatchLogAnimationData$/.test(m.parameters[0].type.name) && /BoardState$/.test(m.parameters[1].type.name));
-      if (!execute) throw Error("SequenceMatchIntro.Execute(data, boardState) not found");
-      const show = cls(img, "MatchIntroWin").tryMethod("Show", 0);
-      if (!show || show.virtualAddress.isNull()) throw Error("MatchIntroWin.Show not found");
-      const unityObject = ucls("UnityEngine.Object");
-      const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
-      let pending2 = null;
-      const forget = () => {
-        if (pending2) {
-          pending2.data.free();
-          pending2.board.free();
-          pending2 = null;
-        }
-      };
-      hookAttach(execute.virtualAddress, {
+      hookAttach(method.virtualAddress, {
         onEnter(args) {
-          const start = execute.isStatic ? 0 : 1;
-          forget();
-          pending2 = { data: new Il2Cpp.Object(args[start]).ref(false), board: new Il2Cpp.Object(args[start + 1]).ref(false) };
-        }
-      });
-      function tint(data, board) {
-        const players = call(data.field("ActionData").value, "get_MatchIntroPlayers");
-        if (isNull(players)) return;
-        const win = board.field("MatchUI").value.field("MatchIntroWin").value;
-        if (!alive(win)) return;
-        const network = cls(img, "SPTESL.GameNetworkManager").method("get_Instance").invoke();
-        let tinted = 0;
-        for (let i = 0, count = Number(call(players, "get_Count")); i < count; i++) {
-          const player = players.method("get_Item", 1).invoke(i);
-          const types = call(player, "get_InventoryTypes");
-          const titleIndex = Number(types.method("IndexOf", 1).invoke(Il2Cpp.string("title")));
-          if (titleIndex < 0) continue;
-          const titleName = String(call(player, "get_InventoryValues").method("get_Item", 1).invoke(titleIndex)?.content || "");
-          const title = titleDataByName(titleName);
-          if (isNull(title) || enumVal(title.field("Rarity").value) !== RARITY_LEGENDARY) continue;
-          const own = enumVal(network.method("GetPlayerControllerType", 1).invoke(call(player, "get_PlayerInstanceId"))) === 0;
-          const panel = win.field(own ? "MyInfoPanel" : "UrInfoPanel").value;
-          if (!alive(panel)) continue;
-          const banner = panel.field("TitleBanner").value;
-          if (!alive(banner)) continue;
-          const resources = cls(img, "UIResourceManager").method("get_Instance").invoke();
-          const sprite = resources.method("GetTitleBannerSprite", 1).invoke(enumBox(cls(img, "SPTESL.CardRarity"), 0));
-          if (!isNull(sprite)) call(banner, "set_overrideSprite", sprite);
-          call(banner, "set_color", rgba(1, 0.75, 0, 1));
-          tinted++;
-        }
-        log(`titles UI: match intro ${tinted ? `legendary banner tinted (${tinted})` : "has no legendary title"}`);
-      }
-      hookAttach(show.virtualAddress, {
-        onLeave() {
-          const match = pending2;
-          pending2 = null;
-          if (!match) return;
-          schedule(0, () => {
+          const self = new Il2Cpp.Object(args[0]).ref(false), ticket = ++pending2;
+          schedule(1e3, () => {
+            if (ticket !== pending2) return;
             try {
-              tint(match.data.target, match.board.target);
+              const live = self.target;
+              if (!live || live.isNull()) return;
+              live.method("SaveSettings").invoke();
+              prefs.method("Save").invoke();
+              log(`sound settings: saved after ${name}`);
             } catch (error) {
-              log(`titles UI: intro tint failed: ${error}`);
-            } finally {
-              match.data.free();
-              match.board.free();
+              log(`sound settings: save failed: ${error}`);
             }
-          }, "match intro tint");
+          }, "sound settings save");
         }
       });
-    });
-    const emojiByName = /* @__PURE__ */ new Map(), emojiByAscii = /* @__PURE__ */ new Map();
-    let emojiDefinitions = [], emojiAsset = null, emojiTexture = null, emojiInitAttempted = false;
-    const emojiHandles = [];
-    function emojiIndex(definition, columns) {
-      return (definition.Row - 1) * columns + definition.Column - 1;
     }
-    function emojiFormat(message) {
-      let plain = String(message).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
-      plain = uiPlain(plain);
-      plain = plain.split(" ").map((word) => emojiByAscii.has(word) ? `:${emojiByAscii.get(word)}:` : word).join(" ");
-      return plain.replace(/:([a-z0-9_]+):/gi, (whole, name) => {
-        const definition = emojiByName.get(name);
-        return definition ? `<size=130%><sprite=${definition.index}></size>` : whole;
-      });
-    }
-    function initializeEmojis() {
-      if (emojiAsset) return true;
-      if (emojiInitAttempted) return false;
-      emojiInitAttempted = true;
-      try {
-        const path = `${persistentPath()}/tesl-reborn-emojis`;
-        const jsonBytes = File.readAllBytes(`${path}/people.json`), pngBytes = File.readAllBytes(`${path}/people.png`);
-        if (Checksum.compute("sha256", jsonBytes) !== "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d" || Checksum.compute("sha256", pngBytes) !== "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa") throw Error("Emoji resource checksum mismatch");
-        const definition = JSON.parse(File.readAllText(`${path}/people.json`));
-        const shader = ucls("UnityEngine.Shader").method("Find", 1).invoke(Il2Cpp.string("TextMeshPro/Sprite"));
-        if (isNull(shader)) throw Error("TextMeshPro/Sprite shader is unavailable");
-        const texture = ucls("UnityEngine.Texture2D").alloc();
-        emojiHandles.push(texture.ref(false));
-        texture.method(".ctor").overload("System.Int32", "System.Int32", "UnityEngine.TextureFormat", "System.Boolean").invoke(2, 2, enumBox(ucls("UnityEngine.TextureFormat"), 4), false);
-        const managedBytes = Il2Cpp.corlib.class("System.IO.File").method("ReadAllBytes", 1).invoke(Il2Cpp.string(`${path}/people.png`));
-        const loaded = ucls("UnityEngine.ImageConversion").method("LoadImage").overload("UnityEngine.Texture2D", "System.Byte[]").invoke(texture, managedBytes);
-        if (!loaded) throw Error("PNG decoding failed");
-        const width = Number(call(texture, "get_width")), height = Number(call(texture, "get_height"));
-        const columns = width / definition.SpriteSize, rows = height / definition.SpriteSize;
-        if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns * rows > 4096) throw Error("Invalid emoji atlas dimensions");
-        const material = ucls("UnityEngine.Material").alloc();
-        emojiHandles.push(material.ref(false));
-        material.method(".ctor").overload("UnityEngine.Shader").invoke(shader);
-        call(material, "set_mainTexture", texture);
-        const asset = ucls("UnityEngine.ScriptableObject").method("CreateInstance").overload("System.Type").invoke(ucls("TMPro.TMP_SpriteAsset").type.object);
-        emojiHandles.push(asset.ref(false));
-        asset.field("spriteSheet").value = texture;
-        asset.field("material").value = material;
-        const list = uiList(ucls("TMPro.TMP_Sprite"));
-        emojiHandles.push(list.ref(false));
-        for (let i = 0; i < columns * rows; i++) call(list, "Add", NULL);
-        const definitions = definition.Groups.flatMap((group) => group.Sprites);
-        for (const item of definitions) {
-          if (item.Row < 1 || item.Column < 1 || item.Row > rows || item.Column > columns || !/^[a-z0-9_]+$/.test(item.Name))
-            throw Error("Invalid emoji definition");
-          const index = emojiIndex(item, columns), sprite = newWith(ucls("TMPro.TMP_Sprite"));
-          const spriteHandle = sprite.ref(false);
-          const fields = {
-            id: index,
-            name: Il2Cpp.string(item.Name),
-            unicode: index,
-            x: (item.Column - 1) * definition.SpriteSize,
-            y: height - item.Row * definition.SpriteSize,
-            width: definition.SpriteSize,
-            height: definition.SpriteSize,
-            xOffset: 0,
-            yOffset: definition.SpriteSize * 0.8,
-            xAdvance: definition.SpriteSize,
-            scale: 1
-          };
-          for (const [key, value] of Object.entries(fields)) sprite.field(key).value = value;
-          list.method("set_Item", 2).invoke(index, sprite);
-          spriteHandle.free();
-          const entry = Object.assign({}, item, { index, u: (item.Column - 1) / columns, v: 1 - item.Row / rows, du: 1 / columns, dv: 1 / rows });
-          emojiByName.set(item.Name, entry);
-          for (const ascii of String(item.Ascii || "").split(" ").filter(Boolean)) emojiByAscii.set(ascii, item.Name);
+  });
+  const historyRows = /* @__PURE__ */ new Map(), historyTargets = /* @__PURE__ */ new Map();
+  let historyUiReports = 0, historyPopup = null, historyActiveKey = null, historyLastFetch = 0;
+  let historyUsingNative = false, historyNativeFailureReported = false;
+  const historyTriggerOwners = /* @__PURE__ */ new Map();
+  function historyReleaseTrigger(key, record) {
+    if (!record.triggerKey) return;
+    const owner = historyTriggerOwners.get(record.triggerKey);
+    if (owner) {
+      owner.users.delete(key);
+      if (!owner.users.size) {
+        try {
+          if (!isNull(owner.trigger.target)) call(owner.trigger.target, "set_enabled", owner.wasEnabled);
+        } catch (_) {
         }
-        asset.field("spriteInfoList").value = list;
-        emojiDefinitions = definitions.map((item) => emojiByName.get(item.Name));
-        emojiAsset = asset;
-        emojiTexture = texture;
-        (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
-          const bytes = Il2Cpp.corlib.class("System.IO.File").method("ReadAllBytes", 1).invoke(Il2Cpp.string(`${path}/people.png`));
-          const again = ucls("UnityEngine.ImageConversion").method("LoadImage").overload("UnityEngine.Texture2D", "System.Byte[]").invoke(texture, bytes);
-          log(`emoji: atlas ${again ? "reloaded" : "reload failed"} after resume`);
-        });
-        log(`emoji: initialized ${emojiDefinitions.length} sprites from PC atlas`);
-        return true;
-      } catch (error) {
-        emojiByName.clear();
-        emojiByAscii.clear();
-        log(`emoji: initialization failed: ${error}`);
-        return false;
+        owner.trigger.free();
+        historyTriggerOwners.delete(record.triggerKey);
       }
     }
-    const chatMessages = /* @__PURE__ */ new Map();
-    let chatMessageReports = 0;
-    function chatResetTextRect(rect) {
+    record.triggerKey = null;
+  }
+  function historyOwnTrigger(key, record, trigger) {
+    const id = trigger.handle.toString();
+    if (record.triggerKey !== id) historyReleaseTrigger(key, record);
+    let owner = historyTriggerOwners.get(id);
+    if (!owner) {
+      owner = { trigger: trigger.ref(false), wasEnabled: Boolean(call(trigger, "get_enabled")), users: /* @__PURE__ */ new Set() };
+      historyTriggerOwners.set(id, owner);
+    }
+    owner.users.add(key);
+    record.triggerKey = id;
+    call(trigger, "set_enabled", false);
+  }
+  function historyNativeManager() {
+    return cls(img, "TooltipManager").method("get_Instance", 0).invoke();
+  }
+  function historyTryNative(record) {
+    let manager = null, boxHandle = null, messageHandle = null;
+    try {
+      manager = historyNativeManager();
+      if (isNull(manager)) throw Error("TooltipManager is not ready");
+      call(manager, "HideTooltip");
+      const settingsClass = cls(img, "TooltipShowSettings"), settings = settingsClass.alloc();
+      boxHandle = settings.ref(false);
+      settings.field("anchorRectTransform").value = record.hits[0].rect.target;
+      for (const [name, number] of [["anchorEdge", 2], ["tooltipEdge", 3]]) {
+        const field = settings.field(name);
+        field.value = enumBox(field.type.class, number);
+      }
+      settings.field("anchorEdgeOffset").value = 0.5;
+      settings.field("tooltipEdgeOffset").value = 0.5;
+      settings.field("distanceFromAnchor").value = 5;
+      settings.field("locKeys").value = uiList(Il2Cpp.corlib.class("System.String"));
+      const messages = uiList(Il2Cpp.corlib.class("System.String"));
+      messageHandle = messages.ref(false);
+      call(messages, "Add", Il2Cpp.string(record.text));
+      settings.unbox().method("SetLocalizedMessages", 1).invoke(messages);
+      manager.method("ShowTooltip").overload(settingsClass.type.name, "UnityEngine.GameObject", "System.Boolean").invoke(settings.unbox(), call(record.hits[0].rect.target, "get_gameObject"), true);
+      return true;
+    } catch (error) {
+      if (manager) {
+        try {
+          call(manager, "HideTooltip");
+        } catch (_) {
+        }
+      }
+      if (!historyNativeFailureReported) {
+        historyNativeFailureReported = true;
+        log(`history UI: native popup unavailable; using single fallback: ${error}`);
+      }
+      return false;
+    } finally {
+      if (messageHandle) messageHandle.free();
+      if (boxHandle) boxHandle.free();
+    }
+  }
+  function historyPopupOpened(key, record, provider) {
+    historyActiveKey = key;
+    log(`history UI: popup opened index=${record.index} side=${record.side} hasName=${record.hasName} provider=${provider}`);
+    if (!record.hasName && Date.now() - historyLastFetch > 5e3) {
+      historyLastFetch = Date.now();
+      schedule(0, () => refreshMatchEntries());
+    }
+  }
+  function historyTooltipText(name, stats, deleted = false) {
+    if (!name) return "No deck data available";
+    const title = `<b>${uiPlain(name)}</b>`;
+    if (stats) return `${title}
+${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
+    return deleted ? `${title}
+<color=#FF6666>deleted</color>` : title;
+  }
+  function historyHidePopup() {
+    if (historyUsingNative) {
+      try {
+        call(historyNativeManager(), "HideTooltip");
+      } catch (_) {
+      }
+    }
+    if (historyPopup && unityAlive(historyPopup.go.target)) call(historyPopup.go.target, "SetActive", false);
+    historyActiveKey = null;
+    historyUsingNative = false;
+  }
+  function historyDropTarget(key) {
+    const record = historyTargets.get(key);
+    if (!record) return;
+    if (historyActiveKey === key) historyHidePopup();
+    historyReleaseTrigger(key, record);
+    for (const hit of record.hits) {
+      try {
+        const go = hit.go.target;
+        if (!isNull(go)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go);
+      } catch (_) {
+      }
+      hit.go.free();
+      hit.rect.free();
+    }
+    record.row.free();
+    historyTargets.delete(key);
+  }
+  function historyCanvas(component) {
+    let canvas = component.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+    if (isNull(canvas)) throw Error("History canvas not found");
+    const root = canvas.tryMethod("get_rootCanvas", 0);
+    if (root) canvas = root.invoke();
+    return canvas;
+  }
+  function historyShowPopup(key, toggle = true) {
+    const record = historyTargets.get(key);
+    if (!record) return;
+    if (toggle && historyActiveKey === key) {
+      historyHidePopup();
+      return;
+    }
+    historyHidePopup();
+    if (historyTryNative(record)) {
+      historyUsingNative = true;
+      historyPopupOpened(key, record, "native");
+      return;
+    }
+    const canvas = historyCanvas(record.hits[0].rect.target);
+    const canvasTransform = call(canvas, "get_transform"), canvasKey = canvas.handle.toString();
+    if (historyPopup && historyPopup.canvasKey !== canvasKey) {
+      ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(historyPopup.go.target);
+      historyPopup.go.free();
+      historyPopup.label.free();
+      historyPopup.rect.free();
+      historyPopup = null;
+    }
+    if (!historyPopup) {
+      const go = uiNew("RebornHistoryDeckPopup", canvasTransform);
+      uiPlace(go, 0.5, 0.5, 0.5, 0.5, 0, 0, 360, 100);
+      call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+      const background = uiAdd(go, "UnityEngine.UI.Image");
+      call(background, "set_color", rgba(0.035, 0.03, 0.02, 0.98));
+      const labelGO = uiNew("Text", call(go, "get_transform"));
+      const rect = uiRect(labelGO);
+      uiStretch(rect);
+      call(rect, "set_offsetMin", vec2(12, 10));
+      call(rect, "set_offsetMax", vec2(-12, -10));
+      const label = uiText(labelGO, "", 23);
+      call(label, "set_richText", true);
+      call(label, "set_enableWordWrapping", true);
+      const autoContainer = label.tryMethod("set_autoSizeTextContainer", 1);
+      if (autoContainer) {
+        try {
+          autoContainer.invoke(false);
+        } catch (_) {
+        }
+      }
       call(rect, "set_anchorMin", vec2(0, 0));
       call(rect, "set_anchorMax", vec2(1, 1));
       call(rect, "set_pivot", vec2(0.5, 0.5));
-      call(rect, "set_sizeDelta", vec2(-16, -8));
+      call(rect, "set_sizeDelta", vec2(-24, -20));
       call(rect, "set_anchoredPosition", vec2(0, 0));
+      historyPopup = { go: go.ref(false), label: label.ref(false), rect: uiRect(go).ref(false), canvasKey };
     }
-    function chatFitTextBox(record) {
-      const row = call(record.rect.target, "get_rect"), box = call(record.textRect.target, "get_rect");
-      const expectedWidth = Number(row.field("m_Width").value) - 16;
-      const expectedHeight = Number(row.field("m_Height").value) - 8;
-      if (Math.abs(Number(box.field("m_Width").value) - expectedWidth) > 0.5 || Math.abs(Number(box.field("m_Height").value) - expectedHeight) > 0.5) {
-        chatResetTextRect(record.textRect.target);
-        if (record.boxRepairs++ < 2) log("chat UI: repaired TMP text container bounds");
+    const area = call(uiRect(call(canvasTransform, "get_gameObject")), "get_rect");
+    const width = Number(area.field("m_Width").value), height = Number(area.field("m_Height").value);
+    const panelWidth = Math.max(100, Math.min(420, width - 24));
+    call(historyPopup.label.target, "set_text", Il2Cpp.string(record.text));
+    let panelHeight = 100;
+    try {
+      const label = historyPopup.label.target;
+      const size = label.method("GetPreferredValues").overload("System.String", "System.Single", "System.Single").invoke(Il2Cpp.string(record.text), panelWidth - 24, 1e5);
+      panelHeight = Math.max(64, Math.min(height - 24, uiXY(size).y + 24));
+    } catch (_) {
+    }
+    let x = 0, y = 0;
+    try {
+      const point = canvasTransform.method("InverseTransformPoint").overload("UnityEngine.Vector3").invoke(call(record.hits[0].rect.target, "get_position"));
+      const local = uiXY(point);
+      x = local.x - Number(area.field("m_XMin").value) - width / 2;
+      y = local.y - Number(area.field("m_YMin").value) - height / 2 + panelHeight / 2 + 28;
+    } catch (_) {
+    }
+    x = Math.max(-width / 2 + panelWidth / 2 + 8, Math.min(width / 2 - panelWidth / 2 - 8, x));
+    y = Math.max(-height / 2 + panelHeight / 2 + 8, Math.min(height / 2 - panelHeight / 2 - 8, y));
+    call(historyPopup.rect.target, "set_sizeDelta", vec2(panelWidth, panelHeight));
+    call(historyPopup.rect.target, "set_anchoredPosition", vec2(x, y));
+    call(historyPopup.go.target, "SetActive", true);
+    call(call(historyPopup.go.target, "get_transform"), "SetAsLastSibling");
+    historyPopupOpened(key, record, "fallback");
+  }
+  function setHistoryDeckTooltip(row, fieldName, name, stats, index = -1, deleted = false) {
+    const images = row.field(fieldName).value;
+    if (isNull(images)) return;
+    const count = Number(call(images, "get_Count")), key = `${row.handle}:${fieldName}`;
+    if (!count) {
+      historyDropTarget(key);
+      return;
+    }
+    const imageKeys = [];
+    for (let i = 0; i < count; i++) imageKeys.push(images.method("get_Item", 1).invoke(i).handle.toString());
+    const signature = imageKeys.join(",");
+    let record = historyTargets.get(key);
+    if (record && record.signature !== signature) {
+      historyDropTarget(key);
+      record = null;
+    }
+    if (!record) {
+      record = { row: row.weakRef(false), hits: [], signature, side: fieldName === "_userDeckImages" ? "user" : "opponent" };
+      historyTargets.set(key, record);
+      for (let i = 0; i < count; i++) {
+        const image = images.method("get_Item", 1).invoke(i);
+        const hit = uiNew("RebornDeckTap", call(image, "get_transform")), rect = uiRect(hit);
+        uiStretch(rect);
+        call(rect, "set_offsetMin", vec2(-5, -5));
+        call(rect, "set_offsetMax", vec2(5, 5));
+        call(uiAdd(hit, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+        const graphic = uiAdd(hit, "UnityEngine.UI.Image");
+        call(graphic, "set_color", rgba(1, 1, 1, 0));
+        call(graphic, "set_raycastTarget", true);
+        uiButton(hit, graphic, () => historyShowPopup(key));
+        record.hits.push({ go: hit.ref(false), rect: rect.ref(false) });
       }
     }
-    function chatPrepareViewport(self) {
-      const root = call(self, "get_transform");
-      const viewport = call(root, "Find", Il2Cpp.string("Window/Section_TopBigChat/Section_Messages/Panel_Messages/Scroll_Messages/Viewport"));
-      if (isNull(viewport)) {
-        log("chat UI: viewport path missing");
-        return;
+    record.text = historyTooltipText(name, stats, deleted);
+    record.hasName = Boolean(name);
+    record.index = index;
+    try {
+      let parent = call(images.method("get_Item", 1).invoke(0), "get_transform"), tooltip = null;
+      for (let i = 0; i < 4 && !isNull(parent); i++) {
+        parent = call(parent, "get_parent");
+        if (!isNull(parent)) tooltip = parent.method("GetComponent").overload("System.Type").invoke(cls(img, "TooltipTrigger").type.object);
+        if (!isNull(tooltip)) break;
       }
-      const go = call(viewport, "get_gameObject");
-      ucls("UnityEngine.UI.RectMask2D");
-      let rectangle = uiComponent(go, "UnityEngine.UI.RectMask2D");
-      if (isNull(rectangle)) rectangle = uiAdd(go, "UnityEngine.UI.RectMask2D");
-      const mask = uiComponent(go, "UnityEngine.UI.Mask");
-      if (!isNull(mask)) call(mask, "set_enabled", false);
-      const image = uiComponent(go, "UnityEngine.UI.Image");
-      if (!isNull(image)) call(image, "set_enabled", false);
-      call(rectangle, "set_enabled", true);
-      log("chat UI: PC viewport mask fix applied (Mask off, Image off, RectMask2D on)");
+      if (!isNull(tooltip)) {
+        historyOwnTrigger(key, record, tooltip);
+      }
+    } catch (error) {
+      log(`history UI: automatic tooltip suppression failed: ${error}`);
     }
-    function chatLogMessageBounds(record) {
+    if (historyActiveKey === key) historyShowPopup(key, false);
+  }
+  function updateHistoryTooltips(row, match) {
+    let index = -1;
+    try {
+      const manager = cls(img, "SparkleServices.ServicesManager").method("get_Instance").invoke();
+      const history = call(manager.field("Stats").value, "get_MatchHistory");
+      index = Number(history.method("IndexOf", 1).invoke(match));
+    } catch (error) {
+      log(`history UI: service index failed: ${error}`);
+    }
+    const extra = index >= 0 && index < matchEntryData.length ? matchEntryData[index] : null;
+    setHistoryDeckTooltip(row, "_userDeckImages", extra?.deckName || "", extra?.deckStats || null, index, extra?.deckId === -1);
+    const difficulty = String(match.field("aiDifficulty").value?.content || "");
+    if (!difficulty || difficulty === "None")
+      setHistoryDeckTooltip(row, "_opponentDeckImages", extra?.opponentDeckName || "", extra?.opponentDeckStats || null, index);
+    else historyDropTarget(`${row.handle}:_opponentDeckImages`);
+    if (historyUiReports++ < 12) log(`history UI: tap targets index=${index} extended=${Boolean(extra)}`);
+  }
+  function refreshHistoryTooltips() {
+    for (const [key, handles] of historyRows) {
       try {
-        let rect = call(record.text.target, "get_rectTransform");
-        for (let depth = 0; depth < 7 && !isNull(rect); depth++) {
-          const name = String(call(rect, "get_name")?.content || "?");
-          const area = call(rect, "get_rect"), point = uiXY(call(rect, "get_anchoredPosition"));
-          const scale = uiXY(call(rect, "get_localScale")), pivot = uiXY(call(rect, "get_pivot"));
-          log(`chat UI geometry: ${depth}:${name} rect=${Number(area.field("m_Width").value).toFixed(1)}x${Number(area.field("m_Height").value).toFixed(1)} pos=${point.x.toFixed(1)},${point.y.toFixed(1)} pivot=${pivot.x.toFixed(1)},${pivot.y.toFixed(1)} scale=${scale.x.toFixed(2)},${scale.y.toFixed(2)}`);
-          const parent = call(rect, "get_parent");
-          if (isNull(parent)) break;
-          rect = uiRect(call(parent, "get_gameObject"));
+        const row = handles.row.target, match = handles.match.target;
+        if (!isNull(row) && !isNull(match)) {
+          updateHistoryTooltips(row, match);
+          continue;
         }
       } catch (error) {
-        log(`chat UI: geometry probe failed: ${error}`);
+        log(`history UI: refresh failed: ${error}`);
       }
+      historyDropTarget(`${key}:_userDeckImages`);
+      historyDropTarget(`${key}:_opponentDeckImages`);
+      handles.row.free();
+      handles.match.free();
+      historyRows.delete(key);
     }
-    function chatResizeMessage(record) {
-      const row = record.row.target, text = record.text.target;
-      if (isNull(row) || isNull(text)) return;
-      const rect = record.rect.target;
-      const area = call(rect, "get_rect");
-      const width = Math.max(32, Number(area.field("m_Width").value) - 16);
-      if (Math.abs(width - record.width) < 0.5 && record.height > 0) {
-        const currentHeight = Number(area.field("m_Height").value);
-        if (Math.abs(currentHeight - record.height) > 0.5) {
-          call(record.layout.target, "set_preferredHeight", record.height);
-          call(record.layout.target, "set_minHeight", record.height);
-          call(record.layout.target, "set_flexibleHeight", 0);
-          const delta = uiXY(call(rect, "get_sizeDelta"));
-          call(rect, "set_sizeDelta", vec2(delta.x, delta.y + record.height - currentHeight));
-        }
-        chatFitTextBox(record);
+  }
+  function historyPoll() {
+    if (!historyActiveKey || !historyUsingNative && !historyPopup) return;
+    try {
+      const record = historyTargets.get(historyActiveKey);
+      if (!record || !unityAlive(record.row.target) || !Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) {
+        historyHidePopup();
         return;
       }
-      let height;
-      const preferred = text.tryMethod("GetPreferredValues", 3);
-      if (preferred) height = uiXY(preferred.overload("System.String", "System.Single", "System.Single").invoke(Il2Cpp.string(record.value), width, 1e5)).y;
-      else height = Number(call(text, "get_preferredHeight"));
-      height = Math.ceil(Math.max(28, height) + 8);
-      if (!Number.isFinite(height) || height > 2e4) throw Error("Invalid chat message height");
-      if (Math.abs(height - record.height) > 0.5 || Math.abs(width - record.width) > 0.5) {
-        call(record.layout.target, "set_preferredHeight", height);
-        call(record.layout.target, "set_minHeight", height);
-        call(record.layout.target, "set_flexibleHeight", 0);
-        const currentHeight = Number(area.field("m_Height").value), delta = uiXY(call(rect, "get_sizeDelta"));
-        call(rect, "set_sizeDelta", vec2(delta.x, delta.y + height - currentHeight));
-        record.height = height;
-        record.width = width;
+      const input = ucls("UnityEngine.Input");
+      let point, down;
+      if (Number(input.method("get_touchCount", 0).invoke()) > 0) {
+        const touch = input.method("GetTouch", 1).invoke(0);
+        down = enumVal(touch.method("get_phase", 0).invoke()) === 0;
+        point = uiXY(touch.method("get_position", 0).invoke());
+      } else {
+        down = Boolean(input.method("GetMouseButtonDown", 1).invoke(0));
+        point = uiXY(input.method("get_mousePosition", 0).invoke());
       }
-      chatFitTextBox(record);
+      if (!down) return;
+      if (!record.hits.length || !unityAlive(record.hits[0].rect.target)) {
+        historyHidePopup();
+        return;
+      }
+      const canvas = historyCanvas(record.hits[0].rect.target), camera = call(canvas, "get_worldCamera");
+      if (!historyUsingNative && unityAlive(historyPopup.rect.target) && chatContains(historyPopup.rect.target, point, camera)) return;
+      for (const target of historyTargets.values()) for (const hit of target.hits) {
+        if (!unityAlive(hit.go.target) || !unityAlive(hit.rect.target)) continue;
+        if (Boolean(call(hit.go.target, "get_activeInHierarchy")) && chatContains(hit.rect.target, point, camera)) return;
+      }
+      historyHidePopup();
+    } catch (error) {
+      log(`history UI: popup input failed: ${error}`);
+      historyHidePopup();
     }
-    let armChatSizes = (_on) => {
-    };
-    function chatRefreshMessageSizes() {
-      for (const [key, record] of chatMessages) {
-        try {
-          if (unityAlive(record.row.target)) {
-            if (Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) chatResizeMessage(record);
-            continue;
-          }
-        } catch (error) {
-          if (!record.warned) {
-            record.warned = true;
-            log(`chat UI: message layout failed: ${error}`);
+  }
+  section("match history deck tooltips", () => {
+    const klass = cls(img, "MatchEntry"), seen = /* @__PURE__ */ new Set();
+    for (const method of klass.methods.filter((m) => ["UpdateUi", "SetData"].includes(m.name) && !m.isStatic && m.parameterCount === 1 && m.parameters[0].type.name === "SparkleServices.Stats.MatchEntry")) {
+      const address = method.virtualAddress.toString();
+      if (method.virtualAddress.isNull() || seen.has(address)) continue;
+      seen.add(address);
+      hookAttach(method.virtualAddress, {
+        onEnter(args) {
+          this.row = args[0];
+          this.match = args[1];
+        },
+        onLeave() {
+          try {
+            const row = new Il2Cpp.Object(this.row), match = new Il2Cpp.Object(this.match);
+            const key = row.handle.toString(), old = historyRows.get(key);
+            if (old) {
+              old.row.free();
+              old.match.free();
+            }
+            historyRows.set(key, { row: row.weakRef(false), match: match.weakRef(false) });
+            updateHistoryTooltips(row, match);
+          } catch (error) {
+            log(`history UI: binding failed: ${error}`);
           }
         }
-        for (const handle of [record.row, record.text, record.rect, record.layout, record.textRect]) handle.free();
-        chatMessages.delete(key);
-      }
-      armChatSizes(chatMessages.size > 0);
+      });
     }
-    function renderChatMessage(row, message) {
-      if (!initializeEmojis()) return;
-      const legacy = row.field("_input").value;
-      if (isNull(legacy)) return;
-      const template = call(legacy, "get_textComponent");
-      if (isNull(template)) return;
-      const key = row.handle.toString();
-      let record = chatMessages.get(key);
-      if (!record) {
-        const rowGO = call(row, "get_gameObject"), rowRect = uiRect(rowGO);
-        const go = uiNew("RebornEmojiMessage", call(rowGO, "get_transform")), rect = uiRect(go);
+    if (!seen.size) throw Error("MatchEntry data callbacks not found");
+    log(`history UI: tap hooks installed callbacks=${seen.size}`);
+    const update = cls(img, "SparkleServices.ServicesManager").methods.find((m) => m.name === "Update" && m.parameterCount === 0);
+    if (!update) throw Error("ServicesManager.Update not found");
+    hookAttach(update.virtualAddress, { onLeave() {
+      historyPoll();
+    } });
+  });
+  function titleDataByName(name) {
+    const manager = cls(img, "SPTESL.GameManager").method("get_Instance").invoke();
+    const titles = manager.field("Config").value.field("Titles").value;
+    const count = Number(call(titles, "get_Count"));
+    for (let i = 0; i < count; i++) {
+      const title = titles.method("get_Item", 1).invoke(i);
+      const id = title.field("ResourceId").value;
+      if (String(id.field("UniqueName").value?.content || "") === name) return title;
+    }
+    return null;
+  }
+  section("match intro title colour", () => {
+    const sequence = cls(img, "SPTESL.SequenceMatchIntro");
+    const execute = sequence.methods.find((m) => m.name === "Execute" && m.parameterCount === 2 && /MatchLogAnimationData$/.test(m.parameters[0].type.name) && /BoardState$/.test(m.parameters[1].type.name));
+    if (!execute) throw Error("SequenceMatchIntro.Execute(data, boardState) not found");
+    const show = cls(img, "MatchIntroWin").tryMethod("Show", 0);
+    if (!show || show.virtualAddress.isNull()) throw Error("MatchIntroWin.Show not found");
+    const unityObject = ucls("UnityEngine.Object");
+    const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
+    let pending2 = null;
+    const forget = () => {
+      if (pending2) {
+        pending2.data.free();
+        pending2.board.free();
+        pending2 = null;
+      }
+    };
+    hookAttach(execute.virtualAddress, {
+      onEnter(args) {
+        const start = execute.isStatic ? 0 : 1;
+        forget();
+        pending2 = { data: new Il2Cpp.Object(args[start]).ref(false), board: new Il2Cpp.Object(args[start + 1]).ref(false) };
+      }
+    });
+    function tint(data, board) {
+      const players = call(data.field("ActionData").value, "get_MatchIntroPlayers");
+      if (isNull(players)) return;
+      const win = board.field("MatchUI").value.field("MatchIntroWin").value;
+      if (!alive(win)) return;
+      const network = cls(img, "SPTESL.GameNetworkManager").method("get_Instance").invoke();
+      let tinted = 0;
+      for (let i = 0, count = Number(call(players, "get_Count")); i < count; i++) {
+        const player = players.method("get_Item", 1).invoke(i);
+        const types = call(player, "get_InventoryTypes");
+        const titleIndex = Number(types.method("IndexOf", 1).invoke(Il2Cpp.string("title")));
+        if (titleIndex < 0) continue;
+        const titleName = String(call(player, "get_InventoryValues").method("get_Item", 1).invoke(titleIndex)?.content || "");
+        const title = titleDataByName(titleName);
+        if (isNull(title) || enumVal(title.field("Rarity").value) !== RARITY_LEGENDARY) continue;
+        const own = enumVal(network.method("GetPlayerControllerType", 1).invoke(call(player, "get_PlayerInstanceId"))) === 0;
+        const panel = win.field(own ? "MyInfoPanel" : "UrInfoPanel").value;
+        if (!alive(panel)) continue;
+        const banner = panel.field("TitleBanner").value;
+        if (!alive(banner)) continue;
+        const resources = cls(img, "UIResourceManager").method("get_Instance").invoke();
+        const sprite = resources.method("GetTitleBannerSprite", 1).invoke(enumBox(cls(img, "SPTESL.CardRarity"), 0));
+        if (!isNull(sprite)) call(banner, "set_overrideSprite", sprite);
+        call(banner, "set_color", rgba(1, 0.75, 0, 1));
+        tinted++;
+      }
+      log(`titles UI: match intro ${tinted ? `legendary banner tinted (${tinted})` : "has no legendary title"}`);
+    }
+    hookAttach(show.virtualAddress, {
+      onLeave() {
+        const match = pending2;
+        pending2 = null;
+        if (!match) return;
+        schedule(0, () => {
+          try {
+            tint(match.data.target, match.board.target);
+          } catch (error) {
+            log(`titles UI: intro tint failed: ${error}`);
+          } finally {
+            match.data.free();
+            match.board.free();
+          }
+        }, "match intro tint");
+      }
+    });
+  });
+  const emojiByName = /* @__PURE__ */ new Map(), emojiByAscii = /* @__PURE__ */ new Map();
+  let emojiDefinitions = [], emojiAsset = null, emojiTexture = null, emojiInitAttempted = false;
+  const emojiHandles = [];
+  function emojiIndex(definition, columns) {
+    return (definition.Row - 1) * columns + definition.Column - 1;
+  }
+  function emojiFormat(message) {
+    let plain = String(message).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
+    plain = uiPlain(plain);
+    plain = plain.split(" ").map((word) => emojiByAscii.has(word) ? `:${emojiByAscii.get(word)}:` : word).join(" ");
+    return plain.replace(/:([a-z0-9_]+):/gi, (whole, name) => {
+      const definition = emojiByName.get(name);
+      return definition ? `<size=130%><sprite=${definition.index}></size>` : whole;
+    });
+  }
+  function initializeEmojis() {
+    if (emojiAsset) return true;
+    if (emojiInitAttempted) return false;
+    emojiInitAttempted = true;
+    try {
+      const path = `${persistentPath()}/tesl-reborn-emojis`;
+      const jsonBytes = File.readAllBytes(`${path}/people.json`), pngBytes = File.readAllBytes(`${path}/people.png`);
+      if (Checksum.compute("sha256", jsonBytes) !== "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d" || Checksum.compute("sha256", pngBytes) !== "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa") throw Error("Emoji resource checksum mismatch");
+      const definition = JSON.parse(File.readAllText(`${path}/people.json`));
+      const shader = ucls("UnityEngine.Shader").method("Find", 1).invoke(Il2Cpp.string("TextMeshPro/Sprite"));
+      if (isNull(shader)) throw Error("TextMeshPro/Sprite shader is unavailable");
+      const texture = ucls("UnityEngine.Texture2D").alloc();
+      emojiHandles.push(texture.ref(false));
+      texture.method(".ctor").overload("System.Int32", "System.Int32", "UnityEngine.TextureFormat", "System.Boolean").invoke(2, 2, enumBox(ucls("UnityEngine.TextureFormat"), 4), false);
+      const managedBytes = Il2Cpp.corlib.class("System.IO.File").method("ReadAllBytes", 1).invoke(Il2Cpp.string(`${path}/people.png`));
+      const loaded = ucls("UnityEngine.ImageConversion").method("LoadImage").overload("UnityEngine.Texture2D", "System.Byte[]").invoke(texture, managedBytes);
+      if (!loaded) throw Error("PNG decoding failed");
+      const width = Number(call(texture, "get_width")), height = Number(call(texture, "get_height"));
+      const columns = width / definition.SpriteSize, rows = height / definition.SpriteSize;
+      if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns * rows > 4096) throw Error("Invalid emoji atlas dimensions");
+      const material = ucls("UnityEngine.Material").alloc();
+      emojiHandles.push(material.ref(false));
+      material.method(".ctor").overload("UnityEngine.Shader").invoke(shader);
+      call(material, "set_mainTexture", texture);
+      const asset = ucls("UnityEngine.ScriptableObject").method("CreateInstance").overload("System.Type").invoke(ucls("TMPro.TMP_SpriteAsset").type.object);
+      emojiHandles.push(asset.ref(false));
+      asset.field("spriteSheet").value = texture;
+      asset.field("material").value = material;
+      const list = uiList(ucls("TMPro.TMP_Sprite"));
+      emojiHandles.push(list.ref(false));
+      for (let i = 0; i < columns * rows; i++) call(list, "Add", NULL);
+      const definitions = definition.Groups.flatMap((group) => group.Sprites);
+      for (const item of definitions) {
+        if (item.Row < 1 || item.Column < 1 || item.Row > rows || item.Column > columns || !/^[a-z0-9_]+$/.test(item.Name))
+          throw Error("Invalid emoji definition");
+        const index = emojiIndex(item, columns), sprite = newWith(ucls("TMPro.TMP_Sprite"));
+        const spriteHandle = sprite.ref(false);
+        const fields = {
+          id: index,
+          name: Il2Cpp.string(item.Name),
+          unicode: index,
+          x: (item.Column - 1) * definition.SpriteSize,
+          y: height - item.Row * definition.SpriteSize,
+          width: definition.SpriteSize,
+          height: definition.SpriteSize,
+          xOffset: 0,
+          yOffset: definition.SpriteSize * 0.8,
+          xAdvance: definition.SpriteSize,
+          scale: 1
+        };
+        for (const [key, value] of Object.entries(fields)) sprite.field(key).value = value;
+        list.method("set_Item", 2).invoke(index, sprite);
+        spriteHandle.free();
+        const entry = Object.assign({}, item, { index, u: (item.Column - 1) / columns, v: 1 - item.Row / rows, du: 1 / columns, dv: 1 / rows });
+        emojiByName.set(item.Name, entry);
+        for (const ascii of String(item.Ascii || "").split(" ").filter(Boolean)) emojiByAscii.set(ascii, item.Name);
+      }
+      asset.field("spriteInfoList").value = list;
+      emojiDefinitions = definitions.map((item) => emojiByName.get(item.Name));
+      emojiAsset = asset;
+      emojiTexture = texture;
+      (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
+        const bytes = Il2Cpp.corlib.class("System.IO.File").method("ReadAllBytes", 1).invoke(Il2Cpp.string(`${path}/people.png`));
+        const again = ucls("UnityEngine.ImageConversion").method("LoadImage").overload("UnityEngine.Texture2D", "System.Byte[]").invoke(texture, bytes);
+        log(`emoji: atlas ${again ? "reloaded" : "reload failed"} after resume`);
+      });
+      log(`emoji: initialized ${emojiDefinitions.length} sprites from PC atlas`);
+      return true;
+    } catch (error) {
+      emojiByName.clear();
+      emojiByAscii.clear();
+      log(`emoji: initialization failed: ${error}`);
+      return false;
+    }
+  }
+  const chatMessages = /* @__PURE__ */ new Map();
+  let chatMessageReports = 0;
+  function chatResetTextRect(rect) {
+    call(rect, "set_anchorMin", vec2(0, 0));
+    call(rect, "set_anchorMax", vec2(1, 1));
+    call(rect, "set_pivot", vec2(0.5, 0.5));
+    call(rect, "set_sizeDelta", vec2(-16, -8));
+    call(rect, "set_anchoredPosition", vec2(0, 0));
+  }
+  function chatFitTextBox(record) {
+    const row = call(record.rect.target, "get_rect"), box = call(record.textRect.target, "get_rect");
+    const expectedWidth = Number(row.field("m_Width").value) - 16;
+    const expectedHeight = Number(row.field("m_Height").value) - 8;
+    if (Math.abs(Number(box.field("m_Width").value) - expectedWidth) > 0.5 || Math.abs(Number(box.field("m_Height").value) - expectedHeight) > 0.5) {
+      chatResetTextRect(record.textRect.target);
+      if (record.boxRepairs++ < 2) log("chat UI: repaired TMP text container bounds");
+    }
+  }
+  function chatPrepareViewport(self) {
+    const root = call(self, "get_transform");
+    const viewport = call(root, "Find", Il2Cpp.string("Window/Section_TopBigChat/Section_Messages/Panel_Messages/Scroll_Messages/Viewport"));
+    if (isNull(viewport)) {
+      log("chat UI: viewport path missing");
+      return;
+    }
+    const go = call(viewport, "get_gameObject");
+    ucls("UnityEngine.UI.RectMask2D");
+    let rectangle = uiComponent(go, "UnityEngine.UI.RectMask2D");
+    if (isNull(rectangle)) rectangle = uiAdd(go, "UnityEngine.UI.RectMask2D");
+    const mask = uiComponent(go, "UnityEngine.UI.Mask");
+    if (!isNull(mask)) call(mask, "set_enabled", false);
+    const image = uiComponent(go, "UnityEngine.UI.Image");
+    if (!isNull(image)) call(image, "set_enabled", false);
+    call(rectangle, "set_enabled", true);
+    log("chat UI: PC viewport mask fix applied (Mask off, Image off, RectMask2D on)");
+  }
+  function chatLogMessageBounds(record) {
+    try {
+      let rect = call(record.text.target, "get_rectTransform");
+      for (let depth = 0; depth < 7 && !isNull(rect); depth++) {
+        const name = String(call(rect, "get_name")?.content || "?");
+        const area = call(rect, "get_rect"), point = uiXY(call(rect, "get_anchoredPosition"));
+        const scale = uiXY(call(rect, "get_localScale")), pivot = uiXY(call(rect, "get_pivot"));
+        log(`chat UI geometry: ${depth}:${name} rect=${Number(area.field("m_Width").value).toFixed(1)}x${Number(area.field("m_Height").value).toFixed(1)} pos=${point.x.toFixed(1)},${point.y.toFixed(1)} pivot=${pivot.x.toFixed(1)},${pivot.y.toFixed(1)} scale=${scale.x.toFixed(2)},${scale.y.toFixed(2)}`);
+        const parent = call(rect, "get_parent");
+        if (isNull(parent)) break;
+        rect = uiRect(call(parent, "get_gameObject"));
+      }
+    } catch (error) {
+      log(`chat UI: geometry probe failed: ${error}`);
+    }
+  }
+  function chatResizeMessage(record) {
+    const row = record.row.target, text = record.text.target;
+    if (isNull(row) || isNull(text)) return;
+    const rect = record.rect.target;
+    const area = call(rect, "get_rect");
+    const width = Math.max(32, Number(area.field("m_Width").value) - 16);
+    if (Math.abs(width - record.width) < 0.5 && record.height > 0) {
+      const currentHeight = Number(area.field("m_Height").value);
+      if (Math.abs(currentHeight - record.height) > 0.5) {
+        call(record.layout.target, "set_preferredHeight", record.height);
+        call(record.layout.target, "set_minHeight", record.height);
+        call(record.layout.target, "set_flexibleHeight", 0);
+        const delta = uiXY(call(rect, "get_sizeDelta"));
+        call(rect, "set_sizeDelta", vec2(delta.x, delta.y + record.height - currentHeight));
+      }
+      chatFitTextBox(record);
+      return;
+    }
+    let height;
+    const preferred = text.tryMethod("GetPreferredValues", 3);
+    if (preferred) height = uiXY(preferred.overload("System.String", "System.Single", "System.Single").invoke(Il2Cpp.string(record.value), width, 1e5)).y;
+    else height = Number(call(text, "get_preferredHeight"));
+    height = Math.ceil(Math.max(28, height) + 8);
+    if (!Number.isFinite(height) || height > 2e4) throw Error("Invalid chat message height");
+    if (Math.abs(height - record.height) > 0.5 || Math.abs(width - record.width) > 0.5) {
+      call(record.layout.target, "set_preferredHeight", height);
+      call(record.layout.target, "set_minHeight", height);
+      call(record.layout.target, "set_flexibleHeight", 0);
+      const currentHeight = Number(area.field("m_Height").value), delta = uiXY(call(rect, "get_sizeDelta"));
+      call(rect, "set_sizeDelta", vec2(delta.x, delta.y + height - currentHeight));
+      record.height = height;
+      record.width = width;
+    }
+    chatFitTextBox(record);
+  }
+  let armChatSizes = (_on) => {
+  };
+  function chatRefreshMessageSizes() {
+    for (const [key, record] of chatMessages) {
+      try {
+        if (unityAlive(record.row.target)) {
+          if (Boolean(call(call(record.row.target, "get_gameObject"), "get_activeInHierarchy"))) chatResizeMessage(record);
+          continue;
+        }
+      } catch (error) {
+        if (!record.warned) {
+          record.warned = true;
+          log(`chat UI: message layout failed: ${error}`);
+        }
+      }
+      for (const handle of [record.row, record.text, record.rect, record.layout, record.textRect]) handle.free();
+      chatMessages.delete(key);
+    }
+    armChatSizes(chatMessages.size > 0);
+  }
+  function renderChatMessage(row, message) {
+    if (!initializeEmojis()) return;
+    const legacy = row.field("_input").value;
+    if (isNull(legacy)) return;
+    const template = call(legacy, "get_textComponent");
+    if (isNull(template)) return;
+    const key = row.handle.toString();
+    let record = chatMessages.get(key);
+    if (!record) {
+      const rowGO = call(row, "get_gameObject"), rowRect = uiRect(rowGO);
+      const go = uiNew("RebornEmojiMessage", call(rowGO, "get_transform")), rect = uiRect(go);
+      call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+      const text = uiText(go, "", 22);
+      const autoContainer = text.tryMethod("set_autoSizeTextContainer", 1);
+      let containerConfigured = false;
+      if (autoContainer) {
+        try {
+          autoContainer.invoke(false);
+          containerConfigured = true;
+        } catch (_) {
+        }
+      }
+      if (!containerConfigured) {
+        try {
+          text.field("m_autoSizeTextContainer").value = false;
+        } catch (_) {
+        }
+      }
+      call(text, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "TopLeft"));
+      call(text, "set_raycastTarget", true);
+      call(text, "set_enableWordWrapping", true);
+      call(text, "set_richText", true);
+      call(text, "set_spriteAsset", emojiAsset);
+      chatResetTextRect(rect);
+      let layout = uiComponent(rowGO, "UnityEngine.UI.LayoutElement");
+      if (isNull(layout)) layout = uiAdd(rowGO, "UnityEngine.UI.LayoutElement");
+      const parent = call(rowRect, "get_parent");
+      const group = uiComponent(call(parent, "get_gameObject"), "UnityEngine.UI.VerticalLayoutGroup");
+      if (!isNull(group)) {
+        call(group, "set_childControlHeight", true);
+        call(group, "set_childForceExpandHeight", false);
+        call(group, "set_childControlWidth", true);
+        call(group, "set_childForceExpandWidth", true);
+        call(group, "set_childAlignment", enumBox(ucls("UnityEngine.TextAnchor"), 0));
+      }
+      record = {
+        row: row.weakRef(false),
+        text: text.ref(false),
+        rect: rowRect.ref(false),
+        layout: layout.ref(false),
+        textRect: rect.ref(false),
+        width: -1,
+        height: -1,
+        value: "",
+        warned: false,
+        boxRepairs: 0
+      };
+      chatMessages.set(key, record);
+      armChatSizes(true);
+      if (chatMessages.size <= 2) schedule(500, () => chatLogMessageBounds(record));
+    }
+    const username = String(message.field("Username").value?.content || "");
+    const body = String(message.field("Text").value?.content || "");
+    const value = `${username ? `<b>${uiPlain(username)}</b>
+` : ""}${emojiFormat(body)}`;
+    if (record.value !== value) {
+      record.value = value;
+      record.width = -1;
+      record.height = -1;
+    }
+    call(record.text.target, "set_text", Il2Cpp.string(value));
+    chatResizeMessage(record);
+    call(legacy, "set_enabled", false);
+    call(template, "set_enabled", false);
+    if (chatMessageReports++ < 4) log(`chat UI: message fitted height=${record.height}; row-relative bounds`);
+  }
+  section("chat emoji rendering", () => {
+    const klass = cls(img, "ChatMessageEntry");
+    const method = klass.methods.find((m) => m.name === "SetData" && m.parameterCount >= 1 && !m.isStatic);
+    if (!method || method.parameters[0].type.class.isValueType) throw Error("ChatMessageEntry.SetData reference Message not found");
+    hookAttach(method.virtualAddress, {
+      onEnter(args) {
+        this.row = args[0];
+        this.message = args[1];
+      },
+      onLeave() {
+        try {
+          renderChatMessage(new Il2Cpp.Object(this.row), new Il2Cpp.Object(this.message));
+        } catch (error) {
+          log(`emoji: message rendering failed: ${error}`);
+        }
+      }
+    });
+  });
+  section("chat message layout refresh", () => {
+    const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
+    if (render && !render.virtualAddress.isNull()) {
+      armChatSizes = gatedHook(render.virtualAddress, "enter", chatRefreshMessageSizes, 200);
+      armChatSizes(chatMessages.size > 0);
+    } else {
+      const tick = () => {
+        chatRefreshMessageSizes();
+        schedule(100, tick, "chat message sizes");
+      };
+      schedule(100, tick, "chat message sizes");
+    }
+  });
+  const messagePreviews = /* @__PURE__ */ new Map();
+  let messagePreviewReports = 0;
+  function emojiPreviewFormat(source, richText) {
+    const normalized = String(source).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
+    if (!richText) return emojiFormat(normalized);
+    return normalized.split(/(<\/?(?:b|i|size|color)(?:=[^<>]*)?>)/gi).map((part) => /^<\/?(?:b|i|size|color)(?:=[^<>]*)?>$/i.test(part) ? part : emojiFormat(part)).join("");
+  }
+  function messagePreviewBounds(record) {
+    const rect = record.rect.target;
+    call(rect, "set_anchorMin", vec2(0, 0));
+    call(rect, "set_anchorMax", vec2(1, 1));
+    call(rect, "set_pivot", vec2(0.5, 0.5));
+    call(rect, "set_sizeDelta", vec2(0, 0));
+    call(rect, "set_anchoredPosition", vec2(0, 0));
+  }
+  function refreshMessagePreview(record) {
+    const template = record.template.target, label = record.label.target;
+    if (isNull(template) || isNull(label)) return false;
+    let source = String(call(template, "get_text")?.content || "");
+    if (!source) source = record.fallbackText;
+    const richText = Boolean(call(template, "get_supportRichText"));
+    if (source !== record.source || richText !== record.richText) {
+      call(label, "set_text", Il2Cpp.string(emojiPreviewFormat(source, richText)));
+      record.source = source;
+      record.richText = richText;
+    }
+    const fontSize = Number(call(template, "get_fontSize"));
+    if (fontSize > 0 && fontSize !== record.fontSize) {
+      call(label, "set_fontSize", fontSize);
+      record.fontSize = fontSize;
+    }
+    call(label, "set_color", call(template, "get_color"));
+    try {
+      const originalRenderer = call(template, "get_canvasRenderer"), renderer = call(label, "get_canvasRenderer");
+      call(renderer, "SetColor", call(originalRenderer, "GetColor"));
+    } catch (_) {
+    }
+    const parentArea = call(call(template, "get_rectTransform"), "get_rect");
+    const area = call(record.rect.target, "get_rect");
+    if (Math.abs(Number(area.field("m_Width").value) - Number(parentArea.field("m_Width").value)) > 0.5 || Math.abs(Number(area.field("m_Height").value) - Number(parentArea.field("m_Height").value)) > 0.5) messagePreviewBounds(record);
+    call(template, "set_enabled", false);
+    return true;
+  }
+  function dropMessagePreview(key, record) {
+    try {
+      if (!isNull(record.template.target)) call(record.template.target, "set_enabled", true);
+    } catch (_) {
+    }
+    try {
+      if (!isNull(record.label.target)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(record.label.target, "get_gameObject"));
+    } catch (_) {
+    }
+    for (const handle of [record.row, record.template, record.label, record.rect]) handle.free();
+    messagePreviews.delete(key);
+  }
+  function renderMessagePreview(row, message) {
+    if (!emojiAsset) {
+      try {
+        if (isNull(ucls("UnityEngine.Shader").method("Find", 1).invoke(Il2Cpp.string("TextMeshPro/Sprite")))) return;
+      } catch (_) {
+        return;
+      }
+    }
+    if (!initializeEmojis()) return;
+    const template = row.field("_text").value;
+    if (isNull(template)) return;
+    const key = row.handle.toString();
+    let record = messagePreviews.get(key);
+    if (record && (isNull(record.template.target) || record.template.target.handle.toString() !== template.handle.toString())) {
+      dropMessagePreview(key, record);
+      record = null;
+    }
+    if (!record) {
+      let go = null;
+      try {
+        go = uiNew("PreviewRichText", call(template, "get_transform"));
         call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-        const text = uiText(go, "", 22);
-        const autoContainer = text.tryMethod("set_autoSizeTextContainer", 1);
-        let containerConfigured = false;
+        const label = uiText(go, "", 22);
+        const autoContainer = label.tryMethod("set_autoSizeTextContainer", 1);
+        let configured = false;
         if (autoContainer) {
           try {
             autoContainer.invoke(false);
-            containerConfigured = true;
+            configured = true;
           } catch (_) {
           }
         }
-        if (!containerConfigured) {
+        if (!configured) {
           try {
-            text.field("m_autoSizeTextContainer").value = false;
+            label.field("m_autoSizeTextContainer").value = false;
           } catch (_) {
           }
         }
-        call(text, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "TopLeft"));
-        call(text, "set_raycastTarget", true);
-        call(text, "set_enableWordWrapping", true);
-        call(text, "set_richText", true);
-        call(text, "set_spriteAsset", emojiAsset);
-        chatResetTextRect(rect);
-        let layout = uiComponent(rowGO, "UnityEngine.UI.LayoutElement");
-        if (isNull(layout)) layout = uiAdd(rowGO, "UnityEngine.UI.LayoutElement");
-        const parent = call(rowRect, "get_parent");
-        const group = uiComponent(call(parent, "get_gameObject"), "UnityEngine.UI.VerticalLayoutGroup");
-        if (!isNull(group)) {
-          call(group, "set_childControlHeight", true);
-          call(group, "set_childForceExpandHeight", false);
-          call(group, "set_childControlWidth", true);
-          call(group, "set_childForceExpandWidth", true);
-          call(group, "set_childAlignment", enumBox(ucls("UnityEngine.TextAnchor"), 0));
-        }
+        call(label, "set_richText", true);
+        call(label, "set_raycastTarget", true);
+        call(label, "set_enableWordWrapping", enumVal(call(template, "get_horizontalOverflow")) === 0);
+        const alignments = ["TopLeft", "Top", "TopRight", "Left", "Center", "Right", "BottomLeft", "Bottom", "BottomRight"];
+        const alignment = enumVal(call(template, "get_alignment"));
+        call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", alignments[alignment] || "TopLeft"));
+        const overflow = label.method("set_overflowMode", 1);
+        overflow.invoke(enumBox(overflow.parameters[0].type.class, 3));
+        call(label, "set_spriteAsset", emojiAsset);
         record = {
           row: row.weakRef(false),
-          text: text.ref(false),
-          rect: rowRect.ref(false),
-          layout: layout.ref(false),
-          textRect: rect.ref(false),
-          width: -1,
-          height: -1,
-          value: "",
-          warned: false,
-          boxRepairs: 0
+          template: template.weakRef(false),
+          label: label.ref(false),
+          rect: uiRect(go).ref(false),
+          fallbackText: "",
+          source: null,
+          richText: null,
+          fontSize: null
         };
-        chatMessages.set(key, record);
-        armChatSizes(true);
-        if (chatMessages.size <= 2) schedule(500, () => chatLogMessageBounds(record));
+        messagePreviewBounds(record);
+        messagePreviews.set(key, record);
+        armPreviews(true);
+      } catch (error) {
+        if (go) {
+          try {
+            ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go);
+          } catch (_) {
+          }
+        }
+        throw error;
       }
-      const username = String(message.field("Username").value?.content || "");
-      const body = String(message.field("Text").value?.content || "");
-      const value = `${username ? `<b>${uiPlain(username)}</b>
-` : ""}${emojiFormat(body)}`;
-      if (record.value !== value) {
-        record.value = value;
-        record.width = -1;
-        record.height = -1;
-      }
-      call(record.text.target, "set_text", Il2Cpp.string(value));
-      chatResizeMessage(record);
-      call(legacy, "set_enabled", false);
-      call(template, "set_enabled", false);
-      if (chatMessageReports++ < 4) log(`chat UI: message fitted height=${record.height}; row-relative bounds`);
     }
-    section("chat emoji rendering", () => {
-      const klass = cls(img, "ChatMessageEntry");
-      const method = klass.methods.find((m) => m.name === "SetData" && m.parameterCount >= 1 && !m.isStatic);
-      if (!method || method.parameters[0].type.class.isValueType) throw Error("ChatMessageEntry.SetData reference Message not found");
+    const username = String(message.field("Username").value?.content || "");
+    const body = String(message.field("Text").value?.content || "");
+    record.fallbackText = `${username ? `${username}: ` : ""}${body}`;
+    refreshMessagePreview(record);
+    if (messagePreviewReports++ < 4) log("emoji preview: rendered with shared chat sprite atlas");
+  }
+  let armPreviews = (_on) => {
+  };
+  function refreshMessagePreviews() {
+    for (const [key, record] of messagePreviews) {
+      try {
+        if (unityAlive(record.row.target) && unityAlive(record.template.target)) {
+          if (Boolean(call(call(record.template.target, "get_gameObject"), "get_activeInHierarchy"))) refreshMessagePreview(record);
+          continue;
+        }
+      } catch (error) {
+        try {
+          if (!isNull(record.template.target)) call(record.template.target, "set_enabled", true);
+        } catch (_) {
+        }
+        log(`emoji preview: refresh failed: ${error}`);
+      }
+      dropMessagePreview(key, record);
+    }
+    armPreviews(messagePreviews.size > 0);
+  }
+  section("message preview emoji rendering", () => {
+    const klass = cls(img, "MessagePreviewEntry");
+    const methods = klass.methods.filter((m) => m.name === "SetData" && !m.isStatic && m.parameterCount >= 1 && m.parameters[0].type.class.name === "Message" && !m.parameters[0].type.class.isValueType && !m.virtualAddress.isNull());
+    if (!methods.length) throw Error("MessagePreviewEntry.SetData(Message, ...) not found");
+    const seen = /* @__PURE__ */ new Set();
+    for (const method of methods) {
+      const address = method.virtualAddress.toString();
+      if (seen.has(address)) continue;
+      seen.add(address);
       hookAttach(method.virtualAddress, {
         onEnter(args) {
           this.row = args[0];
@@ -10218,1798 +10357,1610 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         },
         onLeave() {
           try {
-            renderChatMessage(new Il2Cpp.Object(this.row), new Il2Cpp.Object(this.message));
+            renderMessagePreview(new Il2Cpp.Object(this.row), new Il2Cpp.Object(this.message));
           } catch (error) {
-            log(`emoji: message rendering failed: ${error}`);
+            log(`emoji preview: rendering failed: ${error}`);
           }
         }
       });
-    });
-    section("chat message layout refresh", () => {
-      const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-      if (render && !render.virtualAddress.isNull()) {
-        armChatSizes = gatedHook(render.virtualAddress, "enter", chatRefreshMessageSizes, 200);
-        armChatSizes(chatMessages.size > 0);
-      } else {
-        const tick = () => {
-          chatRefreshMessageSizes();
-          schedule(100, tick, "chat message sizes");
-        };
-        schedule(100, tick, "chat message sizes");
-      }
-    });
-    const messagePreviews = /* @__PURE__ */ new Map();
-    let messagePreviewReports = 0;
-    function emojiPreviewFormat(source, richText) {
-      const normalized = String(source).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
-      if (!richText) return emojiFormat(normalized);
-      return normalized.split(/(<\/?(?:b|i|size|color)(?:=[^<>]*)?>)/gi).map((part) => /^<\/?(?:b|i|size|color)(?:=[^<>]*)?>$/i.test(part) ? part : emojiFormat(part)).join("");
     }
-    function messagePreviewBounds(record) {
-      const rect = record.rect.target;
-      call(rect, "set_anchorMin", vec2(0, 0));
-      call(rect, "set_anchorMax", vec2(1, 1));
-      call(rect, "set_pivot", vec2(0.5, 0.5));
-      call(rect, "set_sizeDelta", vec2(0, 0));
-      call(rect, "set_anchoredPosition", vec2(0, 0));
-    }
-    function refreshMessagePreview(record) {
-      const template = record.template.target, label = record.label.target;
-      if (isNull(template) || isNull(label)) return false;
-      let source = String(call(template, "get_text")?.content || "");
-      if (!source) source = record.fallbackText;
-      const richText = Boolean(call(template, "get_supportRichText"));
-      if (source !== record.source || richText !== record.richText) {
-        call(label, "set_text", Il2Cpp.string(emojiPreviewFormat(source, richText)));
-        record.source = source;
-        record.richText = richText;
-      }
-      const fontSize = Number(call(template, "get_fontSize"));
-      if (fontSize > 0 && fontSize !== record.fontSize) {
-        call(label, "set_fontSize", fontSize);
-        record.fontSize = fontSize;
-      }
-      call(label, "set_color", call(template, "get_color"));
-      try {
-        const originalRenderer = call(template, "get_canvasRenderer"), renderer = call(label, "get_canvasRenderer");
-        call(renderer, "SetColor", call(originalRenderer, "GetColor"));
-      } catch (_) {
-      }
-      const parentArea = call(call(template, "get_rectTransform"), "get_rect");
-      const area = call(record.rect.target, "get_rect");
-      if (Math.abs(Number(area.field("m_Width").value) - Number(parentArea.field("m_Width").value)) > 0.5 || Math.abs(Number(area.field("m_Height").value) - Number(parentArea.field("m_Height").value)) > 0.5) messagePreviewBounds(record);
-      call(template, "set_enabled", false);
-      return true;
-    }
-    function dropMessagePreview(key, record) {
-      try {
-        if (!isNull(record.template.target)) call(record.template.target, "set_enabled", true);
-      } catch (_) {
-      }
-      try {
-        if (!isNull(record.label.target)) ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(call(record.label.target, "get_gameObject"));
-      } catch (_) {
-      }
-      for (const handle of [record.row, record.template, record.label, record.rect]) handle.free();
-      messagePreviews.delete(key);
-    }
-    function renderMessagePreview(row, message) {
-      if (!emojiAsset) {
-        try {
-          if (isNull(ucls("UnityEngine.Shader").method("Find", 1).invoke(Il2Cpp.string("TextMeshPro/Sprite")))) return;
-        } catch (_) {
-          return;
-        }
-      }
-      if (!initializeEmojis()) return;
-      const template = row.field("_text").value;
-      if (isNull(template)) return;
-      const key = row.handle.toString();
-      let record = messagePreviews.get(key);
-      if (record && (isNull(record.template.target) || record.template.target.handle.toString() !== template.handle.toString())) {
-        dropMessagePreview(key, record);
-        record = null;
-      }
-      if (!record) {
-        let go = null;
-        try {
-          go = uiNew("PreviewRichText", call(template, "get_transform"));
-          call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-          const label = uiText(go, "", 22);
-          const autoContainer = label.tryMethod("set_autoSizeTextContainer", 1);
-          let configured = false;
-          if (autoContainer) {
-            try {
-              autoContainer.invoke(false);
-              configured = true;
-            } catch (_) {
-            }
-          }
-          if (!configured) {
-            try {
-              label.field("m_autoSizeTextContainer").value = false;
-            } catch (_) {
-            }
-          }
-          call(label, "set_richText", true);
-          call(label, "set_raycastTarget", true);
-          call(label, "set_enableWordWrapping", enumVal(call(template, "get_horizontalOverflow")) === 0);
-          const alignments = ["TopLeft", "Top", "TopRight", "Left", "Center", "Right", "BottomLeft", "Bottom", "BottomRight"];
-          const alignment = enumVal(call(template, "get_alignment"));
-          call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", alignments[alignment] || "TopLeft"));
-          const overflow = label.method("set_overflowMode", 1);
-          overflow.invoke(enumBox(overflow.parameters[0].type.class, 3));
-          call(label, "set_spriteAsset", emojiAsset);
-          record = {
-            row: row.weakRef(false),
-            template: template.weakRef(false),
-            label: label.ref(false),
-            rect: uiRect(go).ref(false),
-            fallbackText: "",
-            source: null,
-            richText: null,
-            fontSize: null
-          };
-          messagePreviewBounds(record);
-          messagePreviews.set(key, record);
-          armPreviews(true);
-        } catch (error) {
-          if (go) {
-            try {
-              ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(go);
-            } catch (_) {
-            }
-          }
-          throw error;
-        }
-      }
-      const username = String(message.field("Username").value?.content || "");
-      const body = String(message.field("Text").value?.content || "");
-      record.fallbackText = `${username ? `${username}: ` : ""}${body}`;
-      refreshMessagePreview(record);
-      if (messagePreviewReports++ < 4) log("emoji preview: rendered with shared chat sprite atlas");
-    }
-    let armPreviews = (_on) => {
-    };
-    function refreshMessagePreviews() {
-      for (const [key, record] of messagePreviews) {
-        try {
-          if (unityAlive(record.row.target) && unityAlive(record.template.target)) {
-            if (Boolean(call(call(record.template.target, "get_gameObject"), "get_activeInHierarchy"))) refreshMessagePreview(record);
-            continue;
-          }
-        } catch (error) {
-          try {
-            if (!isNull(record.template.target)) call(record.template.target, "set_enabled", true);
-          } catch (_) {
-          }
-          log(`emoji preview: refresh failed: ${error}`);
-        }
-        dropMessagePreview(key, record);
-      }
+    const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
+    if (render && !render.virtualAddress.isNull()) {
+      armPreviews = gatedHook(render.virtualAddress, "enter", refreshMessagePreviews);
       armPreviews(messagePreviews.size > 0);
-    }
-    section("message preview emoji rendering", () => {
-      const klass = cls(img, "MessagePreviewEntry");
-      const methods = klass.methods.filter((m) => m.name === "SetData" && !m.isStatic && m.parameterCount >= 1 && m.parameters[0].type.class.name === "Message" && !m.parameters[0].type.class.isValueType && !m.virtualAddress.isNull());
-      if (!methods.length) throw Error("MessagePreviewEntry.SetData(Message, ...) not found");
-      const seen = /* @__PURE__ */ new Set();
-      for (const method of methods) {
-        const address = method.virtualAddress.toString();
-        if (seen.has(address)) continue;
-        seen.add(address);
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            this.row = args[0];
-            this.message = args[1];
-          },
-          onLeave() {
-            try {
-              renderMessagePreview(new Il2Cpp.Object(this.row), new Il2Cpp.Object(this.message));
-            } catch (error) {
-              log(`emoji preview: rendering failed: ${error}`);
-            }
-          }
-        });
-      }
-      const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-      if (render && !render.virtualAddress.isNull()) {
-        armPreviews = gatedHook(render.virtualAddress, "enter", refreshMessagePreviews);
-        armPreviews(messagePreviews.size > 0);
-      } else {
-        const tick = () => {
-          refreshMessagePreviews();
-          schedule(100, tick, "message previews");
-        };
+    } else {
+      const tick = () => {
+        refreshMessagePreviews();
         schedule(100, tick, "message previews");
-      }
-      log(`emoji preview: hooks installed callbacks=${seen.size}`);
-    });
-    function chatScaleApply(record) {
-      if (!record.baseScale || !Number.isFinite(record.factor)) return;
-      const rect = record.rect.target, current = call(rect, "get_localScale"), base = record.baseScale;
-      const x = base.x * record.factor, y = base.y * record.factor;
-      if (Math.abs(Number(current.field("x").value) - x) > 1e-3 || Math.abs(Number(current.field("y").value) - y) > 1e-3)
-        call(rect, "set_localScale", unityStruct("UnityEngine.Vector3", { x, y, z: base.z }));
-    }
-    function chatScaleSetup(record) {
-      const rect = record.rect.target, scale = call(rect, "get_localScale");
-      record.baseScale = {
-        x: Number(scale.field("x").value) || 1,
-        y: Number(scale.field("y").value) || 1,
-        z: Number(scale.field("z").value) || 1
       };
-      const area = call(rect, "get_rect"), screen = chatScreen();
-      const canvasScale = Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
-      record.maxFactor = Math.max(0.45, Math.min(
-        1.8,
-        (screen.width / canvasScale - 24) / Math.max(1, Number(area.field("m_Width").value) * Math.abs(record.baseScale.x)),
-        (screen.height / canvasScale - 24) / Math.max(1, Number(area.field("m_Height").value) * Math.abs(record.baseScale.y))
-      ));
-      record.factor = Math.min(1, record.maxFactor);
-      try {
-        const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-scale.json`) || "null");
-        if (saved && Number.isFinite(saved.factor)) record.factor = Math.max(0.45, Math.min(record.maxFactor, saved.factor));
-      } catch (_) {
-      }
-      record.scaleEnabled = true;
-      chatScaleApply(record);
-      log(`chat UI: scale enabled range=0.45..${record.maxFactor.toFixed(2)}; pinch only`);
+      schedule(100, tick, "message previews");
     }
-    function chatScaleSet(record, factor) {
-      record.factor = Math.max(0.45, Math.min(record.maxFactor, factor));
-      chatScaleApply(record);
+    log(`emoji preview: hooks installed callbacks=${seen.size}`);
+  });
+  function chatScaleApply(record) {
+    if (!record.baseScale || !Number.isFinite(record.factor)) return;
+    const rect = record.rect.target, current = call(rect, "get_localScale"), base = record.baseScale;
+    const x = base.x * record.factor, y = base.y * record.factor;
+    if (Math.abs(Number(current.field("x").value) - x) > 1e-3 || Math.abs(Number(current.field("y").value) - y) > 1e-3)
+      call(rect, "set_localScale", unityStruct("UnityEngine.Vector3", { x, y, z: base.z }));
+  }
+  function chatScaleSetup(record) {
+    const rect = record.rect.target, scale = call(rect, "get_localScale");
+    record.baseScale = {
+      x: Number(scale.field("x").value) || 1,
+      y: Number(scale.field("y").value) || 1,
+      z: Number(scale.field("z").value) || 1
+    };
+    const area = call(rect, "get_rect"), screen = chatScreen();
+    const canvasScale = Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
+    record.maxFactor = Math.max(0.45, Math.min(
+      1.8,
+      (screen.width / canvasScale - 24) / Math.max(1, Number(area.field("m_Width").value) * Math.abs(record.baseScale.x)),
+      (screen.height / canvasScale - 24) / Math.max(1, Number(area.field("m_Height").value) * Math.abs(record.baseScale.y))
+    ));
+    record.factor = Math.min(1, record.maxFactor);
+    try {
+      const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-scale.json`) || "null");
+      if (saved && Number.isFinite(saved.factor)) record.factor = Math.max(0.45, Math.min(record.maxFactor, saved.factor));
+    } catch (_) {
     }
-    function chatScaleSave(record) {
-      writeTextFile(`${persistentPath()}/tesl-reborn-chat-scale.json`, JSON.stringify({ factor: record.factor }));
-      log(`chat UI: scale saved factor=${record.factor.toFixed(2)}`);
+    record.scaleEnabled = true;
+    chatScaleApply(record);
+    log(`chat UI: scale enabled range=0.45..${record.maxFactor.toFixed(2)}; pinch only`);
+  }
+  function chatScaleSet(record, factor) {
+    record.factor = Math.max(0.45, Math.min(record.maxFactor, factor));
+    chatScaleApply(record);
+  }
+  function chatScaleSave(record) {
+    writeTextFile(`${persistentPath()}/tesl-reborn-chat-scale.json`, JSON.stringify({ factor: record.factor }));
+    log(`chat UI: scale saved factor=${record.factor.toFixed(2)}`);
+  }
+  let chatInputMethods = null;
+  function chatInput() {
+    if (!chatInputMethods) {
+      const input = ucls("UnityEngine.Input");
+      chatInputMethods = { touchCount: input.method("get_touchCount", 0), getTouch: input.method("GetTouch", 1) };
     }
-    let chatInputMethods = null;
-    function chatInput() {
-      if (!chatInputMethods) {
-        const input = ucls("UnityEngine.Input");
-        chatInputMethods = { touchCount: input.method("get_touchCount", 0), getTouch: input.method("GetTouch", 1) };
-      }
-      return chatInputMethods;
-    }
-    function chatScaleUpdate(record, count) {
-      if (!record.scaleEnabled) return false;
-      const input = chatInput();
-      if (count === void 0) count = Number(input.touchCount.invoke());
-      if (count >= 2) {
-        const camera = call(record.canvas.target, "get_worldCamera");
-        const a = input.getTouch.invoke(0), b = input.getTouch.invoke(1);
-        const ap = uiXY(a.method("get_position", 0).invoke()), bp = uiXY(b.method("get_position", 0).invoke());
-        const phases = [a, b].map((t) => enumVal(t.method("get_phase", 0).invoke()));
-        if (phases.some((p) => p === 3 || p === 4)) {
-          if (record.pinch) {
-            record.pinch = null;
-            chatScaleSave(record);
-          }
-          return true;
+    return chatInputMethods;
+  }
+  function chatScaleUpdate(record, count) {
+    if (!record.scaleEnabled) return false;
+    const input = chatInput();
+    if (count === void 0) count = Number(input.touchCount.invoke());
+    if (count >= 2) {
+      const camera = call(record.canvas.target, "get_worldCamera");
+      const a = input.getTouch.invoke(0), b = input.getTouch.invoke(1);
+      const ap = uiXY(a.method("get_position", 0).invoke()), bp = uiXY(b.method("get_position", 0).invoke());
+      const phases = [a, b].map((t) => enumVal(t.method("get_phase", 0).invoke()));
+      if (phases.some((p) => p === 3 || p === 4)) {
+        if (record.pinch) {
+          record.pinch = null;
+          chatScaleSave(record);
         }
-        if (!record.pinch) {
-          if (!chatContains(record.rect.target, ap, camera) || !chatContains(record.rect.target, bp, camera)) return false;
-          record.pinch = { distance: Math.max(1, Math.hypot(ap.x - bp.x, ap.y - bp.y)), factor: record.factor };
-          record.dragging = false;
-          record.armed = false;
-        }
-        chatScaleSet(record, record.pinch.factor * Math.hypot(ap.x - bp.x, ap.y - bp.y) / record.pinch.distance);
         return true;
       }
-      if (record.pinch) {
-        record.pinch = null;
-        chatScaleSave(record);
-        return true;
+      if (!record.pinch) {
+        if (!chatContains(record.rect.target, ap, camera) || !chatContains(record.rect.target, bp, camera)) return false;
+        record.pinch = { distance: Math.max(1, Math.hypot(ap.x - bp.x, ap.y - bp.y)), factor: record.factor };
+        record.dragging = false;
+        record.armed = false;
       }
-      return false;
-    }
-    const chatWindows = /* @__PURE__ */ new Map();
-    const chatSetupDiagnosed = /* @__PURE__ */ new Set();
-    function chatInputInsert(record, name) {
-      const input = record.input.target;
-      const text = String(call(input, "get_text")?.content || "");
-      const index = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
-      const insertion = `:${name}: `;
-      call(input, "set_text", Il2Cpp.string(text.slice(0, index) + insertion + text.slice(index)));
-      record.caret = index + insertion.length;
-      const caret = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
-      if (caret) caret.invoke(record.caret);
-      call(input, "ActivateInputField");
-    }
-    function chatBuildPicker(record) {
-      if (record.picker) return true;
-      if (!initializeEmojis()) return false;
-      const go = uiNew("RebornEmojiPicker", record.window.target);
-      uiPlace(go, 1, 0, 1, 0, -16, 84, 284, 250);
-      call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-      const bg = uiAdd(go, "UnityEngine.UI.Image");
-      call(bg, "set_color", rgba(0.08, 0.08, 0.08, 0.98));
-      const root = call(go, "get_transform");
-      record.picker = go.ref(false);
-      record.page = 0;
-      record.cells = [];
-      for (let i = 0; i < 48; i++) {
-        const cell = uiNew(`Emoji${i}`, root);
-        uiPlace(cell, 0, 1, 0, 1, 6 + i % 8 * 34, -6 - Math.floor(i / 8) * 34, 30, 30);
-        const icon = uiAdd(cell, "UnityEngine.UI.RawImage");
-        call(icon, "set_texture", emojiTexture);
-        uiButton(cell, icon, () => {
-          const entry = emojiDefinitions[record.page * 48 + i];
-          if (!entry) return;
-          chatInputInsert(record, entry.Name);
-          call(record.picker.target, "SetActive", false);
-        });
-        record.cells.push({ object: cell.ref(false), image: icon.ref(false) });
-      }
-      uiLabeledButton("Previous", root, "<", -196, -216, 68, () => chatPickerPage(record, -1));
-      uiLabeledButton("Next", root, ">", -112, -216, 68, () => chatPickerPage(record, 1));
-      uiLabeledButton("Close", root, "X", -8, -216, 68, () => call(record.picker.target, "SetActive", false));
-      chatPickerPage(record, 0);
-      call(go, "SetActive", false);
+      chatScaleSet(record, record.pinch.factor * Math.hypot(ap.x - bp.x, ap.y - bp.y) / record.pinch.distance);
       return true;
     }
-    function chatPickerPage(record, delta) {
-      const pages = Math.ceil(emojiDefinitions.length / 48);
-      record.page = (record.page + delta + pages) % pages;
-      for (let i = 0; i < record.cells.length; i++) {
-        const entry = emojiDefinitions[record.page * 48 + i], cell = record.cells[i];
-        call(cell.object.target, "SetActive", !!entry);
-        if (!entry) continue;
-        call(cell.image.target, "set_uvRect", unityStruct("UnityEngine.Rect", {
-          m_XMin: entry.u,
-          m_YMin: entry.v,
-          m_Width: entry.du,
-          m_Height: entry.dv
+    if (record.pinch) {
+      record.pinch = null;
+      chatScaleSave(record);
+      return true;
+    }
+    return false;
+  }
+  const chatWindows = /* @__PURE__ */ new Map();
+  const chatSetupDiagnosed = /* @__PURE__ */ new Set();
+  function chatInputInsert(record, name) {
+    const input = record.input.target;
+    const text = String(call(input, "get_text")?.content || "");
+    const index = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
+    const insertion = `:${name}: `;
+    call(input, "set_text", Il2Cpp.string(text.slice(0, index) + insertion + text.slice(index)));
+    record.caret = index + insertion.length;
+    const caret = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
+    if (caret) caret.invoke(record.caret);
+    call(input, "ActivateInputField");
+  }
+  function chatBuildPicker(record) {
+    if (record.picker) return true;
+    if (!initializeEmojis()) return false;
+    const go = uiNew("RebornEmojiPicker", record.window.target);
+    uiPlace(go, 1, 0, 1, 0, -16, 84, 284, 250);
+    call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+    const bg = uiAdd(go, "UnityEngine.UI.Image");
+    call(bg, "set_color", rgba(0.08, 0.08, 0.08, 0.98));
+    const root = call(go, "get_transform");
+    record.picker = go.ref(false);
+    record.page = 0;
+    record.cells = [];
+    for (let i = 0; i < 48; i++) {
+      const cell = uiNew(`Emoji${i}`, root);
+      uiPlace(cell, 0, 1, 0, 1, 6 + i % 8 * 34, -6 - Math.floor(i / 8) * 34, 30, 30);
+      const icon = uiAdd(cell, "UnityEngine.UI.RawImage");
+      call(icon, "set_texture", emojiTexture);
+      uiButton(cell, icon, () => {
+        const entry = emojiDefinitions[record.page * 48 + i];
+        if (!entry) return;
+        chatInputInsert(record, entry.Name);
+        call(record.picker.target, "SetActive", false);
+      });
+      record.cells.push({ object: cell.ref(false), image: icon.ref(false) });
+    }
+    uiLabeledButton("Previous", root, "<", -196, -216, 68, () => chatPickerPage(record, -1));
+    uiLabeledButton("Next", root, ">", -112, -216, 68, () => chatPickerPage(record, 1));
+    uiLabeledButton("Close", root, "X", -8, -216, 68, () => call(record.picker.target, "SetActive", false));
+    chatPickerPage(record, 0);
+    call(go, "SetActive", false);
+    return true;
+  }
+  function chatPickerPage(record, delta) {
+    const pages = Math.ceil(emojiDefinitions.length / 48);
+    record.page = (record.page + delta + pages) % pages;
+    for (let i = 0; i < record.cells.length; i++) {
+      const entry = emojiDefinitions[record.page * 48 + i], cell = record.cells[i];
+      call(cell.object.target, "SetActive", !!entry);
+      if (!entry) continue;
+      call(cell.image.target, "set_uvRect", unityStruct("UnityEngine.Rect", {
+        m_XMin: entry.u,
+        m_YMin: entry.v,
+        m_Width: entry.du,
+        m_Height: entry.dv
+      }));
+    }
+    log(`emoji: picker page ${record.page + 1}/${pages}`);
+  }
+  function chatFind(root, path) {
+    const value = call(root, "Find", Il2Cpp.string(path));
+    if (isNull(value)) throw Error(`Chat UI path missing: ${path}`);
+    return value;
+  }
+  function chatSetup(self) {
+    const key = self.handle.toString();
+    const kept = chatWindows.get(key);
+    if (kept) {
+      if (unityAlive(kept.window.target) && unityAlive(kept.input.target)) return;
+      chatWindows.delete(key);
+      for (const name of ["window", "rect", "input", "canvas", "controls", "handle"]) try {
+        kept[name]?.free();
+      } catch (_) {
+      }
+    }
+    let controls = null, pickerCreated = null, createdRecord = null;
+    try {
+      const root = call(self, "get_transform"), window = chatFind(root, "Window");
+      const inputTransform = chatFind(root, "Window/Section_BottomSmallChat/Input_Message");
+      const inputGO = call(inputTransform, "get_gameObject");
+      let input = uiComponent(inputGO, "TMPro.TMP_InputField");
+      if (isNull(input)) input = uiComponent(inputGO, "UnityEngine.UI.InputField");
+      if (isNull(input)) throw Error("Chat input component not found");
+      const canvas = window.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+      if (isNull(canvas)) throw Error("Chat canvas not found");
+      const windowGO = call(window, "get_gameObject"), rect = uiRect(windowGO);
+      const header = call(root, "Find", Il2Cpp.string("Window/Section_TopBigChat/Section_PlayerInfo"));
+      let handle;
+      if (!isNull(header)) handle = uiRect(call(header, "get_gameObject"));
+      else {
+        controls = uiNew("RebornChatControls", window);
+        uiPlace(controls, 0.5, 1, 0.5, 1, 0, -3, 70, 28);
+        call(uiAdd(controls, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+        handle = uiRect(uiLabeledButton("MoveChat", call(controls, "get_transform"), "Move", 0, 0, 70, () => {
         }));
       }
-      log(`emoji: picker page ${record.page + 1}/${pages}`);
-    }
-    function chatFind(root, path) {
-      const value = call(root, "Find", Il2Cpp.string(path));
-      if (isNull(value)) throw Error(`Chat UI path missing: ${path}`);
-      return value;
-    }
-    function chatSetup(self) {
-      const key = self.handle.toString();
-      const kept = chatWindows.get(key);
-      if (kept) {
-        if (unityAlive(kept.window.target) && unityAlive(kept.input.target)) return;
-        chatWindows.delete(key);
-        for (const name of ["window", "rect", "input", "canvas", "controls", "handle"]) try {
-          kept[name]?.free();
-        } catch (_) {
-        }
-      }
-      let controls = null, pickerCreated = null, createdRecord = null;
-      try {
-        const root = call(self, "get_transform"), window = chatFind(root, "Window");
-        const inputTransform = chatFind(root, "Window/Section_BottomSmallChat/Input_Message");
-        const inputGO = call(inputTransform, "get_gameObject");
-        let input = uiComponent(inputGO, "TMPro.TMP_InputField");
-        if (isNull(input)) input = uiComponent(inputGO, "UnityEngine.UI.InputField");
-        if (isNull(input)) throw Error("Chat input component not found");
-        const canvas = window.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
-        if (isNull(canvas)) throw Error("Chat canvas not found");
-        const windowGO = call(window, "get_gameObject"), rect = uiRect(windowGO);
-        const header = call(root, "Find", Il2Cpp.string("Window/Section_TopBigChat/Section_PlayerInfo"));
-        let handle;
-        if (!isNull(header)) handle = uiRect(call(header, "get_gameObject"));
-        else {
-          controls = uiNew("RebornChatControls", window);
-          uiPlace(controls, 0.5, 1, 0.5, 1, 0, -3, 70, 28);
-          call(uiAdd(controls, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-          handle = uiRect(uiLabeledButton("MoveChat", call(controls, "get_transform"), "Move", 0, 0, 70, () => {
-          }));
-        }
-        const record = {
-          self: self.weakRef(false),
-          window: window.ref(false),
-          rect: rect.ref(false),
-          input: input.ref(false),
-          canvas: canvas.ref(false),
-          controls: (controls || windowGO).ref(false),
-          dragging: false,
-          caret: null,
-          errors: 0,
-          picker: null,
-          desired: null,
-          handle: handle.ref(false)
-        };
-        createdRecord = record;
-        const picker = uiNew("EmojiPickerButton", inputTransform);
-        pickerCreated = picker;
-        uiPlace(picker, 1, 1, 1, 0, -16, -63, 46, 46);
-        call(uiAdd(picker, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-        const hit = uiAdd(picker, "UnityEngine.UI.Image");
-        call(hit, "set_color", rgba(1, 1, 1, 0));
-        const labelGO = uiNew("Label", call(picker, "get_transform"));
-        uiStretch(uiRect(labelGO));
-        const label = uiText(labelGO, "", 30);
-        if (initializeEmojis()) {
-          call(label, "set_spriteAsset", emojiAsset);
-          call(label, "set_richText", true);
-          call(label, "set_text", Il2Cpp.string("<sprite=8>"));
-        } else call(label, "set_text", Il2Cpp.string(":)"));
-        const pickerButton = uiButton(picker, hit, () => {
-          if (!chatBuildPicker(record)) return;
-          const panel = record.picker.target;
-          call(panel, "SetActive", !Boolean(call(panel, "get_activeSelf")));
-          if (Boolean(call(panel, "get_activeSelf"))) call(call(panel, "get_transform"), "SetAsLastSibling");
-        });
-        const transition = pickerButton.tryMethod("set_transition", 1);
-        if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
-        record.pickerButton = uiRect(picker).ref(false);
-        try {
-          const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`) || "null");
-          const screen = chatScreen();
-          if (saved && saved.width === screen.width && saved.height === screen.height && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-            record.desired = { x: saved.x, y: saved.y };
-            call(rect, "set_anchoredPosition", vec2(saved.x, saved.y));
-          }
-        } catch (_) {
-        }
-        chatWindows.set(key, record);
-        try {
-          chatPrepareViewport(self);
-        } catch (error) {
-          log(`chat UI: viewport preparation failed: ${error}`);
-        }
-        try {
-          chatScaleSetup(record);
-        } catch (error) {
-          log(`chat UI: scale setup failed: ${error}`);
-        }
-        log(`chat UI: drag=${controls ? "Move fallback" : "player header"}; PC smiley installed`);
-      } catch (error) {
-        for (const object of [controls, pickerCreated]) if (object) {
-          try {
-            ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(object);
-          } catch (_) {
-          }
-        }
-        if (createdRecord) for (const value of Object.values(createdRecord)) {
-          if (value && typeof value.free === "function") {
-            try {
-              value.free();
-            } catch (_) {
-            }
-          }
-        }
-        log(`chat UI: setup failed: ${error}`);
-        if (!chatSetupDiagnosed.has(key)) {
-          chatSetupDiagnosed.add(key);
-          try {
-            uiLogTree(call(self, "get_transform"), "chat UI paths");
-          } catch (_) {
-          }
-        }
-      }
-    }
-    function chatContains(rect, point, camera) {
-      return Boolean(ucls("UnityEngine.RectTransformUtility").method("RectangleContainsScreenPoint").overload("UnityEngine.RectTransform", "UnityEngine.Vector2", "UnityEngine.Camera").invoke(rect, vec2(point.x, point.y), camera));
-    }
-    function chatScreen() {
-      const screen = ucls("UnityEngine.Screen");
-      return { width: Number(screen.method("get_width", 0).invoke()), height: Number(screen.method("get_height", 0).invoke()) };
-    }
-    function chatBoundPointer(point) {
-      const screen = chatScreen();
-      return {
-        x: Math.max(16, Math.min(screen.width - 16, point.x)),
-        y: Math.max(16, Math.min(screen.height - 16, point.y))
+      const record = {
+        self: self.weakRef(false),
+        window: window.ref(false),
+        rect: rect.ref(false),
+        input: input.ref(false),
+        canvas: canvas.ref(false),
+        controls: (controls || windowGO).ref(false),
+        dragging: false,
+        caret: null,
+        errors: 0,
+        picker: null,
+        desired: null,
+        handle: handle.ref(false)
       };
-    }
-    function chatApplyPosition(record) {
-      if (!record.desired) return;
-      const rect = record.rect.target, current = uiXY(call(rect, "get_anchoredPosition"));
-      if (Math.abs(current.x - record.desired.x) > 0.1 || Math.abs(current.y - record.desired.y) > 0.1)
-        call(rect, "set_anchoredPosition", vec2(record.desired.x, record.desired.y));
-    }
-    let armChatRender = () => {
-    };
-    function chatUpdate(self) {
-      const record = chatWindows.get(self.handle.toString());
-      if (!record || record.errors > 3) return;
+      createdRecord = record;
+      const picker = uiNew("EmojiPickerButton", inputTransform);
+      pickerCreated = picker;
+      uiPlace(picker, 1, 1, 1, 0, -16, -63, 46, 46);
+      call(uiAdd(picker, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+      const hit = uiAdd(picker, "UnityEngine.UI.Image");
+      call(hit, "set_color", rgba(1, 1, 1, 0));
+      const labelGO = uiNew("Label", call(picker, "get_transform"));
+      uiStretch(uiRect(labelGO));
+      const label = uiText(labelGO, "", 30);
+      if (initializeEmojis()) {
+        call(label, "set_spriteAsset", emojiAsset);
+        call(label, "set_richText", true);
+        call(label, "set_text", Il2Cpp.string("<sprite=8>"));
+      } else call(label, "set_text", Il2Cpp.string(":)"));
+      const pickerButton = uiButton(picker, hit, () => {
+        if (!chatBuildPicker(record)) return;
+        const panel = record.picker.target;
+        call(panel, "SetActive", !Boolean(call(panel, "get_activeSelf")));
+        if (Boolean(call(panel, "get_activeSelf"))) call(call(panel, "get_transform"), "SetAsLastSibling");
+      });
+      const transition = pickerButton.tryMethod("set_transition", 1);
+      if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
+      record.pickerButton = uiRect(picker).ref(false);
       try {
-        if (!unityAlive(record.controls.target)) {
-          chatWindows.delete(self.handle.toString());
-          return;
+        const saved = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`) || "null");
+        const screen = chatScreen();
+        if (saved && saved.width === screen.width && saved.height === screen.height && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+          record.desired = { x: saved.x, y: saved.y };
+          call(rect, "set_anchoredPosition", vec2(saved.x, saved.y));
         }
-        if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
-        record.renderPending = true;
-        armChatRender(true);
-        const touches = Number(chatInput().touchCount.invoke());
-        if (chatScaleUpdate(record, touches)) return;
-        const input = record.input.target;
-        if (Boolean(call(input, "get_isFocused"))) {
-          if (record.caretMethod === void 0) record.caretMethod = input.tryMethod("get_stringPosition", 0) || input.tryMethod("get_caretPosition", 0) || null;
-          if (record.caretMethod) record.caret = Number(record.caretMethod.invoke());
-        }
-        const unityInput = ucls("UnityEngine.Input");
-        let point, held, down;
-        if (touches > 0) {
-          const touch = chatInput().getTouch.invoke(0);
-          point = uiXY(touch.method("get_position", 0).invoke());
-          const phase = enumVal(touch.method("get_phase", 0).invoke());
-          down = phase === 0;
-          held = phase !== 3 && phase !== 4;
-        } else if (!record.armed && !record.dragging) {
-          record.errors = 0;
-          return;
-        } else {
-          point = uiXY(unityInput.method("get_mousePosition").invoke());
-          held = Boolean(unityInput.method("GetMouseButton", 1).invoke(0));
-          down = Boolean(unityInput.method("GetMouseButtonDown", 1).invoke(0));
-        }
-        const camera = call(record.canvas.target, "get_worldCamera");
-        const rect = record.rect.target;
-        if (down && Boolean(call(call(record.handle.target, "get_gameObject"), "get_activeInHierarchy")) && chatContains(record.handle.target, point, camera)) {
-          record.armed = true;
-          record.start = point;
-          record.origin = uiXY(call(rect, "get_anchoredPosition"));
-        }
-        if (record.armed && held && !record.dragging && Math.hypot(point.x - record.start.x, point.y - record.start.y) >= 8) {
-          record.dragging = true;
-          log("chat UI: drag started");
-        }
-        if (record.dragging && held) {
-          const scale = Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
-          const bounded = chatBoundPointer(point);
-          record.desired = {
-            x: record.origin.x + (bounded.x - record.start.x) / scale,
-            y: record.origin.y + (bounded.y - record.start.y) / scale
-          };
-          chatApplyPosition(record);
-        }
-        if (record.dragging && !held) {
-          record.dragging = false;
-          const screen = chatScreen();
-          writeTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`, JSON.stringify(Object.assign({}, record.desired, screen)));
-          log("chat UI: position saved");
-        }
-        if (!held) record.armed = false;
-        if (down && record.picker && Boolean(call(record.picker.target, "get_activeSelf")) && !chatContains(uiRect(record.picker.target), point, camera) && !chatContains(record.pickerButton.target, point, camera))
-          call(record.picker.target, "SetActive", false);
-        record.errors = 0;
+      } catch (_) {
+      }
+      chatWindows.set(key, record);
+      try {
+        chatPrepareViewport(self);
       } catch (error) {
-        record.errors++;
-        record.dragging = false;
-        log(`chat UI: update failed: ${error}`);
+        log(`chat UI: viewport preparation failed: ${error}`);
       }
-    }
-    section("movable chat and emoji picker", () => {
-      const klass = cls(img, "FriendsChatWin");
-      const update = klass.methods.find((m) => m.name === "Update" && !m.isStatic && m.parameterCount === 0);
-      if (!update) throw Error("FriendsChatWin.Update not found");
-      for (const method of klass.methods.filter((m) => ["Awake", "Show"].includes(m.name) && !m.isStatic)) {
-        if (method.virtualAddress.isNull()) continue;
-        hookAttach(method.virtualAddress, {
-          onEnter(args) {
-            this.self = args[0];
-          },
-          onLeave() {
-            try {
-              chatSetup(new Il2Cpp.Object(this.self));
-            } catch (error) {
-              log(`chat UI: ${error}`);
-            }
-          }
-        });
+      try {
+        chatScaleSetup(record);
+      } catch (error) {
+        log(`chat UI: scale setup failed: ${error}`);
       }
-      const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
-      if (render && !render.virtualAddress.isNull()) armChatRender = gatedHook(render.virtualAddress, "leave", () => {
-        armChatRender(false);
-        for (const record of chatWindows.values()) {
-          if (!record.renderPending) continue;
-          record.renderPending = false;
+      log(`chat UI: drag=${controls ? "Move fallback" : "player header"}; PC smiley installed`);
+    } catch (error) {
+      for (const object of [controls, pickerCreated]) if (object) {
+        try {
+          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(object);
+        } catch (_) {
+        }
+      }
+      if (createdRecord) for (const value of Object.values(createdRecord)) {
+        if (value && typeof value.free === "function") {
           try {
-            chatApplyPosition(record);
-            chatScaleApply(record);
+            value.free();
           } catch (_) {
           }
         }
-      });
-      hookAttach(update.virtualAddress, {
+      }
+      log(`chat UI: setup failed: ${error}`);
+      if (!chatSetupDiagnosed.has(key)) {
+        chatSetupDiagnosed.add(key);
+        try {
+          uiLogTree(call(self, "get_transform"), "chat UI paths");
+        } catch (_) {
+        }
+      }
+    }
+  }
+  function chatContains(rect, point, camera) {
+    return Boolean(ucls("UnityEngine.RectTransformUtility").method("RectangleContainsScreenPoint").overload("UnityEngine.RectTransform", "UnityEngine.Vector2", "UnityEngine.Camera").invoke(rect, vec2(point.x, point.y), camera));
+  }
+  function chatScreen() {
+    const screen = ucls("UnityEngine.Screen");
+    return { width: Number(screen.method("get_width", 0).invoke()), height: Number(screen.method("get_height", 0).invoke()) };
+  }
+  function chatBoundPointer(point) {
+    const screen = chatScreen();
+    return {
+      x: Math.max(16, Math.min(screen.width - 16, point.x)),
+      y: Math.max(16, Math.min(screen.height - 16, point.y))
+    };
+  }
+  function chatApplyPosition(record) {
+    if (!record.desired) return;
+    const rect = record.rect.target, current = uiXY(call(rect, "get_anchoredPosition"));
+    if (Math.abs(current.x - record.desired.x) > 0.1 || Math.abs(current.y - record.desired.y) > 0.1)
+      call(rect, "set_anchoredPosition", vec2(record.desired.x, record.desired.y));
+  }
+  let armChatRender = () => {
+  };
+  function chatUpdate(self) {
+    const record = chatWindows.get(self.handle.toString());
+    if (!record || record.errors > 3) return;
+    try {
+      if (!unityAlive(record.controls.target)) {
+        chatWindows.delete(self.handle.toString());
+        return;
+      }
+      if (!Boolean(call(record.controls.target, "get_activeInHierarchy"))) return;
+      record.renderPending = true;
+      armChatRender(true);
+      const touches = Number(chatInput().touchCount.invoke());
+      if (chatScaleUpdate(record, touches)) return;
+      const input = record.input.target;
+      if (Boolean(call(input, "get_isFocused"))) {
+        if (record.caretMethod === void 0) record.caretMethod = input.tryMethod("get_stringPosition", 0) || input.tryMethod("get_caretPosition", 0) || null;
+        if (record.caretMethod) record.caret = Number(record.caretMethod.invoke());
+      }
+      const unityInput = ucls("UnityEngine.Input");
+      let point, held, down;
+      if (touches > 0) {
+        const touch = chatInput().getTouch.invoke(0);
+        point = uiXY(touch.method("get_position", 0).invoke());
+        const phase = enumVal(touch.method("get_phase", 0).invoke());
+        down = phase === 0;
+        held = phase !== 3 && phase !== 4;
+      } else if (!record.armed && !record.dragging) {
+        record.errors = 0;
+        return;
+      } else {
+        point = uiXY(unityInput.method("get_mousePosition").invoke());
+        held = Boolean(unityInput.method("GetMouseButton", 1).invoke(0));
+        down = Boolean(unityInput.method("GetMouseButtonDown", 1).invoke(0));
+      }
+      const camera = call(record.canvas.target, "get_worldCamera");
+      const rect = record.rect.target;
+      if (down && Boolean(call(call(record.handle.target, "get_gameObject"), "get_activeInHierarchy")) && chatContains(record.handle.target, point, camera)) {
+        record.armed = true;
+        record.start = point;
+        record.origin = uiXY(call(rect, "get_anchoredPosition"));
+      }
+      if (record.armed && held && !record.dragging && Math.hypot(point.x - record.start.x, point.y - record.start.y) >= 8) {
+        record.dragging = true;
+        log("chat UI: drag started");
+      }
+      if (record.dragging && held) {
+        const scale = Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
+        const bounded = chatBoundPointer(point);
+        record.desired = {
+          x: record.origin.x + (bounded.x - record.start.x) / scale,
+          y: record.origin.y + (bounded.y - record.start.y) / scale
+        };
+        chatApplyPosition(record);
+      }
+      if (record.dragging && !held) {
+        record.dragging = false;
+        const screen = chatScreen();
+        writeTextFile(`${persistentPath()}/tesl-reborn-chat-position-v11.json`, JSON.stringify(Object.assign({}, record.desired, screen)));
+        log("chat UI: position saved");
+      }
+      if (!held) record.armed = false;
+      if (down && record.picker && Boolean(call(record.picker.target, "get_activeSelf")) && !chatContains(uiRect(record.picker.target), point, camera) && !chatContains(record.pickerButton.target, point, camera))
+        call(record.picker.target, "SetActive", false);
+      record.errors = 0;
+    } catch (error) {
+      record.errors++;
+      record.dragging = false;
+      log(`chat UI: update failed: ${error}`);
+    }
+  }
+  section("movable chat and emoji picker", () => {
+    const klass = cls(img, "FriendsChatWin");
+    const update = klass.methods.find((m) => m.name === "Update" && !m.isStatic && m.parameterCount === 0);
+    if (!update) throw Error("FriendsChatWin.Update not found");
+    for (const method of klass.methods.filter((m) => ["Awake", "Show"].includes(m.name) && !m.isStatic)) {
+      if (method.virtualAddress.isNull()) continue;
+      hookAttach(method.virtualAddress, {
         onEnter(args) {
           this.self = args[0];
         },
         onLeave() {
           try {
-            chatUpdate(new Il2Cpp.Object(this.self));
-          } catch (_) {
-          }
-        }
-      });
-    });
-    section("hide confirmed debug test marker", () => {
-      const path = `${persistentPath()}/tesl-reborn-debug-marker.json`;
-      const latch = `${persistentPath()}/tesl-reborn-debug-marker-confirmed32.json`;
-      let applied = false;
-      try {
-        applied = JSON.parse(readTextFile(latch) || "{}").applied === true;
-      } catch (_) {
-      }
-      if (applied) return;
-      let config = {};
-      try {
-        config = JSON.parse(readTextFile(path) || "{}");
-      } catch (_) {
-      }
-      if (writeTextFile(path, JSON.stringify({ ...config, enabled: false }))) writeTextFile(latch, JSON.stringify({ applied: true }));
-    });
-    section("mobile global debug shortcut", () => {
-      try {
-        const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "null");
-        if (setup?.debugInput === "android-key-events") {
-          log("mobile debug: Android keyboard gesture backend");
-          return;
-        }
-      } catch (_) {
-      }
-      let taps = [], startFrame = -1, keyDownFrame = -1, lastFrame = -1, began = null, lastError = "";
-      const input = ucls("UnityEngine.Input"), time = ucls("UnityEngine.Time");
-      const frame = () => Number(time.method("get_frameCount", 0).invoke());
-      function diagnostic(status, detail = "") {
-        log(`mobile debug: ${status}${detail ? ": " + detail : ""}`);
-        try {
-          writeTextFile(`${persistentPath()}/tesl-reborn-debug-status.json`, JSON.stringify({ status, detail, at: (/* @__PURE__ */ new Date()).toISOString() }));
-        } catch (_) {
-        }
-      }
-      const attached = /* @__PURE__ */ new Set();
-      function attachKey(address, name, stringKey = false) {
-        if (!address || address.isNull?.() || attached.has(address.toString())) return;
-        try {
-          hookAttach(address, {
-            onEnter(args) {
-              this.key = stringKey ? rawStr(args[0]).toLowerCase() : args[0]?.toInt32();
-            },
-            onLeave(result) {
-              if (startFrame < 0) return;
-              const current = frame();
-              if (current > startFrame + 5) {
-                startFrame = -1;
-                return;
-              }
-              if (current < startFrame || keyDownFrame >= 0 && current !== keyDownFrame) return;
-              const any = /anyKey/.test(name), down = /Down/.test(name);
-              const d = stringKey ? this.key === "d" : this.key === 100;
-              const ctrl = stringKey ? ["left ctrl", "right ctrl", "left control", "right control"].includes(this.key) : [305, 306].includes(this.key);
-              if (!any && !d && !ctrl) return;
-              if (d && down && keyDownFrame < 0) {
-                keyDownFrame = current;
-                diagnostic("ctrl-d-forwarded", name);
-              }
-              if (any || d || ctrl && !down) result.replace(ptr(1));
-            }
-          });
-          attached.add(address.toString());
-        } catch (error) {
-          log(`mobile debug: cannot hook ${name}: ${error}`);
-        }
-      }
-      for (const method of input.methods.filter((m) => /^(GetKey(?:Down)?(?:Int|String)?|get_anyKey(?:Down)?)$/.test(m.name))) {
-        const stringKey = method.parameters[0]?.type.name === "System.String";
-        try {
-          attachKey(method.virtualAddress, method.name, stringKey);
-        } catch (error) {
-          log(`mobile debug: input method unavailable ${method.name}: ${error}`);
-        }
-      }
-      try {
-        const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
-        for (const name of ["GetKeyInt", "GetKeyDownInt", "GetKeyString", "GetKeyDownString", "get_anyKey", "get_anyKeyDown"]) {
-          const signature = name.endsWith("Int") ? "UnityEngine.KeyCode" : name.endsWith("String") ? "System.String" : "";
-          for (const suffix of ["", `(${signature})`]) {
-            const address = resolve(Memory.allocUtf8String(`UnityEngine.Input::${name}${suffix}`));
-            attachKey(address, name, name.endsWith("String"));
-          }
-        }
-      } catch (error) {
-        log(`mobile debug: native input resolution unavailable: ${error}`);
-      }
-      const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
-      hookAttach(update.virtualAddress, {
-        // Called by the frame bus only while the screen is touched (and the frame after).
-        touchOnly: true,
-        onEnter() {
-          try {
-            const current = frame();
-            if (current === lastFrame) return;
-            lastFrame = current;
-            const count = Number(input.method("get_touchCount", 0).invoke());
-            if (count !== 1) {
-              began = null;
-              if (count > 1) taps = [];
-              return;
-            }
-            const touch = input.method("GetTouch", 1).invoke(0), phase = enumVal(touch.method("get_phase", 0).invoke());
-            const point = uiXY(touch.method("get_position", 0).invoke()), screen = chatScreen();
-            const size = Math.max(64, Math.min(160, Math.min(screen.width, screen.height) * 0.1));
-            const inside = point.x >= 0 && point.x <= size && point.y >= screen.height - size && point.y <= screen.height;
-            if (phase === 0) {
-              began = inside ? { x: point.x, y: point.y, at: Date.now() } : null;
-              return;
-            }
-            if (phase === 4) {
-              began = null;
-              taps = [];
-              return;
-            }
-            if (phase !== 3) return;
-            const now = Date.now();
-            if (!inside || !began || now - began.at > 400 || Math.hypot(point.x - began.x, point.y - began.y) > size * 0.35) {
-              began = null;
-              taps = [];
-              return;
-            }
-            began = null;
-            taps = taps.filter((at) => now - at < 1100);
-            taps.push(now);
-            if (taps.length >= 3) {
-              taps = [];
-              startFrame = current + 1;
-              keyDownFrame = -1;
-              diagnostic("gesture-detected");
-            }
+            chatSetup(new Il2Cpp.Object(this.self));
           } catch (error) {
-            const message = String(error);
-            if (message !== lastError) {
-              lastError = message;
-              diagnostic("input-error", message);
-            }
+            log(`chat UI: ${error}`);
           }
         }
       });
-      diagnostic("ready", `${attached.size} input hooks; original Ctrl+D permissions preserved`);
+    }
+    const render = ucls("UnityEngine.Canvas").tryMethod("SendWillRenderCanvases", 0);
+    if (render && !render.virtualAddress.isNull()) armChatRender = gatedHook(render.virtualAddress, "leave", () => {
+      armChatRender(false);
+      for (const record of chatWindows.values()) {
+        if (!record.renderPending) continue;
+        record.renderPending = false;
+        try {
+          chatApplyPosition(record);
+          chatScaleApply(record);
+        } catch (_) {
+        }
+      }
     });
-    section("battle cameras", () => {
-      const toLayer = (name) => {
-        try {
-          return Number(ucls("UnityEngine.LayerMask").method("NameToLayer", 1).invoke(Il2Cpp.string(name)));
-        } catch (_) {
-          return -1;
-        }
-      };
-      schedule(3e3, () => {
-        let name18 = "?";
-        try {
-          name18 = String(ucls("UnityEngine.LayerMask").method("LayerToName", 1).invoke(18)?.content ?? "?");
-        } catch (_) {
-        }
-        log(`cameras: layers MatchDragging=${toLayer("MatchDragging")} RuneWaveInput=${toLayer("RuneWaveInput")} Orthographic=${toLayer("Orthographic")} 3DUI=${toLayer("3DUI")} UI=${toLayer("UI")}; layer 18 (Camera_Targeting) is "${name18}"`);
-      }, "camera layer names");
-    });
-    section("debug window blocks the UI below", () => {
-      const owner = img.classes.find((c) => c.name === "DebugRuntime");
-      if (!owner) throw Error("DebugRuntime not found");
-      let runtime = null, searched = false, blocked = null;
-      const services = cls(img, "SparkleServices.ServicesManager");
-      for (const method of owner.methods.filter((m) => ["Awake", "Start"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
-        hookAttach(method.virtualAddress, { onEnter(args) {
-          this.self = args[0];
-        }, onLeave() {
-          try {
-            if (runtime) runtime.free();
-            runtime = new Il2Cpp.Object(this.self).ref(false);
-          } catch (_) {
-          }
-        } });
-      }
-      const eventSystem = () => ucls("UnityEngine.EventSystems.EventSystem").method("get_current").invoke();
-      const release = () => {
-        if (!blocked) return;
-        try {
-          if (unityAlive(blocked.target)) call(blocked.target, "set_enabled", true);
-        } catch (_) {
-        }
-        blocked.free();
-        blocked = null;
-        log("debug window: game UI input back on");
-      };
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
-        try {
-          if (!runtime && !searched) {
-            searched = true;
-            const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(owner.type.object);
-            if (!isNull(found)) runtime = found.ref(false);
-          }
-          let open = false;
-          if (runtime && unityAlive(runtime.target)) {
-            const behaviour = runtime.target;
-            open = Boolean(call(behaviour, "get_isActiveAndEnabled")) && Boolean(behaviour.field("_displayState").value.field("mainWindow").value);
-            if (open) try {
-              if (Boolean(call(services.method("get_Instance").invoke(), "get_HideDebugUi"))) open = false;
-            } catch (_) {
-            }
-          }
-          if (open && !blocked) {
-            const current = eventSystem();
-            if (unityAlive(current) && Boolean(call(current, "get_enabled"))) {
-              call(current, "set_enabled", false);
-              blocked = current.ref(false);
-              log("debug window: game UI input off while it is open");
-            }
-          } else if (!open) release();
-        } catch (_) {
-          release();
-        }
-      } });
-    });
-    function createUpdateNotices(updater, io) {
-      let downloadStarted = false, lastStatus = "";
-      const saved = io.readNotice() || {}, current = updater.current();
-      const previous = io.readStatus()?.previous;
-      const priorRevision = Number(saved.shownRevision || previous?.revision || 0);
-      if (Number.isSafeInteger(current?.revision) && current.revision > priorRevision) {
-        if (priorRevision > 0) io.emit("applied", current.revision, () => io.writeNotice({ shownRevision: current.revision }));
-        else io.writeNotice({ shownRevision: current.revision });
-      }
-      function poll() {
-        const status = updater.status();
-        if (status === lastStatus) return;
-        lastStatus = status;
-        if (status === "restart-required") {
-          downloadStarted = false;
-          io.emit("restart", 0);
-        } else if (status === "update-error" && downloadStarted) {
-          downloadStarted = false;
-          io.emit("error", 0);
-        }
-      }
-      return {
-        poll,
-        check(get) {
-          let requests = 0;
-          try {
-            updater.check((url, callback) => {
-              if (++requests === 2) {
-                downloadStarted = true;
-                io.emit("downloading", 0);
-              }
-              get(url, (status, body) => {
-                callback(status, body);
-                poll();
-              });
-            });
-          } finally {
-            poll();
-          }
-        }
-      };
-    }
-    function updateNoticeText(kind, revision, language) {
-      const messages = {
-        en: {
-          downloading: "Downloading a Reborn update. You can keep playing.",
-          restart: "Reborn update downloaded and verified. Restart the game when convenient to apply it.",
-          applied: `Reborn update ${revision} applied.`,
-          error: "Reborn update could not be downloaded or verified. You can keep playing; it will retry on the next launch."
-        },
-        ru: {
-          downloading: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u0435\u0442\u0441\u044F \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn. \u041C\u043E\u0436\u043D\u043E \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u0442\u044C \u0438\u0433\u0440\u0430\u0442\u044C.",
-          restart: "\u041E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn \u0441\u043A\u0430\u0447\u0430\u043D\u043E \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E. \u041F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 \u0438\u0433\u0440\u0443, \u043A\u043E\u0433\u0434\u0430 \u0431\u0443\u0434\u0435\u0442 \u0443\u0434\u043E\u0431\u043D\u043E, \u0447\u0442\u043E\u0431\u044B \u043F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C \u0435\u0433\u043E.",
-          applied: `\u041E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn ${revision} \u043F\u0440\u0438\u043C\u0435\u043D\u0435\u043D\u043E.`,
-          error: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u043B\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn. \u041C\u043E\u0436\u043D\u043E \u0438\u0433\u0440\u0430\u0442\u044C \u0434\u0430\u043B\u044C\u0448\u0435; \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u043C \u043F\u0440\u0438 \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u043C \u0437\u0430\u043F\u0443\u0441\u043A\u0435."
-        },
-        de: {
-          downloading: "Ein Reborn-Update wird heruntergeladen. Du kannst weiterspielen.",
-          restart: "Reborn-Update heruntergeladen und gepr\xFCft. Starte das Spiel neu, wenn es dir passt, um es anzuwenden.",
-          applied: `Reborn-Update ${revision} angewendet.`,
-          error: "Reborn-Update konnte nicht geladen oder gepr\xFCft werden. Du kannst weiterspielen; neuer Versuch beim n\xE4chsten Start."
-        },
-        es: {
-          downloading: "Descargando una actualizaci\xF3n de Reborn. Puedes seguir jugando.",
-          restart: "Actualizaci\xF3n de Reborn descargada y verificada. Reinicia el juego cuando quieras para aplicarla.",
-          applied: `Actualizaci\xF3n ${revision} de Reborn aplicada.`,
-          error: "No se pudo descargar o verificar la actualizaci\xF3n de Reborn. Puedes seguir jugando; se reintentar\xE1 al iniciar."
-        },
-        fr: {
-          downloading: "T\xE9l\xE9chargement d\u2019une mise \xE0 jour Reborn. Vous pouvez continuer \xE0 jouer.",
-          restart: "Mise \xE0 jour Reborn t\xE9l\xE9charg\xE9e et v\xE9rifi\xE9e. Red\xE9marrez le jeu quand vous le souhaitez pour l\u2019appliquer.",
-          applied: `Mise \xE0 jour Reborn ${revision} appliqu\xE9e.`,
-          error: "Impossible de t\xE9l\xE9charger ou v\xE9rifier la mise \xE0 jour Reborn. Vous pouvez jouer ; nouvel essai au prochain lancement."
-        },
-        it: {
-          downloading: "Download di un aggiornamento Reborn. Puoi continuare a giocare.",
-          restart: "Aggiornamento Reborn scaricato e verificato. Riavvia il gioco quando vuoi per applicarlo.",
-          applied: `Aggiornamento Reborn ${revision} applicato.`,
-          error: "Impossibile scaricare o verificare l\u2019aggiornamento Reborn. Puoi giocare; nuovo tentativo al prossimo avvio."
-        },
-        pl: {
-          downloading: "Pobieranie aktualizacji Reborn. Mo\u017Cesz gra\u0107 dalej.",
-          restart: "Aktualizacja Reborn pobrana i zweryfikowana. Uruchom gr\u0119 ponownie w dogodnym momencie, aby j\u0105 zastosowa\u0107.",
-          applied: `Aktualizacja Reborn ${revision} zastosowana.`,
-          error: "Nie uda\u0142o si\u0119 pobra\u0107 lub sprawdzi\u0107 aktualizacji Reborn. Mo\u017Cesz gra\u0107 dalej; ponowimy pr\xF3b\u0119 przy nast\u0119pnym uruchomieniu."
-        },
-        pt: {
-          downloading: "Baixando uma atualiza\xE7\xE3o do Reborn. Voc\xEA pode continuar jogando.",
-          restart: "Atualiza\xE7\xE3o do Reborn baixada e verificada. Reinicie o jogo quando quiser para aplic\xE1-la.",
-          applied: `Atualiza\xE7\xE3o ${revision} do Reborn aplicada.`,
-          error: "N\xE3o foi poss\xEDvel baixar ou verificar a atualiza\xE7\xE3o do Reborn. Voc\xEA pode jogar; nova tentativa na pr\xF3xima inicializa\xE7\xE3o."
-        },
-        tr: {
-          downloading: "Reborn g\xFCncellemesi indiriliyor. Oynamaya devam edebilirsiniz.",
-          restart: "Reborn g\xFCncellemesi indirildi ve do\u011Fruland\u0131. Uygulamak i\xE7in uygun oldu\u011Funuzda oyunu yeniden ba\u015Flat\u0131n.",
-          applied: `Reborn ${revision} g\xFCncellemesi uyguland\u0131.`,
-          error: "Reborn g\xFCncellemesi indirilemedi veya do\u011Frulanamad\u0131. Oynamaya devam edebilirsiniz; sonraki a\xE7\u0131l\u0131\u015Fta yeniden denenecek."
-        }
-      };
-      return (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
-    }
-    let cachedPortCaption = "";
-    let splashVersionAnchor = { x: 0.5, y: 0.34 }, splashAnchorReady = false;
-    function locateSplashVersion() {
-      if (splashAnchorReady) return splashVersionAnchor;
-      try {
-        const type = cls(img, "SplashWin"), values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(type.type.object);
-        for (let i = 0; i < values.length; i++) {
-          const self = values.get(i);
-          if (!call(call(self, "get_gameObject"), "get_activeInHierarchy")) continue;
-          const logo = self.field("_logoImage").value, rect = call(logo, "get_rectTransform"), bounds = call(rect, "get_rect");
-          const point = unityStruct("UnityEngine.Vector3", {
-            x: Number(bounds.field("m_XMin").value) + Number(bounds.field("m_Width").value) / 2,
-            y: Number(bounds.field("m_YMin").value) - 12,
-            z: 0
-          });
-          const world = call(rect, "TransformPoint", point), canvas = call(logo, "get_canvas");
-          let camera = null;
-          try {
-            camera = call(canvas, "get_worldCamera");
-          } catch (_) {
-          }
-          const screen = ucls("UnityEngine.RectTransformUtility").method("WorldToScreenPoint", 2).invoke(camera, world), size = chatScreen();
-          const x = Number(screen.field("x").value) / size.width, y = Number(screen.field("y").value) / size.height;
-          if (x > 0.1 && x < 0.9 && y > 0.1 && y < 0.9) {
-            splashVersionAnchor = { x, y: Math.max(0.34, y) };
-            splashAnchorReady = true;
-            log("loading version: anchored below native SplashWin logo");
-          }
-          break;
-        }
-      } catch (_) {
-      }
-      return splashVersionAnchor;
-    }
-    let loginAnchorCheck = 0, loginAnchor = null, loginAnchorLogged = false;
-    let loginAnchorError = "";
-    function worldBottom(node) {
-      const rect = call(node, "get_rect"), scale = Number(call(node, "get_lossyScale").field("y").value);
-      return Number(call(node, "get_position").field("y").value) + Number(rect.field("m_YMin").value) * scale;
-    }
-    function locateLoginVersion(frame) {
-      if (Date.now() < loginAnchorCheck) return loginAnchor;
-      loginAnchorCheck = Date.now() + 500;
-      loginAnchor = null;
-      try {
-        const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(cls(img, "LoginWin").type.object);
-        for (let i = 0; i < values.length; i++) {
-          const self = values.get(i);
-          if (!unityAlive(self) || !call(call(self, "get_gameObject"), "get_activeInHierarchy")) continue;
-          let low = Infinity;
-          for (const name of ["_loginBtn", "_unameForgotBtn", "_pwdForgotBtn"]) {
-            const button = self.field(name).value;
-            if (!unityAlive(button) || !call(call(button, "get_gameObject"), "get_activeInHierarchy")) continue;
-            low = Math.min(low, worldBottom(call(button, "get_transform")));
-          }
-          if (!Number.isFinite(low)) continue;
-          const frameRect = call(frame, "get_rect"), frameScale = Number(call(frame, "get_lossyScale").field("y").value);
-          const height = Number(frameRect.field("m_Height").value) * frameScale;
-          if (!(height > 0)) continue;
-          const y = (low - worldBottom(frame)) / height;
-          loginAnchor = { x: 0.5, y: Math.min(0.9, Math.max(0.08, y - 0.02)) };
-          if (!loginAnchorLogged) {
-            loginAnchorLogged = true;
-            log(`loading version: below the login form at ${loginAnchor.y.toFixed(2)}`);
-          }
-          break;
-        }
-      } catch (error) {
-        const detail = String(error);
-        if (detail !== loginAnchorError) {
-          loginAnchorError = detail;
-          log(`loading version: login form placement failed: ${detail}`);
-        }
-      }
-      return loginAnchor;
-    }
-    function portVersionCaption() {
-      if (cachedPortCaption) return cachedPortCaption;
-      let build = "APK legacy";
-      try {
-        const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "{}");
-        const builder = setup.builder;
-        if (builder && typeof builder === "object") {
-          const number = Number(builder.build), channel2 = builder.channel === "stable" ? "stable" : "test";
-          build = `${Number.isSafeInteger(number) && number > 0 ? `Builder ${number}` : "local build"} (${channel2})`;
-        } else if (Number.isSafeInteger(setup.androidBuild)) build = `APK ${setup.androidBuild}`;
-      } catch (_) {
-      }
-      const revision = globalThis.TeslRebornUpdater?.current()?.revision;
-      let channel = "";
-      try {
-        const feed = String(JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-updater.json`) || "{}").feedUrl || "");
-        channel = /\/updates\/stable\//.test(feed) ? " (stable)" : /\/updates\/test\//.test(feed) ? " (test)" : "";
-      } catch (_) {
-      }
-      return cachedPortCaption = `Reborn ${PLUGIN_VERSION}
-Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
-    }
-    function noticeCanvasProperty(canvas, name, value) {
-      const method = canvas.tryMethod(name, value === void 0 ? 0 : 1);
-      if (!method) {
-        const error = new Error(`Notice Canvas managed binding unavailable: ${name}`);
-        error.noticeCanvasUnavailable = true;
-        throw error;
-      }
-      if (value === void 0) return method.invoke();
-      const type = method.parameters[0].type.class;
-      return method.invoke(type.isEnum ? enumBox(type, value) : value);
-    }
-    function uiSystemText(go, text, size) {
-      let label = null;
-      try {
-        const type = ucls("UnityEngine.UI.Text");
-        if (!type.tryMethod("set_font", 1)) throw Error("Legacy Text setters stripped");
-        const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
-        if (isNull(font)) throw Error("Built-in notice font is unavailable");
-        label = uiAdd(go, "UnityEngine.UI.Text");
-        call(label, "set_font", font);
-        call(label, "set_fontSize", size);
-        call(label, "set_raycastTarget", false);
-        call(label, "set_supportRichText", false);
-        call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleCenter"));
-        call(label, "set_color", rgba(1, 1, 1, 1));
-        call(label, "set_text", Il2Cpp.string(text));
-        return label;
-      } catch (_) {
-        if (label) try {
-          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(label);
-        } catch (_2) {
-        }
-        return uiText(go, text, size);
-      }
-    }
-    function noticeTextLayout(label, right = false) {
-      const tmp = label.class.type.name === "TMPro.TextMeshProUGUI";
-      call(label, "set_alignment", uiEnum(
-        tmp ? "TMPro.TextAlignmentOptions" : "UnityEngine.TextAnchor",
-        right ? tmp ? "Right" : "MiddleRight" : tmp ? "Center" : "MiddleCenter"
-      ));
-      if (!right) {
-        const options = tmp ? [["set_enableAutoSizing", true], ["set_fontSizeMin", 18], ["set_fontSizeMax", 22]] : [["set_resizeTextForBestFit", true], ["set_resizeTextMinSize", 18], ["set_resizeTextMaxSize", 22]];
-        for (const [name, value] of options) label.tryMethod(String(name), 1)?.invoke(value);
-      }
-    }
-    function isLoadingVersionScreen(sceneName, names) {
-      const loading = /^(?:.*[\/ _-])?(?:loading|bootstrap|splash)(?:screen|scene|canvas|win|controller)?(?:\(clone\))?$/i;
-      return loading.test(String(sceneName || "")) || names.some((name) => loading.test(String(name)));
-    }
-    let startupVersionComplete = false, startupReadyHooked = false;
-    let versionScreenCheck = 0, versionScreenState = { visible: false, scene: "" };
-    function installStartupVersionTracking() {
-      try {
-        const owner = img.classes.find((c) => c.name === "MainMenuNavManager");
-        const init = owner?.methods.find((m) => m.name === "Init" && !m.isStatic && !m.virtualAddress.isNull());
-        if (init) {
-          hookAttach(init.virtualAddress, { onLeave() {
-            startupVersionComplete = true;
-            versionScreenCheck = 0;
-          } });
-          startupReadyHooked = true;
-        }
-      } catch (error) {
-        log(`loading version readiness: ${error}`);
-      }
-    }
-    function startupVersionVisible(scene, ready) {
-      return !ready && !/^(?:mainmenu|battle|match|gameboard|login)$/i.test(String(scene || ""));
-    }
-    function loadingVersionState() {
-      if (Date.now() < versionScreenCheck) return versionScreenState;
-      versionScreenCheck = Date.now() + 500;
-      if (startupVersionComplete) return versionScreenState = { visible: false, scene: versionScreenState.scene };
-      let scene = "", names = [];
-      try {
-        const value = ucls("UnityEngine.SceneManagement.SceneManager").method("GetActiveScene", 0).invoke();
-        scene = String(value.method("get_name", 0).invoke()?.content || "");
-      } catch (_) {
-      }
-      try {
-        const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-        for (const owner of img.classes.filter((c) => /^(?:LoadingScreen|LoadingWin|LoadingScreenController|GameLoadingScreen)$/.test(c.name) && Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"))) {
-          const values = find.invoke(owner.type.object);
-          for (let i = 0; i < values.length; i++) {
-            const go = call(values.get(i), "get_gameObject");
-            if (call(go, "get_activeInHierarchy")) names.push(String(call(go, "get_name")?.content || owner.name));
-          }
-        }
-      } catch (_) {
-      }
-      if (!startupVersionComplete) try {
-        for (const name of ["BoardInputController", "MatchIntroWin"]) {
-          const owner = img.classes.find((c) => c.name === name);
-          if (!owner) continue;
-          const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(owner.type.object);
-          for (let i = 0; i < values.length; i++) if (call(call(values.get(i), "get_gameObject"), "get_activeInHierarchy")) {
-            startupVersionComplete = true;
-            break;
-          }
-        }
-      } catch (_) {
-      }
-      if (!startupVersionComplete && !startupReadyHooked) try {
-        const owner = img.classes.find((c) => c.name === "MainMenuNavManager");
-        if (owner) {
-          const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(owner.type.object);
-          for (let i = 0; i < values.length; i++) {
-            const go = call(values.get(i), "get_gameObject");
-            if (call(go, "get_activeInHierarchy") && Number(call(call(go, "get_transform"), "get_childCount")) > 0) startupVersionComplete = true;
-          }
-        }
-      } catch (_) {
-      }
-      return versionScreenState = { visible: startupVersionVisible(scene, startupVersionComplete), scene };
-    }
-    const fpsCounter = {
-      base: 0,
-      since: Date.now(),
-      value: 0,
-      get frames() {
-        return (globalThis.__teslFrameBus?.frames() ?? 0) - this.base;
+    hookAttach(update.virtualAddress, {
+      onEnter(args) {
+        this.self = args[0];
       },
-      set frames(value) {
-        this.base = (globalThis.__teslFrameBus?.frames() ?? 0) - value;
-      }
-    };
-    function fpsMeterEnabled() {
-      try {
-        const graphics = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`) || "null");
-        if (typeof graphics?.showFps === "boolean") return graphics.showFps;
-      } catch (_) {
-      }
-      try {
-        const updater = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-updater.json`) || "null");
-        return /\/updates\/test\//.test(String(updater?.feedUrl || ""));
-      } catch (_) {
-        return false;
-      }
-    }
-    function fpsSample(counter, now) {
-      const elapsed = now - counter.since;
-      if (elapsed < 1e3) return counter.value;
-      counter.value = Math.round(counter.frames * 1e3 / elapsed);
-      counter.frames = 0;
-      counter.since = now;
-      return counter.value;
-    }
-    function createUpdateBanner() {
-      const showFps = fpsMeterEnabled();
-      let fps = null, fpsText = null, fpsLogAt = 0, lastFrameAt = 0;
-      let badgeShown = null, fpsTop = null, fpsShown = null, badgeCaption = null, badgePlacedAt = 0;
-      let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
-      let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
-      let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
-      let loadingState = null;
-      let message = null, shownAt = 0, lastError = "";
-      const unityObject = ucls("UnityEngine.Object");
-      const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
-      function overlayHost() {
-        const values = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
-        let host = null, rank = -Infinity;
-        const seen = hostRoots = [];
-        for (let i = 0; i < values.length; i++) {
-          const candidate = values.get(i);
-          if (!alive(candidate) || !call(candidate, "get_isRootCanvas")) continue;
-          const go = call(candidate, "get_gameObject");
-          if (!call(go, "get_activeInHierarchy")) continue;
-          const mode = enumVal(call(candidate, "get_renderMode")), sorting = Number(call(candidate, "get_sortingOrder"));
-          seen.push(`${String(call(go, "get_name")?.content || "?")}:${mode}/${sorting}`);
-          if (mode !== 0 && mode !== 1) continue;
-          const score = (mode === 0 ? 1e6 : 0) + sorting;
-          if (score >= rank) {
-            host = candidate;
-            rank = score;
-          }
-        }
-        if (!host && Date.now() >= hostReportAt) {
-          hostReportAt = Date.now() + 3e4;
-          log(`update notice: no screen Canvas to host it; live roots ${seen.slice(0, 12).join(", ") || "none"}`);
-        }
-        return host;
-      }
-      let reportedCaption = "", badgeBackground = null, gradientTexture = null, gradientSprite = null;
-      function discard() {
-        if (root) {
-          try {
-            ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(root.target);
-          } catch (_) {
-          }
-          root.free();
-        }
-        for (const asset of [gradientSprite, gradientTexture]) if (asset) try {
-          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(asset);
+      onLeave() {
+        try {
+          chatUpdate(new Il2Cpp.Object(this.self));
         } catch (_) {
         }
-        gradientTexture = gradientSprite = badgeBackground = null;
-        fps = fpsText = null;
-        root = label = canvas = panel = badge = badgeText = null;
-        badgeShown = fpsTop = fpsShown = badgeCaption = null;
-        badgePlacedAt = 0;
       }
-      function ensure(wanted) {
-        if (disabled) return;
-        let better = null;
-        if (root) {
-          if (!alive(root.target)) discard();
-          else {
-            if (!nested2 || !wanted || Date.now() < hostCheckAt || globalThis.__teslInBattle) return;
-            hostCheckAt = Date.now() + 1e4;
-            better = overlayHost();
-            if (!better || better.handle.toString() === hostKey) return;
-            discard();
-          }
-        }
-        nested2 = !ucls("UnityEngine.Canvas").tryMethod("set_renderMode", 1);
-        let host = better;
-        if (nested2 && !host) {
-          if (Date.now() < hostRetryAt) return;
-          host = overlayHost();
-          if (!host) {
-            hostRetryAt = Date.now() + 2e3;
-            return;
-          }
-        }
-        if (host) {
-          hostKey = host.handle.toString();
-          hostCheckAt = Date.now() + 2e3;
-        }
-        const go = newWith(
-          ucls("UnityEngine.GameObject"),
-          Il2Cpp.string("RebornUpdateNotice"),
-          Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [ucls("UnityEngine.RectTransform").type.object])
-        );
-        root = go.ref(false);
-        try {
-          canvas = uiAdd(go, "UnityEngine.Canvas");
-          if (!nested2) {
-            noticeCanvasProperty(canvas, "set_renderMode", 0);
-            noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
-            noticeCanvasProperty(canvas, "set_scaleFactor", 1);
-            canvasScale = 1;
-          } else {
-            call(go, "set_layer", Number(call(call(host, "get_gameObject"), "get_layer")));
-            call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(host, "get_transform"), false);
-            uiStretch(uiRect(go));
-            noticeCanvasProperty(canvas, "set_overrideSorting", true);
-            noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
-            canvasScale = Number(call(host, "get_scaleFactor")) || 1;
-            log(`update notice: nested under ${String(call(call(host, "get_gameObject"), "get_name")?.content || "?")} (order ${Number(call(host, "get_sortingOrder"))}); live roots ${hostRoots.slice(0, 12).join(", ")}`);
-          }
-          panel = uiNew("Banner", call(go, "get_transform"));
-          const background = uiAdd(panel, "UnityEngine.UI.Image");
-          call(background, "set_color", rgba(0.09, 0.11, 0.14, 0.95));
-          call(background, "set_raycastTarget", false);
-          const text = uiNew("Message", call(panel, "get_transform"));
-          uiStretch(uiRect(text));
-          call(uiRect(text), "set_offsetMin", vec2(16, 10));
-          call(uiRect(text), "set_offsetMax", vec2(-16, -10));
-          label = uiSystemText(text, "", 22);
-          noticeTextLayout(label);
-          badge = uiNew("PortVersion", call(go, "get_transform"));
-          badgeBackground = uiAdd(badge, "UnityEngine.UI.Image");
-          call(badgeBackground, "set_raycastTarget", false);
-          call(badgeBackground, "set_color", rgba(0, 0, 0, 0.8));
-          call(badgeBackground, "set_color", rgba(0, 0, 0, 0));
-          for (let i = 0; i < 32; i++) {
-            const strip = uiNew("Fade" + i, call(badge, "get_transform")), rect = uiRect(strip);
-            call(rect, "set_anchorMin", vec2(i / 32, 0));
-            call(rect, "set_anchorMax", vec2((i + 1) / 32, 1));
-            call(rect, "set_offsetMin", vec2(0, 0));
-            call(rect, "set_offsetMax", vec2(0, 0));
-            const graphic = uiAdd(strip, "UnityEngine.UI.Image"), t = (i + 0.5) / 32;
-            call(graphic, "set_color", rgba(0, 0, 0, Math.min(1, Math.min(t, 1 - t) * 3) * 0.8));
-            call(graphic, "set_raycastTarget", false);
-          }
-          const badgeLabel = uiNew("RebornPluginVersion", call(badge, "get_transform"));
-          uiStretch(uiRect(badgeLabel));
-          badgeText = uiSystemText(badgeLabel, "", 26);
-          try {
-            call(badgeText, badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "set_richText" : "set_supportRichText", true);
-          } catch (_) {
-          }
-          call(badgeText, "set_alignment", uiEnum(badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "TMPro.TextAlignmentOptions" : "UnityEngine.TextAnchor", badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "Center" : "MiddleCenter"));
-          call(badgeText, "set_color", rgba(1, 1, 1, 1));
-          if (showFps) {
-            fps = uiNew("RebornFps", call(go, "get_transform"));
-            const back = uiAdd(fps, "UnityEngine.UI.Image");
-            call(back, "set_color", rgba(0, 0, 0, 0.6));
-            call(back, "set_raycastTarget", false);
-            const inner = uiNew("Value", call(fps, "get_transform"));
-            uiStretch(uiRect(inner));
-            fpsText = uiSystemText(inner, "", 22);
-            noticeTextLayout(fpsText);
-            call(fpsText, "set_color", rgba(0.4, 1, 0.4, 1));
-          }
-          if (!nested2) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
-          call(panel, "SetActive", false);
-        } catch (error) {
-          if (error?.noticeCanvasUnavailable) disabled = true;
-          discard();
-          throw error;
-        }
-      }
-      return {
-        show(kind, revision, onShown) {
-          message = { kind, revision, onShown, duration: kind === "restart" ? 1e4 : 6e3 };
-          shownAt = 0;
-        },
-        tick() {
-          if (disabled) return;
-          if (message && shownAt && Date.now() - shownAt >= message.duration) {
-            try {
-              if (panel) call(panel, "SetActive", false);
-            } catch (_) {
-              discard();
-            }
-            message = null;
-          }
-          try {
-            const versionScreen = loadingVersionState();
-            ensure(versionScreen.visible || Boolean(message) || showFps);
-            if (!root) return;
-            const screen = chatScreen();
-            const scale = nested2 ? Math.max(0.1, Number(call(call(canvas, "get_rootCanvas"), "get_scaleFactor")) || canvasScale) : Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
-            if (nested2) canvasScale = scale;
-            else if (Math.abs(scale - canvasScale) >= 0.01) {
-              noticeCanvasProperty(canvas, "set_scaleFactor", scale);
-              canvasScale = scale;
-            }
-            const width = Math.min(1e3, screen.width / scale - 32);
-            let top = 16;
-            try {
-              const safe = ucls("UnityEngine.Screen").method("get_safeArea", 0).invoke();
-              top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
-            } catch (_) {
-            }
-            if (versionScreen.visible && Date.now() >= badgePlacedAt + 1e3) {
-              badgePlacedAt = Date.now();
-              const badgeAnchor = locateLoginVersion(call(root.target, "get_transform")) || locateSplashVersion();
-              uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
-            }
-            if (badgeShown !== versionScreen.visible) {
-              badgeShown = versionScreen.visible;
-              call(badge, "SetActive", versionScreen.visible);
-            }
-            const loaded = !versionScreen.visible || loginAnchorLogged;
-            if (loadingState !== loaded) {
-              loadingState = loaded;
-              try {
-                writeTextFile(`${persistentPath()}/tesl-reborn-loading.json`, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
-              } catch (_) {
-              }
-            }
-            if (shownVersion !== versionScreen.visible) {
-              shownVersion = versionScreen.visible;
-              log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);
-            }
-            const frameAt = Date.now();
-            if (lastFrameAt && frameAt - lastFrameAt > 5e3) {
-              log(`resumed after ${Math.round((frameAt - lastFrameAt) / 1e3)} s`);
-              for (const handler of globalThis.__teslOnResume || []) {
-                try {
-                  handler();
-                } catch (error) {
-                  log(`resume: ${error}`);
-                }
-              }
-            }
-            lastFrameAt = frameAt;
-            globalThis.__teslLastFrameAt = frameAt;
-            const measured = fpsSample(fpsCounter, Date.now());
-            if (Date.now() >= fpsLogAt && measured) {
-              fpsLogAt = Date.now() + 15e3;
-              log(`fps: ${measured}`);
-              try {
-                globalThis.__teslGovernor?.(measured, versionScreen.visible);
-              } catch (error) {
-                log(`graphics: auto frame rate failed: ${error}`);
-              }
-            }
-            if (fps) {
-              if (fpsTop !== top) {
-                fpsTop = top;
-                uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);
-              }
-              if (fpsShown !== measured) {
-                fpsShown = measured;
-                call(fpsText, "set_text", Il2Cpp.string(`${measured} FPS`));
-              }
-            }
-            const caption = portVersionCaption();
-            if (badgeCaption !== caption) {
-              badgeCaption = caption;
-              call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android") + "</size>"));
-            }
-            const signature = caption + ":" + versionScreen.visible + ":" + versionScreen.scene;
-            if (signature !== reportedCaption) {
-              reportedCaption = signature;
-              try {
-                writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ version: caption, visible: versionScreen.visible, scene: versionScreen.scene, at: (/* @__PURE__ */ new Date()).toISOString() }));
-              } catch (_) {
-              }
-            }
-            if (!message) {
-              lastError = "";
-              return;
-            }
-            uiPlace(panel, 0.5, 1, 0.5, 1, 0, -top, Math.max(240, width), 92);
-            call(label, "set_text", Il2Cpp.string(updateNoticeText(message.kind, message.revision, resourceLanguage())));
-            call(panel, "SetActive", true);
-            if (!shownAt) shownAt = Date.now();
-            else if (message.onShown) {
-              const acknowledge = message.onShown;
-              message.onShown = null;
-              acknowledge();
-            }
-            lastError = "";
-          } catch (error) {
-            const detail = String(error);
-            if (detail !== lastError) {
-              log(`update notice: ${detail}`);
-              lastError = detail;
-              try {
-                writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ error: detail.slice(0, 300), at: (/* @__PURE__ */ new Date()).toISOString() }));
-              } catch (_) {
-              }
-            }
-          }
-        }
-      };
-    }
-    function installUpdateNotices(updater) {
-      installStartupVersionTracking();
-      const banner = createUpdateBanner();
-      const noticeFile = `${persistentPath()}/tesl-reborn-update-notice.json`;
-      const read = (path) => {
-        try {
-          return JSON.parse(readTextFile(path) || "null");
-        } catch (_) {
-          return null;
-        }
-      };
-      const notices = createUpdateNotices(updater, {
-        readNotice: () => read(noticeFile),
-        readStatus: () => read(`${persistentPath()}/tesl-reborn-update-status.json`),
-        writeNotice: (value) => {
-          try {
-            if (writeTextFile(noticeFile + ".part", JSON.stringify(value))) atomicRename(noticeFile + ".part", noticeFile);
-          } catch (_) {
-          }
-        },
-        emit: (kind, revision, onShown) => banner.show(kind, revision, onShown)
-      });
-      let nextPoll = 0, queued = false;
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-        onLeave() {
-          if (queued || Date.now() < nextPoll) return;
-          queued = true;
-          nextPoll = Date.now() + 250;
-          schedule(0, () => {
-            queued = false;
-            try {
-              notices.poll();
-              banner.tick();
-            } catch (error) {
-              log(`update notice poll: ${error}`);
-            }
-          }, "banner tick");
-        }
-      });
-      schedule(1e3, () => {
-        const prelaunch = read(`${persistentPath()}/tesl-reborn-prelaunch-status.json`);
-        const age = Date.now() - Number(prelaunch?.checkedAt);
-        if (Number.isFinite(age) && age >= 0 && age < 6e4) {
-          log("updater: prelaunch gate handled this start");
-          return;
-        }
-        notices.check((url, callback) => httpGet(url, false, callback, true));
-      });
-    }
-    function rememberShopSnapshot(previous, report) {
-      if (!(report.shopImages || []).some((item) => !/MainMenuLandingWin|Left_Store_BTN/i.test(item.path))) return previous;
-      return { at: report.at, images: report.shopImages, events: report.events.filter((item) => /shop|store|pack|bundle|image|texture|sprite/i.test(item.path)) };
-    }
-    section("bounded startup resource diagnostics", () => {
-      let taken = false, lastShop = null;
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
-        onLeave() {
-          if (taken || Date.now() - resourceTraceStarted < 6e4) return;
-          taken = true;
-          const report = {
-            at: (/* @__PURE__ */ new Date()).toISOString(),
-            language: resourceLanguage(),
-            patch: globalThis.TeslRebornUpdater?.current()?.revision,
-            elapsedMs: Date.now() - resourceTraceStarted,
-            events: resourceTrace.slice(),
-            bundles: []
-          };
-          const snapshotActive = (type) => {
-            const active = ucls("UnityEngine.Object").tryMethod("FindObjectsOfType", 1);
-            return (active || ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")).invoke(type);
-          };
-          const steps = [];
-          steps.push(() => {
-            try {
-              const manager = cls(img, "AssetBundles.AssetBundleManager");
-              for (const field of manager.fields.filter((f) => f.isStatic && /load|bundle|error/i.test(f.name) && /Dictionary/.test(f.type.name))) {
-                const item = { name: field.name, type: field.type.name };
-                try {
-                  const dictionary = field.value;
-                  item.count = Number(call(dictionary, "get_Count"));
-                  const iterator = call(call(dictionary, "get_Keys"), "GetEnumerator");
-                  item.keys = [];
-                  try {
-                    while (item.keys.length < 12 && call(iterator, "MoveNext")) {
-                      const key = call(iterator, "get_Current");
-                      if (typeof key?.content === "string") item.keys.push(key.content.replace(/[?#].*$/, "").slice(0, 160));
-                    }
-                  } finally {
-                    try {
-                      call(iterator, "Dispose");
-                    } catch (_) {
-                    }
-                  }
-                } catch (error) {
-                  item.error = String(error).slice(0, 120);
-                }
-                report.bundles.push(item);
-              }
-            } catch (error) {
-              report.error = String(error).slice(0, 160);
-            }
-          });
-          steps.push(() => {
-            try {
-              report.menu = [];
-              const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
-              const owners = img.classes.filter((c) => /^(?:MainMenu|MainMenuNavManager|MainMenuNavComponent|SettingsWin)$/.test(c.name) && Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"));
-              for (const owner of owners) {
-                const values = find.invoke(owner.type.object);
-                for (let i = 0; i < Math.min(values.length, 16) && report.menu.length < 32; i++) {
-                  const component = values.get(i), go = call(component, "get_gameObject"), root = call(go, "get_transform");
-                  const item = {
-                    type: owner.type.name,
-                    name: String(call(go, "get_name")?.content || "").slice(0, 120),
-                    active: Boolean(call(go, "get_activeInHierarchy")),
-                    children: Number(call(root, "get_childCount")),
-                    nodes: []
-                  };
-                  for (let j = 0; j < Math.min(item.children, 12); j++) {
-                    const child = call(call(root, "GetChild", j), "get_gameObject");
-                    item.nodes.push({ name: String(call(child, "get_name")?.content || "").slice(0, 120), active: Boolean(call(child, "get_activeInHierarchy")) });
-                  }
-                  report.menu.push(item);
-                }
-              }
-            } catch (error) {
-              report.menuError = String(error).slice(0, 160);
-            }
-          });
-          report.shopImages = [];
-          steps.push(() => {
-            lastShop = rememberShopSnapshot(lastShop, report);
-            report.lastShop = lastShop;
-            writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`, JSON.stringify(report));
-          });
-          let part = 0;
-          const next = () => {
-            const step = steps.shift();
-            if (!step) return;
-            const index = ++part;
-            schedule(0, () => {
-              const started = Date.now();
-              try {
-                step();
-              } finally {
-                const took = Date.now() - started;
-                if (took >= 50) log(`resource diagnostics snapshot: part ${index} took ${took}ms`);
-                next();
-              }
-            }, `resource diagnostics snapshot ${index}`);
-          };
-          next();
-        }
-      });
     });
-    function redundantSettingsResolution(values, current, inSettings) {
-      return inSettings && values.length >= 3 && values[0] === current.width && values[1] === current.height && typeof values[2] === "boolean" && (values.length === 3 || values.length === 4 && values[3] === 0);
+  });
+  section("hide confirmed debug test marker", () => {
+    const path = `${persistentPath()}/tesl-reborn-debug-marker.json`;
+    const latch = `${persistentPath()}/tesl-reborn-debug-marker-confirmed32.json`;
+    let applied = false;
+    try {
+      applied = JSON.parse(readTextFile(latch) || "{}").applied === true;
+    } catch (_) {
     }
-    function createDisplayTrace(write) {
-      let events = [], last = "";
-      return (kind, values) => {
-        const key = kind + JSON.stringify(values);
-        if (kind === "sample" && key === last) return;
-        last = key;
-        events.push({ at: Date.now(), kind, ...values });
-        if (events.length > 60) events.shift();
-        write({ schema: 1, patch: globalThis.TeslRebornUpdater?.current()?.revision, events: events.slice() });
-      };
+    if (applied) return;
+    let config = {};
+    try {
+      config = JSON.parse(readTextFile(path) || "{}");
+    } catch (_) {
     }
-    section("Settings display diagnostics", () => {
-      let watchUntil = 0, root = null, nextCapture = 0, nextSettingsCheck = 0;
-      let pendingReport = null, flushQueued = false, lastFlush = 0, lastDimensions = "";
-      function flushDisplay() {
-        flushQueued = false;
-        if (!pendingReport) return;
-        writeTextFile(`${persistentPath()}/tesl-reborn-display-status.json`, JSON.stringify(pendingReport));
-        pendingReport = null;
-        lastFlush = Date.now();
-      }
-      const trace = createDisplayTrace((value) => {
-        pendingReport = value;
-        if (Date.now() - lastFlush >= 100) flushDisplay();
-        else if (!flushQueued) {
-          flushQueued = true;
-          schedule(100, flushDisplay, "display flush");
-        }
-        const event = value.events[value.events.length - 1], dimensions = event.width + "x" + event.height;
-        if (event.kind !== "sample" || dimensions !== lastDimensions) log(`settings display: ${JSON.stringify(event)}`);
-        lastDimensions = dimensions;
-      });
-      function capture() {
-        const screen = chatScreen(), value = { width: screen.width, height: screen.height };
-        if (root) try {
-          const go = root.target, transform = call(go, "get_transform");
-          value.active = Boolean(call(go, "get_activeInHierarchy"));
-          const scale = call(transform, "get_localScale");
-          value.localScale = ["x", "y", "z"].map((k) => Number(scale.field(k).value));
-          const world = call(transform, "get_lossyScale");
-          value.worldScale = ["x", "y", "z"].map((k) => Number(world.field(k).value));
-          value.parents = [];
-          for (let node = call(transform, "get_parent"), depth = 0; depth < 4 && !isNull(node); depth++, node = call(node, "get_parent")) {
-            const scale2 = call(node, "get_localScale");
-            value.parents.push({ name: String(call(node, "get_name")?.content || "").slice(0, 80), scale: ["x", "y", "z"].map((k) => Number(scale2.field(k).value)) });
-          }
-          const rect = call(transform, "get_rect");
-          value.rect = [Number(rect.field("m_Width").value), Number(rect.field("m_Height").value)];
-          const canvas = go.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
-          if (!isNull(canvas)) value.canvasScale = Number(call(canvas, "get_scaleFactor"));
-        } catch (_) {
-        }
-        trace("sample", value);
-      }
-      const seen = /* @__PURE__ */ new Set();
-      for (const method of ucls("UnityEngine.Screen").methods.filter((m) => m.name === "SetResolution" && m.isStatic && m.parameterCount >= 2)) {
-        const key = method.virtualAddress.toString();
-        if (method.virtualAddress.isNull() || seen.has(key)) continue;
-        seen.add(key);
-        if (![3, 4].includes(method.parameterCount) || method.parameters[2].type.name !== "System.Boolean") continue;
-        method.implementation = function(...values) {
-          const settings = Boolean(root) && Date.now() < watchUntil || resourceSettingsOpen();
-          const sameSize = true;
-          let skip = false;
-          try {
-            const screen = chatScreen(), size = settings && globalThis.__teslScaledSize?.(values[0], values[1]);
-            skip = redundantSettingsResolution(size ? [size.width, size.height, ...values.slice(2)] : values, {
-              width: screen.width,
-              height: screen.height,
-              fullscreen: null
-            }, settings || sameSize);
-          } catch (_) {
-          }
-          watchUntil = Date.now() + 2e3;
-          trace(skip ? "SetResolution-skipped" : "SetResolution", {
-            width: values[0],
-            height: values[1],
-            fullscreen: values[2],
-            refreshRate: values.length === 4 ? values[3] : null,
-            signature: method.parameters.map((p) => p.type.name).join(",")
-          });
-          if (skip) return;
-          return method.invoke(...values);
-        };
-      }
-      hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
-        try {
-          const now = Date.now();
-          if (now < watchUntil || now >= nextSettingsCheck) nextSettingsCheck = now + 250;
-          else return;
-          if (resourceSettingsOpen() && Number(ucls("UnityEngine.Input").method("get_touchCount", 0).invoke()) > 0) {
-            watchUntil = now + 2e3;
-            if (!root && (typeof liveSettingsWindow === "function" ? liveSettingsWindow() : resourceSettingsWindow)) root = resourceSettingsWindow.target.ref(false);
-          }
-          if (now < watchUntil) {
-            if (now >= nextCapture) {
-              nextCapture = now + 250;
-              capture();
-            }
-          } else if (root) {
-            root.free();
-            root = null;
-          }
-        } catch (_) {
-        }
-      } });
-      log(`settings display: observing ${seen.size} resolution methods; per-frame samples after Settings touch`);
-    });
-    let unityLogCallbackRef = null;
-    section("persistent Unity errors", () => {
-      const application = ucls("UnityEngine.Application");
-      const subscribe = application.tryMethod("add_logMessageReceivedThreaded", 1);
-      if (subscribe && !subscribe.virtualAddress.isNull()) {
-        const delegate = Il2Cpp.delegate(subscribe.parameters[0].type.class, (message, stack, value) => {
-          const kind = enumVal(value);
-          if ([0, 1, 2, 4].includes(kind)) log(`Unity ${kind}: ${message?.content || ""}
-${stack?.content || ""}`);
-        });
-        unityLogCallbackRef = delegate.ref(false);
-        subscribe.invoke(delegate);
+    if (writeTextFile(path, JSON.stringify({ ...config, enabled: false }))) writeTextFile(latch, JSON.stringify({ applied: true }));
+  });
+  section("mobile global debug shortcut", () => {
+    try {
+      const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "null");
+      if (setup?.debugInput === "android-key-events") {
+        log("mobile debug: Android keyboard gesture backend");
         return;
       }
-      const callback = application.tryMethod("CallLogCallback", 4);
-      if (!callback || !callback.isStatic || callback.virtualAddress.isNull()) return;
-      hookAttach(callback.virtualAddress, { onEnter(args) {
-        const kind = args[2].toInt32();
-        if (![0, 1, 2, 4].includes(kind)) return;
+    } catch (_) {
+    }
+    let taps = [], startFrame = -1, keyDownFrame = -1, lastFrame = -1, began = null, lastError = "";
+    const input = ucls("UnityEngine.Input"), time = ucls("UnityEngine.Time");
+    const frame = () => Number(time.method("get_frameCount", 0).invoke());
+    function diagnostic(status, detail = "") {
+      log(`mobile debug: ${status}${detail ? ": " + detail : ""}`);
+      try {
+        writeTextFile(`${persistentPath()}/tesl-reborn-debug-status.json`, JSON.stringify({ status, detail, at: (/* @__PURE__ */ new Date()).toISOString() }));
+      } catch (_) {
+      }
+    }
+    const attached = /* @__PURE__ */ new Set();
+    function attachKey(address, name, stringKey = false) {
+      if (!address || address.isNull?.() || attached.has(address.toString())) return;
+      try {
+        hookAttach(address, {
+          onEnter(args) {
+            this.key = stringKey ? rawStr(args[0]).toLowerCase() : args[0]?.toInt32();
+          },
+          onLeave(result) {
+            if (startFrame < 0) return;
+            const current = frame();
+            if (current > startFrame + 5) {
+              startFrame = -1;
+              return;
+            }
+            if (current < startFrame || keyDownFrame >= 0 && current !== keyDownFrame) return;
+            const any = /anyKey/.test(name), down = /Down/.test(name);
+            const d = stringKey ? this.key === "d" : this.key === 100;
+            const ctrl = stringKey ? ["left ctrl", "right ctrl", "left control", "right control"].includes(this.key) : [305, 306].includes(this.key);
+            if (!any && !d && !ctrl) return;
+            if (d && down && keyDownFrame < 0) {
+              keyDownFrame = current;
+              diagnostic("ctrl-d-forwarded", name);
+            }
+            if (any || d || ctrl && !down) result.replace(ptr(1));
+          }
+        });
+        attached.add(address.toString());
+      } catch (error) {
+        log(`mobile debug: cannot hook ${name}: ${error}`);
+      }
+    }
+    for (const method of input.methods.filter((m) => /^(GetKey(?:Down)?(?:Int|String)?|get_anyKey(?:Down)?)$/.test(m.name))) {
+      const stringKey = method.parameters[0]?.type.name === "System.String";
+      try {
+        attachKey(method.virtualAddress, method.name, stringKey);
+      } catch (error) {
+        log(`mobile debug: input method unavailable ${method.name}: ${error}`);
+      }
+    }
+    try {
+      const resolve = new NativeFunction(Il2Cpp.module.getExportByName("il2cpp_resolve_icall"), "pointer", ["pointer"]);
+      for (const name of ["GetKeyInt", "GetKeyDownInt", "GetKeyString", "GetKeyDownString", "get_anyKey", "get_anyKeyDown"]) {
+        const signature = name.endsWith("Int") ? "UnityEngine.KeyCode" : name.endsWith("String") ? "System.String" : "";
+        for (const suffix of ["", `(${signature})`]) {
+          const address = resolve(Memory.allocUtf8String(`UnityEngine.Input::${name}${suffix}`));
+          attachKey(address, name, name.endsWith("String"));
+        }
+      }
+    } catch (error) {
+      log(`mobile debug: native input resolution unavailable: ${error}`);
+    }
+    const update = cls(img, "SparkleServices.ServicesManager").method("Update", 0);
+    hookAttach(update.virtualAddress, {
+      // Called by the frame bus only while the screen is touched (and the frame after).
+      touchOnly: true,
+      onEnter() {
         try {
-          const message = args[0].isNull() ? "" : new Il2Cpp.String(args[0]).content || "";
-          const stack = args[1].isNull() ? "" : new Il2Cpp.String(args[1]).content || "";
-          log(`Unity ${kind}: ${message}
-${stack}`);
+          const current = frame();
+          if (current === lastFrame) return;
+          lastFrame = current;
+          const count = Number(input.method("get_touchCount", 0).invoke());
+          if (count !== 1) {
+            began = null;
+            if (count > 1) taps = [];
+            return;
+          }
+          const touch = input.method("GetTouch", 1).invoke(0), phase = enumVal(touch.method("get_phase", 0).invoke());
+          const point = uiXY(touch.method("get_position", 0).invoke()), screen = chatScreen();
+          const size = Math.max(64, Math.min(160, Math.min(screen.width, screen.height) * 0.1));
+          const inside = point.x >= 0 && point.x <= size && point.y >= screen.height - size && point.y <= screen.height;
+          if (phase === 0) {
+            began = inside ? { x: point.x, y: point.y, at: Date.now() } : null;
+            return;
+          }
+          if (phase === 4) {
+            began = null;
+            taps = [];
+            return;
+          }
+          if (phase !== 3) return;
+          const now = Date.now();
+          if (!inside || !began || now - began.at > 400 || Math.hypot(point.x - began.x, point.y - began.y) > size * 0.35) {
+            began = null;
+            taps = [];
+            return;
+          }
+          began = null;
+          taps = taps.filter((at) => now - at < 1100);
+          taps.push(now);
+          if (taps.length >= 3) {
+            taps = [];
+            startFrame = current + 1;
+            keyDownFrame = -1;
+            diagnostic("gesture-detected");
+          }
+        } catch (error) {
+          const message = String(error);
+          if (message !== lastError) {
+            lastError = message;
+            diagnostic("input-error", message);
+          }
+        }
+      }
+    });
+    diagnostic("ready", `${attached.size} input hooks; original Ctrl+D permissions preserved`);
+  });
+  section("battle cameras", () => {
+    const toLayer = (name) => {
+      try {
+        return Number(ucls("UnityEngine.LayerMask").method("NameToLayer", 1).invoke(Il2Cpp.string(name)));
+      } catch (_) {
+        return -1;
+      }
+    };
+    schedule(3e3, () => {
+      let name18 = "?";
+      try {
+        name18 = String(ucls("UnityEngine.LayerMask").method("LayerToName", 1).invoke(18)?.content ?? "?");
+      } catch (_) {
+      }
+      log(`cameras: layers MatchDragging=${toLayer("MatchDragging")} RuneWaveInput=${toLayer("RuneWaveInput")} Orthographic=${toLayer("Orthographic")} 3DUI=${toLayer("3DUI")} UI=${toLayer("UI")}; layer 18 (Camera_Targeting) is "${name18}"`);
+    }, "camera layer names");
+  });
+  section("debug window blocks the UI below", () => {
+    const owner = img.classes.find((c) => c.name === "DebugRuntime");
+    if (!owner) throw Error("DebugRuntime not found");
+    let runtime = null, searched = false, blocked = null;
+    const services = cls(img, "SparkleServices.ServicesManager");
+    for (const method of owner.methods.filter((m) => ["Awake", "Start"].includes(m.name) && !m.isStatic && !m.virtualAddress.isNull())) {
+      hookAttach(method.virtualAddress, { onEnter(args) {
+        this.self = args[0];
+      }, onLeave() {
+        try {
+          if (runtime) runtime.free();
+          runtime = new Il2Cpp.Object(this.self).ref(false);
         } catch (_) {
         }
       } });
-    });
-    const LEGACY_TEST_FEED = "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
-    const MAIN_TEST_FEED = "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
-    function migrateUpdateChannel(io) {
-      let config;
-      try {
-        config = JSON.parse(io.read() || "null");
-      } catch (_) {
-        return "unreadable";
-      }
-      if (!config || typeof config !== "object" || config.feedUrl !== LEGACY_TEST_FEED) return "unchanged";
-      config.feedUrl = MAIN_TEST_FEED;
-      return io.write(JSON.stringify(config)) ? "migrated" : "write-failed";
     }
-    section("Reborn Android updater and diagnostics", () => {
+    const eventSystem = () => ucls("UnityEngine.EventSystems.EventSystem").method("get_current").invoke();
+    const release = () => {
+      if (!blocked) return;
       try {
-        const path = `${persistentPath()}/tesl-reborn-updater.json`;
-        const result = migrateUpdateChannel({
-          read: () => readTextFile(path),
-          write: (text) => writeTextFile(path + ".part", text) && atomicRename(path + ".part", path)
-        });
-        if (result !== "unchanged") log(`updater: channel migration ${result}${result === "migrated" ? " to the main repository test branch" : ""}`);
-      } catch (error) {
-        log(`updater: channel migration failed: ${error}`);
+        if (unityAlive(blocked.target)) call(blocked.target, "set_enabled", true);
+      } catch (_) {
       }
-      const uriClass = ucls("System.Uri");
-      log(`HTTP URI assembly: ${uriClass.image.name}`);
-      log("Android feature hooks are active; server data and UI results are checked separately");
-      const updater = globalThis.TeslRebornUpdater;
-      if (updater) {
-        updater.ready();
+      blocked.free();
+      blocked = null;
+      log("debug window: game UI input back on");
+    };
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
+      try {
+        if (!runtime && !searched) {
+          searched = true;
+          const found = ucls("UnityEngine.Object").method("FindObjectOfType").overload("System.Type").invoke(owner.type.object);
+          if (!isNull(found)) runtime = found.ref(false);
+        }
+        let open = false;
+        if (runtime && unityAlive(runtime.target)) {
+          const behaviour = runtime.target;
+          open = Boolean(call(behaviour, "get_isActiveAndEnabled")) && Boolean(behaviour.field("_displayState").value.field("mainWindow").value);
+          if (open) try {
+            if (Boolean(call(services.method("get_Instance").invoke(), "get_HideDebugUi"))) open = false;
+          } catch (_) {
+          }
+        }
+        if (open && !blocked) {
+          const current = eventSystem();
+          if (unityAlive(current) && Boolean(call(current, "get_enabled"))) {
+            call(current, "set_enabled", false);
+            blocked = current.ref(false);
+            log("debug window: game UI input off while it is open");
+          }
+        } else if (!open) release();
+      } catch (_) {
+        release();
+      }
+    } });
+  });
+  function createUpdateNotices(updater, io) {
+    let downloadStarted = false, lastStatus = "";
+    const saved = io.readNotice() || {}, current = updater.current();
+    const previous = io.readStatus()?.previous;
+    const priorRevision = Number(saved.shownRevision || previous?.revision || 0);
+    if (Number.isSafeInteger(current?.revision) && current.revision > priorRevision) {
+      if (priorRevision > 0) io.emit("applied", current.revision, () => io.writeNotice({ shownRevision: current.revision }));
+      else io.writeNotice({ shownRevision: current.revision });
+    }
+    function poll() {
+      const status = updater.status();
+      if (status === lastStatus) return;
+      lastStatus = status;
+      if (status === "restart-required") {
+        downloadStarted = false;
+        io.emit("restart", 0);
+      } else if (status === "update-error" && downloadStarted) {
+        downloadStarted = false;
+        io.emit("error", 0);
+      }
+    }
+    return {
+      poll,
+      check(get) {
+        let requests = 0;
         try {
-          installUpdateNotices(updater);
-        } catch (error) {
-          log(`update notices unavailable: ${error}`);
-          schedule(1e3, () => updater.check((url, cb) => httpGet(url, false, cb, true)));
+          updater.check((url, callback) => {
+            if (++requests === 2) {
+              downloadStarted = true;
+              io.emit("downloading", 0);
+            }
+            get(url, (status, body) => {
+              callback(status, body);
+              poll();
+            });
+          });
+        } finally {
+          poll();
         }
       }
-    });
-    const prefetchMissing = [];
-    for (const name of ["System.Uri", "TMPro.TMP_FontAsset", "TMPro.TMP_Sprite", "TMPro.TMP_SpriteAsset", "TMPro.TextAlignmentOptions", "TMPro.TextMeshProUGUI", "UIResourceManager", "UnityEngine.Animator", "UnityEngine.Application", "UnityEngine.Camera", "UnityEngine.Canvas", "UnityEngine.EventSystems.EventSystem", "UnityEngine.Events.UnityAction", "UnityEngine.Font", "UnityEngine.GameObject", "UnityEngine.ImageConversion", "UnityEngine.Input", "UnityEngine.LayerMask", "UnityEngine.Material", "UnityEngine.Object", "UnityEngine.PlayerPrefs", "UnityEngine.QualitySettings", "UnityEngine.RectTransform", "UnityEngine.RectTransformUtility", "UnityEngine.Renderer", "UnityEngine.Resources", "UnityEngine.SceneManagement.SceneManager", "UnityEngine.Screen", "UnityEngine.ScriptableObject", "UnityEngine.Shader", "UnityEngine.Sprite", "UnityEngine.SystemInfo", "UnityEngine.TextAnchor", "UnityEngine.Texture2D", "UnityEngine.TextureFormat", "UnityEngine.Time", "UnityEngine.UI.Button", "UnityEngine.UI.GraphicRaycaster", "UnityEngine.UI.InputField", "UnityEngine.UI.LayoutRebuilder", "UnityEngine.UI.RectMask2D", "UnityEngine.UI.ScrollRect", "UnityEngine.UI.Text"]) {
-      try {
-        ucls(name);
-      } catch (_) {
-        prefetchMissing.push(name);
+    };
+  }
+  function updateNoticeText(kind, revision, language) {
+    const messages = {
+      en: {
+        downloading: "Downloading a Reborn update. You can keep playing.",
+        restart: "Reborn update downloaded and verified. Restart the game when convenient to apply it.",
+        applied: `Reborn update ${revision} applied.`,
+        error: "Reborn update could not be downloaded or verified. You can keep playing; it will retry on the next launch."
+      },
+      ru: {
+        downloading: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u0435\u0442\u0441\u044F \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn. \u041C\u043E\u0436\u043D\u043E \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u0442\u044C \u0438\u0433\u0440\u0430\u0442\u044C.",
+        restart: "\u041E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn \u0441\u043A\u0430\u0447\u0430\u043D\u043E \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E. \u041F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 \u0438\u0433\u0440\u0443, \u043A\u043E\u0433\u0434\u0430 \u0431\u0443\u0434\u0435\u0442 \u0443\u0434\u043E\u0431\u043D\u043E, \u0447\u0442\u043E\u0431\u044B \u043F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C \u0435\u0433\u043E.",
+        applied: `\u041E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn ${revision} \u043F\u0440\u0438\u043C\u0435\u043D\u0435\u043D\u043E.`,
+        error: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u043B\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn. \u041C\u043E\u0436\u043D\u043E \u0438\u0433\u0440\u0430\u0442\u044C \u0434\u0430\u043B\u044C\u0448\u0435; \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u043C \u043F\u0440\u0438 \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u043C \u0437\u0430\u043F\u0443\u0441\u043A\u0435."
+      },
+      de: {
+        downloading: "Ein Reborn-Update wird heruntergeladen. Du kannst weiterspielen.",
+        restart: "Reborn-Update heruntergeladen und gepr\xFCft. Starte das Spiel neu, wenn es dir passt, um es anzuwenden.",
+        applied: `Reborn-Update ${revision} angewendet.`,
+        error: "Reborn-Update konnte nicht geladen oder gepr\xFCft werden. Du kannst weiterspielen; neuer Versuch beim n\xE4chsten Start."
+      },
+      es: {
+        downloading: "Descargando una actualizaci\xF3n de Reborn. Puedes seguir jugando.",
+        restart: "Actualizaci\xF3n de Reborn descargada y verificada. Reinicia el juego cuando quieras para aplicarla.",
+        applied: `Actualizaci\xF3n ${revision} de Reborn aplicada.`,
+        error: "No se pudo descargar o verificar la actualizaci\xF3n de Reborn. Puedes seguir jugando; se reintentar\xE1 al iniciar."
+      },
+      fr: {
+        downloading: "T\xE9l\xE9chargement d\u2019une mise \xE0 jour Reborn. Vous pouvez continuer \xE0 jouer.",
+        restart: "Mise \xE0 jour Reborn t\xE9l\xE9charg\xE9e et v\xE9rifi\xE9e. Red\xE9marrez le jeu quand vous le souhaitez pour l\u2019appliquer.",
+        applied: `Mise \xE0 jour Reborn ${revision} appliqu\xE9e.`,
+        error: "Impossible de t\xE9l\xE9charger ou v\xE9rifier la mise \xE0 jour Reborn. Vous pouvez jouer ; nouvel essai au prochain lancement."
+      },
+      it: {
+        downloading: "Download di un aggiornamento Reborn. Puoi continuare a giocare.",
+        restart: "Aggiornamento Reborn scaricato e verificato. Riavvia il gioco quando vuoi per applicarlo.",
+        applied: `Aggiornamento Reborn ${revision} applicato.`,
+        error: "Impossibile scaricare o verificare l\u2019aggiornamento Reborn. Puoi giocare; nuovo tentativo al prossimo avvio."
+      },
+      pl: {
+        downloading: "Pobieranie aktualizacji Reborn. Mo\u017Cesz gra\u0107 dalej.",
+        restart: "Aktualizacja Reborn pobrana i zweryfikowana. Uruchom gr\u0119 ponownie w dogodnym momencie, aby j\u0105 zastosowa\u0107.",
+        applied: `Aktualizacja Reborn ${revision} zastosowana.`,
+        error: "Nie uda\u0142o si\u0119 pobra\u0107 lub sprawdzi\u0107 aktualizacji Reborn. Mo\u017Cesz gra\u0107 dalej; ponowimy pr\xF3b\u0119 przy nast\u0119pnym uruchomieniu."
+      },
+      pt: {
+        downloading: "Baixando uma atualiza\xE7\xE3o do Reborn. Voc\xEA pode continuar jogando.",
+        restart: "Atualiza\xE7\xE3o do Reborn baixada e verificada. Reinicie o jogo quando quiser para aplic\xE1-la.",
+        applied: `Atualiza\xE7\xE3o ${revision} do Reborn aplicada.`,
+        error: "N\xE3o foi poss\xEDvel baixar ou verificar a atualiza\xE7\xE3o do Reborn. Voc\xEA pode jogar; nova tentativa na pr\xF3xima inicializa\xE7\xE3o."
+      },
+      tr: {
+        downloading: "Reborn g\xFCncellemesi indiriliyor. Oynamaya devam edebilirsiniz.",
+        restart: "Reborn g\xFCncellemesi indirildi ve do\u011Fruland\u0131. Uygulamak i\xE7in uygun oldu\u011Funuzda oyunu yeniden ba\u015Flat\u0131n.",
+        applied: `Reborn ${revision} g\xFCncellemesi uyguland\u0131.`,
+        error: "Reborn g\xFCncellemesi indirilemedi veya do\u011Frulanamad\u0131. Oynamaya devam edebilirsiniz; sonraki a\xE7\u0131l\u0131\u015Fta yeniden denenecek."
+      }
+    };
+    return (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
+  }
+  let cachedPortCaption = "";
+  let splashVersionAnchor = { x: 0.5, y: 0.34 }, splashAnchorReady = false;
+  function locateSplashVersion() {
+    if (splashAnchorReady) return splashVersionAnchor;
+    try {
+      const type = cls(img, "SplashWin"), values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(type.type.object);
+      for (let i = 0; i < values.length; i++) {
+        const self = values.get(i);
+        if (!call(call(self, "get_gameObject"), "get_activeInHierarchy")) continue;
+        const logo = self.field("_logoImage").value, rect = call(logo, "get_rectTransform"), bounds = call(rect, "get_rect");
+        const point = unityStruct("UnityEngine.Vector3", {
+          x: Number(bounds.field("m_XMin").value) + Number(bounds.field("m_Width").value) / 2,
+          y: Number(bounds.field("m_YMin").value) - 12,
+          z: 0
+        });
+        const world = call(rect, "TransformPoint", point), canvas = call(logo, "get_canvas");
+        let camera = null;
+        try {
+          camera = call(canvas, "get_worldCamera");
+        } catch (_) {
+        }
+        const screen = ucls("UnityEngine.RectTransformUtility").method("WorldToScreenPoint", 2).invoke(camera, world), size = chatScreen();
+        const x = Number(screen.field("x").value) / size.width, y = Number(screen.field("y").value) / size.height;
+        if (x > 0.1 && x < 0.9 && y > 0.1 && y < 0.9) {
+          splashVersionAnchor = { x, y: Math.max(0.34, y) };
+          splashAnchorReady = true;
+          log("loading version: anchored below native SplashWin logo");
+        }
+        break;
+      }
+    } catch (_) {
+    }
+    return splashVersionAnchor;
+  }
+  let loginAnchorCheck = 0, loginAnchor = null, loginAnchorLogged = false;
+  let loginAnchorError = "";
+  function worldBottom(node) {
+    const rect = call(node, "get_rect"), scale = Number(call(node, "get_lossyScale").field("y").value);
+    return Number(call(node, "get_position").field("y").value) + Number(rect.field("m_YMin").value) * scale;
+  }
+  function locateLoginVersion(frame) {
+    if (Date.now() < loginAnchorCheck) return loginAnchor;
+    loginAnchorCheck = Date.now() + 500;
+    loginAnchor = null;
+    try {
+      const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(cls(img, "LoginWin").type.object);
+      for (let i = 0; i < values.length; i++) {
+        const self = values.get(i);
+        if (!unityAlive(self) || !call(call(self, "get_gameObject"), "get_activeInHierarchy")) continue;
+        let low = Infinity;
+        for (const name of ["_loginBtn", "_unameForgotBtn", "_pwdForgotBtn"]) {
+          const button = self.field(name).value;
+          if (!unityAlive(button) || !call(call(button, "get_gameObject"), "get_activeInHierarchy")) continue;
+          low = Math.min(low, worldBottom(call(button, "get_transform")));
+        }
+        if (!Number.isFinite(low)) continue;
+        const frameRect = call(frame, "get_rect"), frameScale = Number(call(frame, "get_lossyScale").field("y").value);
+        const height = Number(frameRect.field("m_Height").value) * frameScale;
+        if (!(height > 0)) continue;
+        const y = (low - worldBottom(frame)) / height;
+        loginAnchor = { x: 0.5, y: Math.min(0.9, Math.max(0.08, y - 0.02)) };
+        if (!loginAnchorLogged) {
+          loginAnchorLogged = true;
+          log(`loading version: below the login form at ${loginAnchor.y.toFixed(2)}`);
+        }
+        break;
+      }
+    } catch (error) {
+      const detail = String(error);
+      if (detail !== loginAnchorError) {
+        loginAnchorError = detail;
+        log(`loading version: login form placement failed: ${detail}`);
       }
     }
-    if (prefetchMissing.length) log(`classes not prefetched: ${prefetchMissing.join(", ")}`);
-    log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
-    log("setup finished");
+    return loginAnchor;
+  }
+  function portVersionCaption() {
+    if (cachedPortCaption) return cachedPortCaption;
+    let build = "APK legacy";
+    try {
+      const setup = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-setup.json`) || "{}");
+      const builder = setup.builder;
+      if (builder && typeof builder === "object") {
+        const number = Number(builder.build), channel2 = builder.channel === "stable" ? "stable" : "test";
+        build = `${Number.isSafeInteger(number) && number > 0 ? `Builder ${number}` : "local build"} (${channel2})`;
+      } else if (Number.isSafeInteger(setup.androidBuild)) build = `APK ${setup.androidBuild}`;
+    } catch (_) {
+    }
+    const revision = globalThis.TeslRebornUpdater?.current()?.revision;
+    let channel = "";
+    try {
+      const feed = String(JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-updater.json`) || "{}").feedUrl || "");
+      channel = /\/updates\/stable\//.test(feed) ? " (stable)" : /\/updates\/test\//.test(feed) ? " (test)" : "";
+    } catch (_) {
+    }
+    return cachedPortCaption = `Reborn ${PLUGIN_VERSION}
+Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
+  }
+  function noticeCanvasProperty(canvas, name, value) {
+    const method = canvas.tryMethod(name, value === void 0 ? 0 : 1);
+    if (!method) {
+      const error = new Error(`Notice Canvas managed binding unavailable: ${name}`);
+      error.noticeCanvasUnavailable = true;
+      throw error;
+    }
+    if (value === void 0) return method.invoke();
+    const type = method.parameters[0].type.class;
+    return method.invoke(type.isEnum ? enumBox(type, value) : value);
+  }
+  function uiSystemText(go, text, size) {
+    let label = null;
+    try {
+      const type = ucls("UnityEngine.UI.Text");
+      if (!type.tryMethod("set_font", 1)) throw Error("Legacy Text setters stripped");
+      const font = ucls("UnityEngine.Resources").method("GetBuiltinResource").overload("System.Type", "System.String").invoke(ucls("UnityEngine.Font").type.object, Il2Cpp.string("Arial.ttf"));
+      if (isNull(font)) throw Error("Built-in notice font is unavailable");
+      label = uiAdd(go, "UnityEngine.UI.Text");
+      call(label, "set_font", font);
+      call(label, "set_fontSize", size);
+      call(label, "set_raycastTarget", false);
+      call(label, "set_supportRichText", false);
+      call(label, "set_alignment", uiEnum("UnityEngine.TextAnchor", "MiddleCenter"));
+      call(label, "set_color", rgba(1, 1, 1, 1));
+      call(label, "set_text", Il2Cpp.string(text));
+      return label;
+    } catch (_) {
+      if (label) try {
+        ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(label);
+      } catch (_2) {
+      }
+      return uiText(go, text, size);
+    }
+  }
+  function noticeTextLayout(label, right = false) {
+    const tmp = label.class.type.name === "TMPro.TextMeshProUGUI";
+    call(label, "set_alignment", uiEnum(
+      tmp ? "TMPro.TextAlignmentOptions" : "UnityEngine.TextAnchor",
+      right ? tmp ? "Right" : "MiddleRight" : tmp ? "Center" : "MiddleCenter"
+    ));
+    if (!right) {
+      const options = tmp ? [["set_enableAutoSizing", true], ["set_fontSizeMin", 18], ["set_fontSizeMax", 22]] : [["set_resizeTextForBestFit", true], ["set_resizeTextMinSize", 18], ["set_resizeTextMaxSize", 22]];
+      for (const [name, value] of options) label.tryMethod(String(name), 1)?.invoke(value);
+    }
+  }
+  function isLoadingVersionScreen(sceneName, names) {
+    const loading = /^(?:.*[\/ _-])?(?:loading|bootstrap|splash)(?:screen|scene|canvas|win|controller)?(?:\(clone\))?$/i;
+    return loading.test(String(sceneName || "")) || names.some((name) => loading.test(String(name)));
+  }
+  let startupVersionComplete = false, startupReadyHooked = false;
+  let versionScreenCheck = 0, versionScreenState = { visible: false, scene: "" };
+  function installStartupVersionTracking() {
+    try {
+      const owner = img.classes.find((c) => c.name === "MainMenuNavManager");
+      const init = owner?.methods.find((m) => m.name === "Init" && !m.isStatic && !m.virtualAddress.isNull());
+      if (init) {
+        hookAttach(init.virtualAddress, { onLeave() {
+          startupVersionComplete = true;
+          versionScreenCheck = 0;
+        } });
+        startupReadyHooked = true;
+      }
+    } catch (error) {
+      log(`loading version readiness: ${error}`);
+    }
+  }
+  function startupVersionVisible(scene, ready) {
+    return !ready && !/^(?:mainmenu|battle|match|gameboard|login)$/i.test(String(scene || ""));
+  }
+  function loadingVersionState() {
+    if (Date.now() < versionScreenCheck) return versionScreenState;
+    versionScreenCheck = Date.now() + 500;
+    if (startupVersionComplete) return versionScreenState = { visible: false, scene: versionScreenState.scene };
+    let scene = "", names = [];
+    try {
+      const value = ucls("UnityEngine.SceneManagement.SceneManager").method("GetActiveScene", 0).invoke();
+      scene = String(value.method("get_name", 0).invoke()?.content || "");
+    } catch (_) {
+    }
+    try {
+      const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+      for (const owner of img.classes.filter((c) => /^(?:LoadingScreen|LoadingWin|LoadingScreenController|GameLoadingScreen)$/.test(c.name) && Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"))) {
+        const values = find.invoke(owner.type.object);
+        for (let i = 0; i < values.length; i++) {
+          const go = call(values.get(i), "get_gameObject");
+          if (call(go, "get_activeInHierarchy")) names.push(String(call(go, "get_name")?.content || owner.name));
+        }
+      }
+    } catch (_) {
+    }
+    if (!startupVersionComplete) try {
+      for (const name of ["BoardInputController", "MatchIntroWin"]) {
+        const owner = img.classes.find((c) => c.name === name);
+        if (!owner) continue;
+        const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(owner.type.object);
+        for (let i = 0; i < values.length; i++) if (call(call(values.get(i), "get_gameObject"), "get_activeInHierarchy")) {
+          startupVersionComplete = true;
+          break;
+        }
+      }
+    } catch (_) {
+    }
+    if (!startupVersionComplete && !startupReadyHooked) try {
+      const owner = img.classes.find((c) => c.name === "MainMenuNavManager");
+      if (owner) {
+        const values = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(owner.type.object);
+        for (let i = 0; i < values.length; i++) {
+          const go = call(values.get(i), "get_gameObject");
+          if (call(go, "get_activeInHierarchy") && Number(call(call(go, "get_transform"), "get_childCount")) > 0) startupVersionComplete = true;
+        }
+      }
+    } catch (_) {
+    }
+    return versionScreenState = { visible: startupVersionVisible(scene, startupVersionComplete), scene };
+  }
+  const fpsCounter = {
+    base: 0,
+    since: Date.now(),
+    value: 0,
+    get frames() {
+      return (globalThis.__teslFrameBus?.frames() ?? 0) - this.base;
+    },
+    set frames(value) {
+      this.base = (globalThis.__teslFrameBus?.frames() ?? 0) - value;
+    }
+  };
+  function fpsMeterEnabled() {
+    try {
+      const graphics = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-graphics.json`) || "null");
+      if (typeof graphics?.showFps === "boolean") return graphics.showFps;
+    } catch (_) {
+    }
+    try {
+      const updater = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-updater.json`) || "null");
+      return /\/updates\/test\//.test(String(updater?.feedUrl || ""));
+    } catch (_) {
+      return false;
+    }
+  }
+  function fpsSample(counter, now) {
+    const elapsed = now - counter.since;
+    if (elapsed < 1e3) return counter.value;
+    counter.value = Math.round(counter.frames * 1e3 / elapsed);
+    counter.frames = 0;
+    counter.since = now;
+    return counter.value;
+  }
+  function createUpdateBanner() {
+    const showFps = fpsMeterEnabled();
+    let fps = null, fpsText = null, fpsLogAt = 0, lastFrameAt = 0;
+    let badgeShown = null, fpsTop = null, fpsShown = null, badgeCaption = null, badgePlacedAt = 0;
+    let root = null, label = null, canvas = null, panel = null, badge = null, badgeText = null;
+    let disabled = false, canvasScale = 1, nested2 = false, hostRetryAt = 0, hostReportAt = 0;
+    let hostKey = "", hostCheckAt = 0, shownVersion = null, hostRoots = [];
+    let loadingState = null;
+    let message = null, shownAt = 0, lastError = "";
+    const unityObject = ucls("UnityEngine.Object");
+    const alive = (value) => !isNull(value) && !unityObject.method("op_Equality").invoke(value, NULL);
+    function overlayHost() {
+      const values = ucls("UnityEngine.Object").method("FindObjectsOfType").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+      let host = null, rank = -Infinity;
+      const seen = hostRoots = [];
+      for (let i = 0; i < values.length; i++) {
+        const candidate = values.get(i);
+        if (!alive(candidate) || !call(candidate, "get_isRootCanvas")) continue;
+        const go = call(candidate, "get_gameObject");
+        if (!call(go, "get_activeInHierarchy")) continue;
+        const mode = enumVal(call(candidate, "get_renderMode")), sorting = Number(call(candidate, "get_sortingOrder"));
+        seen.push(`${String(call(go, "get_name")?.content || "?")}:${mode}/${sorting}`);
+        if (mode !== 0 && mode !== 1) continue;
+        const score = (mode === 0 ? 1e6 : 0) + sorting;
+        if (score >= rank) {
+          host = candidate;
+          rank = score;
+        }
+      }
+      if (!host && Date.now() >= hostReportAt) {
+        hostReportAt = Date.now() + 3e4;
+        log(`update notice: no screen Canvas to host it; live roots ${seen.slice(0, 12).join(", ") || "none"}`);
+      }
+      return host;
+    }
+    let reportedCaption = "", badgeBackground = null, gradientTexture = null, gradientSprite = null;
+    function discard() {
+      if (root) {
+        try {
+          ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(root.target);
+        } catch (_) {
+        }
+        root.free();
+      }
+      for (const asset of [gradientSprite, gradientTexture]) if (asset) try {
+        ucls("UnityEngine.Object").method("Destroy").overload("UnityEngine.Object").invoke(asset);
+      } catch (_) {
+      }
+      gradientTexture = gradientSprite = badgeBackground = null;
+      fps = fpsText = null;
+      root = label = canvas = panel = badge = badgeText = null;
+      badgeShown = fpsTop = fpsShown = badgeCaption = null;
+      badgePlacedAt = 0;
+    }
+    function ensure(wanted) {
+      if (disabled) return;
+      let better = null;
+      if (root) {
+        if (!alive(root.target)) discard();
+        else {
+          if (!nested2 || !wanted || Date.now() < hostCheckAt || globalThis.__teslInBattle) return;
+          hostCheckAt = Date.now() + 1e4;
+          better = overlayHost();
+          if (!better || better.handle.toString() === hostKey) return;
+          discard();
+        }
+      }
+      nested2 = !ucls("UnityEngine.Canvas").tryMethod("set_renderMode", 1);
+      let host = better;
+      if (nested2 && !host) {
+        if (Date.now() < hostRetryAt) return;
+        host = overlayHost();
+        if (!host) {
+          hostRetryAt = Date.now() + 2e3;
+          return;
+        }
+      }
+      if (host) {
+        hostKey = host.handle.toString();
+        hostCheckAt = Date.now() + 2e3;
+      }
+      const go = newWith(
+        ucls("UnityEngine.GameObject"),
+        Il2Cpp.string("RebornUpdateNotice"),
+        Il2Cpp.array(Il2Cpp.corlib.class("System.Type"), [ucls("UnityEngine.RectTransform").type.object])
+      );
+      root = go.ref(false);
+      try {
+        canvas = uiAdd(go, "UnityEngine.Canvas");
+        if (!nested2) {
+          noticeCanvasProperty(canvas, "set_renderMode", 0);
+          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+          noticeCanvasProperty(canvas, "set_scaleFactor", 1);
+          canvasScale = 1;
+        } else {
+          call(go, "set_layer", Number(call(call(host, "get_gameObject"), "get_layer")));
+          call(go, "get_transform").method("SetParent").overload("UnityEngine.Transform", "System.Boolean").invoke(call(host, "get_transform"), false);
+          uiStretch(uiRect(go));
+          noticeCanvasProperty(canvas, "set_overrideSorting", true);
+          noticeCanvasProperty(canvas, "set_sortingOrder", 32760);
+          canvasScale = Number(call(host, "get_scaleFactor")) || 1;
+          log(`update notice: nested under ${String(call(call(host, "get_gameObject"), "get_name")?.content || "?")} (order ${Number(call(host, "get_sortingOrder"))}); live roots ${hostRoots.slice(0, 12).join(", ")}`);
+        }
+        panel = uiNew("Banner", call(go, "get_transform"));
+        const background = uiAdd(panel, "UnityEngine.UI.Image");
+        call(background, "set_color", rgba(0.09, 0.11, 0.14, 0.95));
+        call(background, "set_raycastTarget", false);
+        const text = uiNew("Message", call(panel, "get_transform"));
+        uiStretch(uiRect(text));
+        call(uiRect(text), "set_offsetMin", vec2(16, 10));
+        call(uiRect(text), "set_offsetMax", vec2(-16, -10));
+        label = uiSystemText(text, "", 22);
+        noticeTextLayout(label);
+        badge = uiNew("PortVersion", call(go, "get_transform"));
+        badgeBackground = uiAdd(badge, "UnityEngine.UI.Image");
+        call(badgeBackground, "set_raycastTarget", false);
+        call(badgeBackground, "set_color", rgba(0, 0, 0, 0.8));
+        call(badgeBackground, "set_color", rgba(0, 0, 0, 0));
+        for (let i = 0; i < 32; i++) {
+          const strip = uiNew("Fade" + i, call(badge, "get_transform")), rect = uiRect(strip);
+          call(rect, "set_anchorMin", vec2(i / 32, 0));
+          call(rect, "set_anchorMax", vec2((i + 1) / 32, 1));
+          call(rect, "set_offsetMin", vec2(0, 0));
+          call(rect, "set_offsetMax", vec2(0, 0));
+          const graphic = uiAdd(strip, "UnityEngine.UI.Image"), t = (i + 0.5) / 32;
+          call(graphic, "set_color", rgba(0, 0, 0, Math.min(1, Math.min(t, 1 - t) * 3) * 0.8));
+          call(graphic, "set_raycastTarget", false);
+        }
+        const badgeLabel = uiNew("RebornPluginVersion", call(badge, "get_transform"));
+        uiStretch(uiRect(badgeLabel));
+        badgeText = uiSystemText(badgeLabel, "", 26);
+        try {
+          call(badgeText, badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "set_richText" : "set_supportRichText", true);
+        } catch (_) {
+        }
+        call(badgeText, "set_alignment", uiEnum(badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "TMPro.TextAlignmentOptions" : "UnityEngine.TextAnchor", badgeText.class.type.name === "TMPro.TextMeshProUGUI" ? "Center" : "MiddleCenter"));
+        call(badgeText, "set_color", rgba(1, 1, 1, 1));
+        if (showFps) {
+          fps = uiNew("RebornFps", call(go, "get_transform"));
+          const back = uiAdd(fps, "UnityEngine.UI.Image");
+          call(back, "set_color", rgba(0, 0, 0, 0.6));
+          call(back, "set_raycastTarget", false);
+          const inner = uiNew("Value", call(fps, "get_transform"));
+          uiStretch(uiRect(inner));
+          fpsText = uiSystemText(inner, "", 22);
+          noticeTextLayout(fpsText);
+          call(fpsText, "set_color", rgba(0.4, 1, 0.4, 1));
+        }
+        if (!nested2) ucls("UnityEngine.Object").method("DontDestroyOnLoad").overload("UnityEngine.Object").invoke(go);
+        call(panel, "SetActive", false);
+      } catch (error) {
+        if (error?.noticeCanvasUnavailable) disabled = true;
+        discard();
+        throw error;
+      }
+    }
+    return {
+      show(kind, revision, onShown) {
+        message = { kind, revision, onShown, duration: kind === "restart" ? 1e4 : 6e3 };
+        shownAt = 0;
+      },
+      tick() {
+        if (disabled) return;
+        if (message && shownAt && Date.now() - shownAt >= message.duration) {
+          try {
+            if (panel) call(panel, "SetActive", false);
+          } catch (_) {
+            discard();
+          }
+          message = null;
+        }
+        try {
+          const versionScreen = loadingVersionState();
+          ensure(versionScreen.visible || Boolean(message) || showFps);
+          if (!root) return;
+          const screen = chatScreen();
+          const scale = nested2 ? Math.max(0.1, Number(call(call(canvas, "get_rootCanvas"), "get_scaleFactor")) || canvasScale) : Math.max(0.1, Math.min(screen.width / 1280, screen.height / 720));
+          if (nested2) canvasScale = scale;
+          else if (Math.abs(scale - canvasScale) >= 0.01) {
+            noticeCanvasProperty(canvas, "set_scaleFactor", scale);
+            canvasScale = scale;
+          }
+          const width = Math.min(1e3, screen.width / scale - 32);
+          let top = 16;
+          try {
+            const safe = ucls("UnityEngine.Screen").method("get_safeArea", 0).invoke();
+            top += Math.max(0, screen.height - Number(call(safe, "get_yMax"))) / scale;
+          } catch (_) {
+          }
+          if (versionScreen.visible && Date.now() >= badgePlacedAt + 1e3) {
+            badgePlacedAt = Date.now();
+            const badgeAnchor = locateLoginVersion(call(root.target, "get_transform")) || locateSplashVersion();
+            uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
+          }
+          if (badgeShown !== versionScreen.visible) {
+            badgeShown = versionScreen.visible;
+            call(badge, "SetActive", versionScreen.visible);
+          }
+          const loaded = !versionScreen.visible || loginAnchorLogged;
+          if (loadingState !== loaded) {
+            loadingState = loaded;
+            try {
+              writeTextFile(`${persistentPath()}/tesl-reborn-loading.json`, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
+            } catch (_) {
+            }
+          }
+          if (shownVersion !== versionScreen.visible) {
+            shownVersion = versionScreen.visible;
+            log(`loading version: ${versionScreen.visible ? "shown" : "hidden"} (scene "${versionScreen.scene}")`);
+          }
+          const frameAt = Date.now();
+          if (lastFrameAt && frameAt - lastFrameAt > 5e3) {
+            log(`resumed after ${Math.round((frameAt - lastFrameAt) / 1e3)} s`);
+            for (const handler of globalThis.__teslOnResume || []) {
+              try {
+                handler();
+              } catch (error) {
+                log(`resume: ${error}`);
+              }
+            }
+          }
+          lastFrameAt = frameAt;
+          globalThis.__teslLastFrameAt = frameAt;
+          const measured = fpsSample(fpsCounter, Date.now());
+          if (Date.now() >= fpsLogAt && measured) {
+            fpsLogAt = Date.now() + 15e3;
+            log(`fps: ${measured}`);
+            try {
+              globalThis.__teslGovernor?.(measured, versionScreen.visible);
+            } catch (error) {
+              log(`graphics: auto frame rate failed: ${error}`);
+            }
+          }
+          if (fps) {
+            if (fpsTop !== top) {
+              fpsTop = top;
+              uiPlace(fps, 0, 1, 0, 1, 12, -top, 110, 36);
+            }
+            if (fpsShown !== measured) {
+              fpsShown = measured;
+              call(fpsText, "set_text", Il2Cpp.string(`${measured} FPS`));
+            }
+          }
+          const caption = portVersionCaption();
+          if (badgeCaption !== caption) {
+            badgeCaption = caption;
+            call(badgeText, "set_text", Il2Cpp.string(caption.replace("\nAndroid", "\n<size=20>Android") + "</size>"));
+          }
+          const signature = caption + ":" + versionScreen.visible + ":" + versionScreen.scene;
+          if (signature !== reportedCaption) {
+            reportedCaption = signature;
+            try {
+              writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ version: caption, visible: versionScreen.visible, scene: versionScreen.scene, at: (/* @__PURE__ */ new Date()).toISOString() }));
+            } catch (_) {
+            }
+          }
+          if (!message) {
+            lastError = "";
+            return;
+          }
+          uiPlace(panel, 0.5, 1, 0.5, 1, 0, -top, Math.max(240, width), 92);
+          call(label, "set_text", Il2Cpp.string(updateNoticeText(message.kind, message.revision, resourceLanguage())));
+          call(panel, "SetActive", true);
+          if (!shownAt) shownAt = Date.now();
+          else if (message.onShown) {
+            const acknowledge = message.onShown;
+            message.onShown = null;
+            acknowledge();
+          }
+          lastError = "";
+        } catch (error) {
+          const detail = String(error);
+          if (detail !== lastError) {
+            log(`update notice: ${detail}`);
+            lastError = detail;
+            try {
+              writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ error: detail.slice(0, 300), at: (/* @__PURE__ */ new Date()).toISOString() }));
+            } catch (_) {
+            }
+          }
+        }
+      }
+    };
+  }
+  function installUpdateNotices(updater) {
+    installStartupVersionTracking();
+    const banner = createUpdateBanner();
+    const noticeFile = `${persistentPath()}/tesl-reborn-update-notice.json`;
+    const read = (path) => {
+      try {
+        return JSON.parse(readTextFile(path) || "null");
+      } catch (_) {
+        return null;
+      }
+    };
+    const notices = createUpdateNotices(updater, {
+      readNotice: () => read(noticeFile),
+      readStatus: () => read(`${persistentPath()}/tesl-reborn-update-status.json`),
+      writeNotice: (value) => {
+        try {
+          if (writeTextFile(noticeFile + ".part", JSON.stringify(value))) atomicRename(noticeFile + ".part", noticeFile);
+        } catch (_) {
+        }
+      },
+      emit: (kind, revision, onShown) => banner.show(kind, revision, onShown)
+    });
+    let nextPoll = 0, queued = false;
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+      onLeave() {
+        if (queued || Date.now() < nextPoll) return;
+        queued = true;
+        nextPoll = Date.now() + 250;
+        schedule(0, () => {
+          queued = false;
+          try {
+            notices.poll();
+            banner.tick();
+          } catch (error) {
+            log(`update notice poll: ${error}`);
+          }
+        }, "banner tick");
+      }
+    });
+    schedule(1e3, () => {
+      const prelaunch = read(`${persistentPath()}/tesl-reborn-prelaunch-status.json`);
+      const age = Date.now() - Number(prelaunch?.checkedAt);
+      if (Number.isFinite(age) && age >= 0 && age < 6e4) {
+        log("updater: prelaunch gate handled this start");
+        return;
+      }
+      notices.check((url, callback) => httpGet(url, false, callback, true));
+    });
+  }
+  function rememberShopSnapshot(previous, report) {
+    if (!(report.shopImages || []).some((item) => !/MainMenuLandingWin|Left_Store_BTN/i.test(item.path))) return previous;
+    return { at: report.at, images: report.shopImages, events: report.events.filter((item) => /shop|store|pack|bundle|image|texture|sprite/i.test(item.path)) };
+  }
+  section("bounded startup resource diagnostics", () => {
+    let taken = false, lastShop = null;
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, {
+      onLeave() {
+        if (taken || Date.now() - resourceTraceStarted < 6e4) return;
+        taken = true;
+        const report = {
+          at: (/* @__PURE__ */ new Date()).toISOString(),
+          language: resourceLanguage(),
+          patch: globalThis.TeslRebornUpdater?.current()?.revision,
+          elapsedMs: Date.now() - resourceTraceStarted,
+          events: resourceTrace.slice(),
+          bundles: []
+        };
+        const snapshotActive = (type) => {
+          const active = ucls("UnityEngine.Object").tryMethod("FindObjectsOfType", 1);
+          return (active || ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type")).invoke(type);
+        };
+        const steps = [];
+        steps.push(() => {
+          try {
+            const manager = cls(img, "AssetBundles.AssetBundleManager");
+            for (const field of manager.fields.filter((f) => f.isStatic && /load|bundle|error/i.test(f.name) && /Dictionary/.test(f.type.name))) {
+              const item = { name: field.name, type: field.type.name };
+              try {
+                const dictionary = field.value;
+                item.count = Number(call(dictionary, "get_Count"));
+                const iterator = call(call(dictionary, "get_Keys"), "GetEnumerator");
+                item.keys = [];
+                try {
+                  while (item.keys.length < 12 && call(iterator, "MoveNext")) {
+                    const key = call(iterator, "get_Current");
+                    if (typeof key?.content === "string") item.keys.push(key.content.replace(/[?#].*$/, "").slice(0, 160));
+                  }
+                } finally {
+                  try {
+                    call(iterator, "Dispose");
+                  } catch (_) {
+                  }
+                }
+              } catch (error) {
+                item.error = String(error).slice(0, 120);
+              }
+              report.bundles.push(item);
+            }
+          } catch (error) {
+            report.error = String(error).slice(0, 160);
+          }
+        });
+        steps.push(() => {
+          try {
+            report.menu = [];
+            const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+            const owners = img.classes.filter((c) => /^(?:MainMenu|MainMenuNavManager|MainMenuNavComponent|SettingsWin)$/.test(c.name) && Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"));
+            for (const owner of owners) {
+              const values = find.invoke(owner.type.object);
+              for (let i = 0; i < Math.min(values.length, 16) && report.menu.length < 32; i++) {
+                const component = values.get(i), go = call(component, "get_gameObject"), root = call(go, "get_transform");
+                const item = {
+                  type: owner.type.name,
+                  name: String(call(go, "get_name")?.content || "").slice(0, 120),
+                  active: Boolean(call(go, "get_activeInHierarchy")),
+                  children: Number(call(root, "get_childCount")),
+                  nodes: []
+                };
+                for (let j = 0; j < Math.min(item.children, 12); j++) {
+                  const child = call(call(root, "GetChild", j), "get_gameObject");
+                  item.nodes.push({ name: String(call(child, "get_name")?.content || "").slice(0, 120), active: Boolean(call(child, "get_activeInHierarchy")) });
+                }
+                report.menu.push(item);
+              }
+            }
+          } catch (error) {
+            report.menuError = String(error).slice(0, 160);
+          }
+        });
+        report.shopImages = [];
+        steps.push(() => {
+          lastShop = rememberShopSnapshot(lastShop, report);
+          report.lastShop = lastShop;
+          writeTextFile(`${persistentPath()}/tesl-reborn-resource-status.json`, JSON.stringify(report));
+        });
+        let part = 0;
+        const next = () => {
+          const step = steps.shift();
+          if (!step) return;
+          const index = ++part;
+          schedule(0, () => {
+            const started = Date.now();
+            try {
+              step();
+            } finally {
+              const took = Date.now() - started;
+              if (took >= 50) log(`resource diagnostics snapshot: part ${index} took ${took}ms`);
+              next();
+            }
+          }, `resource diagnostics snapshot ${index}`);
+        };
+        next();
+      }
+    });
   });
-});
+  function redundantSettingsResolution(values, current, inSettings) {
+    return inSettings && values.length >= 3 && values[0] === current.width && values[1] === current.height && typeof values[2] === "boolean" && (values.length === 3 || values.length === 4 && values[3] === 0);
+  }
+  function createDisplayTrace(write) {
+    let events = [], last = "";
+    return (kind, values) => {
+      const key = kind + JSON.stringify(values);
+      if (kind === "sample" && key === last) return;
+      last = key;
+      events.push({ at: Date.now(), kind, ...values });
+      if (events.length > 60) events.shift();
+      write({ schema: 1, patch: globalThis.TeslRebornUpdater?.current()?.revision, events: events.slice() });
+    };
+  }
+  section("Settings display diagnostics", () => {
+    let watchUntil = 0, root = null, nextCapture = 0, nextSettingsCheck = 0;
+    let pendingReport = null, flushQueued = false, lastFlush = 0, lastDimensions = "";
+    function flushDisplay() {
+      flushQueued = false;
+      if (!pendingReport) return;
+      writeTextFile(`${persistentPath()}/tesl-reborn-display-status.json`, JSON.stringify(pendingReport));
+      pendingReport = null;
+      lastFlush = Date.now();
+    }
+    const trace = createDisplayTrace((value) => {
+      pendingReport = value;
+      if (Date.now() - lastFlush >= 100) flushDisplay();
+      else if (!flushQueued) {
+        flushQueued = true;
+        schedule(100, flushDisplay, "display flush");
+      }
+      const event = value.events[value.events.length - 1], dimensions = event.width + "x" + event.height;
+      if (event.kind !== "sample" || dimensions !== lastDimensions) log(`settings display: ${JSON.stringify(event)}`);
+      lastDimensions = dimensions;
+    });
+    function capture() {
+      const screen = chatScreen(), value = { width: screen.width, height: screen.height };
+      if (root) try {
+        const go = root.target, transform = call(go, "get_transform");
+        value.active = Boolean(call(go, "get_activeInHierarchy"));
+        const scale = call(transform, "get_localScale");
+        value.localScale = ["x", "y", "z"].map((k) => Number(scale.field(k).value));
+        const world = call(transform, "get_lossyScale");
+        value.worldScale = ["x", "y", "z"].map((k) => Number(world.field(k).value));
+        value.parents = [];
+        for (let node = call(transform, "get_parent"), depth = 0; depth < 4 && !isNull(node); depth++, node = call(node, "get_parent")) {
+          const scale2 = call(node, "get_localScale");
+          value.parents.push({ name: String(call(node, "get_name")?.content || "").slice(0, 80), scale: ["x", "y", "z"].map((k) => Number(scale2.field(k).value)) });
+        }
+        const rect = call(transform, "get_rect");
+        value.rect = [Number(rect.field("m_Width").value), Number(rect.field("m_Height").value)];
+        const canvas = go.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+        if (!isNull(canvas)) value.canvasScale = Number(call(canvas, "get_scaleFactor"));
+      } catch (_) {
+      }
+      trace("sample", value);
+    }
+    const seen = /* @__PURE__ */ new Set();
+    for (const method of ucls("UnityEngine.Screen").methods.filter((m) => m.name === "SetResolution" && m.isStatic && m.parameterCount >= 2)) {
+      const key = method.virtualAddress.toString();
+      if (method.virtualAddress.isNull() || seen.has(key)) continue;
+      seen.add(key);
+      if (![3, 4].includes(method.parameterCount) || method.parameters[2].type.name !== "System.Boolean") continue;
+      method.implementation = function(...values) {
+        const settings = Boolean(root) && Date.now() < watchUntil || resourceSettingsOpen();
+        const sameSize = true;
+        let skip = false;
+        try {
+          const screen = chatScreen(), size = settings && globalThis.__teslScaledSize?.(values[0], values[1]);
+          skip = redundantSettingsResolution(size ? [size.width, size.height, ...values.slice(2)] : values, {
+            width: screen.width,
+            height: screen.height,
+            fullscreen: null
+          }, settings || sameSize);
+        } catch (_) {
+        }
+        watchUntil = Date.now() + 2e3;
+        trace(skip ? "SetResolution-skipped" : "SetResolution", {
+          width: values[0],
+          height: values[1],
+          fullscreen: values[2],
+          refreshRate: values.length === 4 ? values[3] : null,
+          signature: method.parameters.map((p) => p.type.name).join(",")
+        });
+        if (skip) return;
+        return method.invoke(...values);
+      };
+    }
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("Update", 0).virtualAddress, { onLeave() {
+      try {
+        const now = Date.now();
+        if (now < watchUntil || now >= nextSettingsCheck) nextSettingsCheck = now + 250;
+        else return;
+        if (resourceSettingsOpen() && Number(ucls("UnityEngine.Input").method("get_touchCount", 0).invoke()) > 0) {
+          watchUntil = now + 2e3;
+          if (!root && (typeof liveSettingsWindow === "function" ? liveSettingsWindow() : resourceSettingsWindow)) root = resourceSettingsWindow.target.ref(false);
+        }
+        if (now < watchUntil) {
+          if (now >= nextCapture) {
+            nextCapture = now + 250;
+            capture();
+          }
+        } else if (root) {
+          root.free();
+          root = null;
+        }
+      } catch (_) {
+      }
+    } });
+    log(`settings display: observing ${seen.size} resolution methods; per-frame samples after Settings touch`);
+  });
+  let unityLogCallbackRef = null;
+  section("persistent Unity errors", () => {
+    const application = ucls("UnityEngine.Application");
+    const subscribe = application.tryMethod("add_logMessageReceivedThreaded", 1);
+    if (subscribe && !subscribe.virtualAddress.isNull()) {
+      const delegate = Il2Cpp.delegate(subscribe.parameters[0].type.class, (message, stack, value) => {
+        const kind = enumVal(value);
+        if ([0, 1, 2, 4].includes(kind)) log(`Unity ${kind}: ${message?.content || ""}
+${stack?.content || ""}`);
+      });
+      unityLogCallbackRef = delegate.ref(false);
+      subscribe.invoke(delegate);
+      return;
+    }
+    const callback = application.tryMethod("CallLogCallback", 4);
+    if (!callback || !callback.isStatic || callback.virtualAddress.isNull()) return;
+    hookAttach(callback.virtualAddress, { onEnter(args) {
+      const kind = args[2].toInt32();
+      if (![0, 1, 2, 4].includes(kind)) return;
+      try {
+        const message = args[0].isNull() ? "" : new Il2Cpp.String(args[0]).content || "";
+        const stack = args[1].isNull() ? "" : new Il2Cpp.String(args[1]).content || "";
+        log(`Unity ${kind}: ${message}
+${stack}`);
+      } catch (_) {
+      }
+    } });
+  });
+  const LEGACY_TEST_FEED = "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+  const MAIN_TEST_FEED = "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+  function migrateUpdateChannel(io) {
+    let config;
+    try {
+      config = JSON.parse(io.read() || "null");
+    } catch (_) {
+      return "unreadable";
+    }
+    if (!config || typeof config !== "object" || config.feedUrl !== LEGACY_TEST_FEED) return "unchanged";
+    config.feedUrl = MAIN_TEST_FEED;
+    return io.write(JSON.stringify(config)) ? "migrated" : "write-failed";
+  }
+  section("Reborn Android updater and diagnostics", () => {
+    try {
+      const path = `${persistentPath()}/tesl-reborn-updater.json`;
+      const result = migrateUpdateChannel({
+        read: () => readTextFile(path),
+        write: (text) => writeTextFile(path + ".part", text) && atomicRename(path + ".part", path)
+      });
+      if (result !== "unchanged") log(`updater: channel migration ${result}${result === "migrated" ? " to the main repository test branch" : ""}`);
+    } catch (error) {
+      log(`updater: channel migration failed: ${error}`);
+    }
+    const uriClass = ucls("System.Uri");
+    log(`HTTP URI assembly: ${uriClass.image.name}`);
+    log("Android feature hooks are active; server data and UI results are checked separately");
+    const updater = globalThis.TeslRebornUpdater;
+    if (updater) {
+      updater.ready();
+      try {
+        installUpdateNotices(updater);
+      } catch (error) {
+        log(`update notices unavailable: ${error}`);
+        schedule(1e3, () => updater.check((url, cb) => httpGet(url, false, cb, true)));
+      }
+    }
+  });
+  const prefetchMissing = [];
+  for (const name of ["System.Uri", "TMPro.TMP_FontAsset", "TMPro.TMP_Sprite", "TMPro.TMP_SpriteAsset", "TMPro.TextAlignmentOptions", "TMPro.TextMeshProUGUI", "UIResourceManager", "UnityEngine.Animator", "UnityEngine.Application", "UnityEngine.Camera", "UnityEngine.Canvas", "UnityEngine.EventSystems.EventSystem", "UnityEngine.Events.UnityAction", "UnityEngine.Font", "UnityEngine.GameObject", "UnityEngine.ImageConversion", "UnityEngine.Input", "UnityEngine.LayerMask", "UnityEngine.Material", "UnityEngine.Object", "UnityEngine.PlayerPrefs", "UnityEngine.QualitySettings", "UnityEngine.RectTransform", "UnityEngine.RectTransformUtility", "UnityEngine.Renderer", "UnityEngine.Resources", "UnityEngine.SceneManagement.SceneManager", "UnityEngine.Screen", "UnityEngine.ScriptableObject", "UnityEngine.Shader", "UnityEngine.Sprite", "UnityEngine.SystemInfo", "UnityEngine.TextAnchor", "UnityEngine.Texture2D", "UnityEngine.TextureFormat", "UnityEngine.Time", "UnityEngine.UI.Button", "UnityEngine.UI.GraphicRaycaster", "UnityEngine.UI.InputField", "UnityEngine.UI.LayoutRebuilder", "UnityEngine.UI.RectMask2D", "UnityEngine.UI.ScrollRect", "UnityEngine.UI.Text"]) {
+    try {
+      ucls(name);
+    } catch (_) {
+      prefetchMissing.push(name);
+    }
+  }
+  if (prefetchMissing.length) log(`classes not prefetched: ${prefetchMissing.join(", ")}`);
+  log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
+  log("setup finished");
+}));

@@ -383,34 +383,25 @@ function section(name: string, fn: () => void) {
 // a lookup now and then returned an unrelated class (BundleVersionInfo ->
 // BestHTTP DigestStore, PlayerInfoPanel -> Cast5Engine) and random features
 // failed, versions.json among them. A result whose name differs is asked
-// for again, and is not used.
-function checkedClass(img: Il2Cpp.Image, full: string, tries = 5): Il2Cpp.Class | null {
+// for again.
+function checkedClass(img: Il2Cpp.Image, full: string, rounds = 20): Il2Cpp.Class | null {
   const short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
   // A class outside any namespace is matched by its name alone.
   const fits = (k: Il2Cpp.Class | null) => !!k && k.name === short && (!space || k.namespace === space);
-  // The names are passed in buffers kept alive here (the bridge's own
-  // tryClass lets them go to the garbage collector), and read back after the
-  // call to see whether they changed under it.
-  const ask = () => {
-    const ns = Memory.allocUtf8String(space), nm = Memory.allocUtf8String(short);
-    const handle = Il2Cpp.exports.classFromName(img, ns, nm) as NativePointer;
-    const intact = ns.readUtf8String() === space && nm.readUtf8String() === short;
-    const k = handle.isNull() ? null : new Il2Cpp.Class(handle);
-    if (!intact) classMisses.push(`${full}: name buffers changed during the lookup`);
-    return k;
-  };
-  let c = ask();
-  for (let n = 1; c && !fits(c) && n < tries; n++) { Thread.sleep(0.05); c = ask(); }
-  if (c && !fits(c)) {
-    let types = -1, hits = 0; const wrong = `${c.namespace}.${c.name}`;
-    try {
-      const all = img.assembly.object.method("GetTypes").invoke(false) as any;
-      types = all.length;
-      for (const t of Array.from(all) as Il2Cpp.Object[]) { const k = new Il2Cpp.Class(Il2Cpp.exports.classFromObject(t)); if (fits(k)) { hits++; c = k; } }
-    } catch (error) { classMisses.push(`${full}: types not read: ${error}`); }
-    classMisses.push(`${full}: lookup gave ${wrong}; ${types} types, ${hits} with the name`);
+  let c = img.tryClass(full);
+  // Wrong or missing: the classes are walked by index instead.
+    if (fits(c) || !rounds) return fits(c) ? c : null;
+  // The bridge keeps the first list it read (Image.classes is lazy), and a
+  // list read mid-race stays wrong; this reads the classes afresh, a few
+  // times over two seconds while the game finishes setting them up.
+  let walked: Il2Cpp.Class[] = [];
+  for (let round = 0; !walked.length && round < rounds; round++) {
+    if (round) Thread.sleep(0.1);
+    // A new Image object has its own, still empty cache.
+    for (const k of new Il2Cpp.Image(img.handle).classes) if (!k.isNull() && fits(k) && k.declaringClass == null) walked.push(k);
   }
-  return fits(c) ? c : null;
+  if (walked.length || rounds > 1) classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
+  return walked[0] ?? null;
 }
 const classMisses: string[] = [];
 function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
@@ -451,26 +442,7 @@ function onUnityMainThread(body: () => void) {
   });
 }
 
-// Report 130, patch 218 on the Pixel: with the setup on the main thread a
-// class still came back wrong in a third of the starts, so the engine's own
-// threads (script loading) ask il2cpp_class_from_name at the same time too,
-// and the name table it fills on first use comes out broken. Every call of
-// the export, the engine's and the bridge's, now holds one lock.
-function serializeClassFromName() {
-  const lock = Memory.alloc(64), libc = Process.getModuleByName("libc.so");
-  const cm = new CModule(`
-#include <gum/guminterceptor.h>
-extern char lock[];
-extern int pthread_mutex_lock (void * m);
-extern int pthread_mutex_unlock (void * m);
-void onEnter (GumInvocationContext * ic) { pthread_mutex_lock (lock); }
-void onLeave (GumInvocationContext * ic) { pthread_mutex_unlock (lock); }
-`, { lock, pthread_mutex_lock: libc.getExportByName("pthread_mutex_lock"), pthread_mutex_unlock: libc.getExportByName("pthread_mutex_unlock") });
-  Interceptor.attach(Il2Cpp.module.getExportByName("il2cpp_class_from_name"), cm as any);
-  (globalThis as any).__teslClassLock = [cm, lock];
-}
-
-Il2Cpp.perform(() => { try { serializeClassFromName(); } catch (error) { log(`class lookup lock: ${error}`); } onUnityMainThread(() => {
+Il2Cpp.perform(() => onUnityMainThread(() => {
   // The first name lookup in an image builds its name table; built by two
   // threads at once it comes out broken for the rest of the run (see
   // checkedClass). Build every table now, before the game loads its scripts.
@@ -1155,19 +1127,14 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map(a => a.image);
     let found: Il2Cpp.Class | null = null;
-    for (const image of allImages) if ((found = checkedClass(image, name, 1))) break;
-    if (!found) {
-      // The assembly list is read once (Domain.assemblies is lazy) and can be
-      // read while assemblies still load: on a miss it is read again.
-      const before = allImages.length;
-      try {
-        const objects = Il2Cpp.corlib.class("System.AppDomain").method("get_CurrentDomain").invoke<Il2Cpp.Object>().method("GetAssemblies").overload().invoke<Il2Cpp.Array<Il2Cpp.Object>>();
-        allImages = Array.from(objects).map(o => new Il2Cpp.Assembly(o.field<NativePointer>("_mono_assembly").value).image);
-      } catch (error) { classMisses.push(`assemblies not reread: ${error}`); }
-      if (allImages.length !== before) classMisses.push(`assemblies ${before} -> ${allImages.length}`);
+    // Lookups first; then fresh walks over every image, up to 20 rounds.
+    for (const image of allImages) if ((found = checkedClass(image, name, 0))) break;
+    const looked = !!found;
+    for (let round = 0; !found && round < 20; round++) {
+      if (round) Thread.sleep(0.1);
       for (const image of allImages) if ((found = checkedClass(image, name, 1))) break;
     }
-    if (!found) classMisses.push(`${name}: not in ${allImages.length} assemblies`);
+    if (found && !looked) classMisses.push(`${name}: found by walk`);
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;
@@ -7505,4 +7472,4 @@ const chatWindows = new Map();
   if (prefetchMissing.length) log(`classes not prefetched: ${prefetchMissing.join(", ")}`);
   log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
   log("setup finished");
-}); });
+}));
