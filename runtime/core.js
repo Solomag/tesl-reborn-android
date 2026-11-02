@@ -11952,6 +11952,15 @@ ${stack}`);
       }
     }
   });
+  const prefetchMissing = [];
+  for (const name of ["System.Uri", "TMPro.TMP_FontAsset", "TMPro.TMP_Sprite", "TMPro.TMP_SpriteAsset", "TMPro.TextAlignmentOptions", "TMPro.TextMeshProUGUI", "UIResourceManager", "UnityEngine.Animator", "UnityEngine.Application", "UnityEngine.Camera", "UnityEngine.Canvas", "UnityEngine.EventSystems.EventSystem", "UnityEngine.Events.UnityAction", "UnityEngine.Font", "UnityEngine.GameObject", "UnityEngine.ImageConversion", "UnityEngine.Input", "UnityEngine.LayerMask", "UnityEngine.Material", "UnityEngine.Object", "UnityEngine.PlayerPrefs", "UnityEngine.QualitySettings", "UnityEngine.RectTransform", "UnityEngine.RectTransformUtility", "UnityEngine.Renderer", "UnityEngine.Resources", "UnityEngine.SceneManagement.SceneManager", "UnityEngine.Screen", "UnityEngine.ScriptableObject", "UnityEngine.Shader", "UnityEngine.Sprite", "UnityEngine.SystemInfo", "UnityEngine.TextAnchor", "UnityEngine.Texture2D", "UnityEngine.TextureFormat", "UnityEngine.Time", "UnityEngine.UI.Button", "UnityEngine.UI.GraphicRaycaster", "UnityEngine.UI.InputField", "UnityEngine.UI.LayoutRebuilder", "UnityEngine.UI.RectMask2D", "UnityEngine.UI.ScrollRect", "UnityEngine.UI.Text"]) {
+    try {
+      ucls(name);
+    } catch (_) {
+      prefetchMissing.push(name);
+    }
+  }
+  if (prefetchMissing.length) log(`classes not prefetched: ${prefetchMissing.join(", ")}`);
   log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
   log("setup finished");
 }));
