@@ -49,6 +49,21 @@ let scenarios=0;
  assert(f.disk.state.rejected.includes(meta(6).sha256));assert.equal(fallback.stage(meta(6),code(6)),false);scenarios++;
 }
 {
+ // A trial killed from outside (no ready, no exception) is tried again;
+ // only the third start in a row without ready() rejects it.
+ const f=fixture();f.launch().stage(meta(6),code(6));
+ f.launch();f.launch();assert.equal(f.loaded.at(-1),code(6));assert.equal(f.disk.state.bootTries,2);
+ assert(!f.disk.state.rejected.includes(meta(6).sha256),'two interrupted trials do not reject');
+ f.launch();assert.equal(f.loaded.at(-1),code(6));assert.equal(f.disk.state.bootTries,3);
+ const after=f.launch();assert.equal(f.loaded.at(-1),code(5));assert(f.disk.state.rejected.includes(meta(6).sha256));
+ after.ready();assert.equal(f.disk.state.bootTries,0);scenarios++;
+}
+{
+ const f=fixture();f.launch().stage(meta(6),code(6));f.launch();
+ const done=f.launch();done.ready();assert.equal(f.disk.state.active.revision,6);assert.equal(f.disk.state.bootTries,0);
+ assert(!f.disk.state.rejected.includes(meta(6).sha256));scenarios++;
+}
+{
  const f=fixture();const u=f.launch();u.stage(meta(6),code(6));
  f.disk.cores[meta(6).sha256]='tampered';f.launch();assert.equal(f.loaded.at(-1),code(5));scenarios++;
 }

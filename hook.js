@@ -1,6 +1,7 @@
 // TESL Reborn Android loader API 1. No game credentials are used here.
 function createRebornUpdater(io, embedded) {
   const LIMIT = 4 * 1024 * 1024;
+  const TRIALS = 3;
   const defaults = { enabled: true, feedUrl: embedded.feedUrl || "", allowLocalUpdates: false, safeMode: false };
   const config = Object.assign({}, defaults, io.readJSON("config", 8192) || {});
   let state = io.readJSON("state", 32768);
@@ -79,12 +80,16 @@ function createRebornUpdater(io, embedded) {
   }
   function boot() {
     verify(embedded.meta, embedded.code);
-    if (state.booting) {
+    // A trial that never reached ready() may have been killed from outside
+    // (a forced stop, Android under the lock screen) rather than broken: it
+    // is rejected only after TRIALS starts in a row without ready().
+    if (state.booting && (state.bootTries || 1) >= TRIALS) {
       reject(state.booting);
       state.pending = null;
       state.booting = null;
+      state.bootTries = 0;
       save();
-      report("rolled-back", "The trial hook did not finish initialization");
+      report("rolled-back", `The trial hook did not finish initialization ${TRIALS} times`);
     }
     if (!config.safeMode && config.allowLocalUpdates) {
       try {
@@ -115,6 +120,7 @@ function createRebornUpdater(io, embedded) {
       }
     }
     if (trial) {
+      state.bootTries = state.booting === selected.sha256 ? (state.bootTries || 1) + 1 : 1;
       state.booting = selected.sha256;
       save();
     }
@@ -124,6 +130,14 @@ function createRebornUpdater(io, embedded) {
     } catch (error) {
       // An exception may follow partial hook installation: never install a
       // second hook in the same process. Recovery occurs on the next launch.
+      // A hook that throws is broken, not interrupted: no further tries.
+      if (trial) {
+        reject(selected.sha256);
+        if (state.pending && state.pending.sha256 === selected.sha256) state.pending = null;
+        state.booting = null;
+        state.bootTries = 0;
+        save();
+      }
       report("load-failed-restart", String(error));
     }
   }
@@ -134,6 +148,7 @@ function createRebornUpdater(io, embedded) {
       state.active = selected;
       if (state.pending && state.pending.sha256 === selected.sha256) state.pending = null;
       state.booting = null;
+      state.bootTries = 0;
       save();
       trial = false;
     }
