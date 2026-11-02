@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 209,
-  "version": "android-209-resume-watch",
-  "bytes": 502841,
-  "sha256": "03960e0fa50f1b25330372b2064e83f9ef7d12f988fe2b7b40e6bc7a954d3353",
+  "revision": 210,
+  "version": "android-210-hang-watch",
+  "bytes": 504041,
+  "sha256": "def9e7b17092069eb1df28a656704ca5bf52834efe7f989beebf2375f023f26a",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "9c483deccd056ef3f0439128a14acc02cd6937f5daf22dedc3de71228d16df96"
+  "sourceSha256": "c6541e26c67a52508b0d0ff54f45137c148e3e1bc80d1ff09c833697ab47061d"
 }

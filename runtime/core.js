@@ -5098,6 +5098,34 @@ void onLeave (GumInvocationContext * ic) {
         }
       }, 2e3);
     });
+    const loadingFile = `${persistentPath()}/tesl-reborn-loading.json`;
+    const mark = (loaded) => File.writeAllText(loadingFile, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
+    let hung = false, seenAdj = "";
+    setInterval(() => {
+      try {
+        const adj = read("/proc/self/oom_score_adj"), lastFrame = globalThis.__teslLastFrameAt;
+        if (adj !== seenAdj) {
+          seenAdj = adj;
+          if (hung || adj === "0") log(`hang watch: oom_score_adj ${adj}`);
+        }
+        if (!lastFrame) return;
+        const gap = Date.now() - lastFrame;
+        if (hung && gap < 5e3) {
+          hung = false;
+          log("hang watch: frames are back");
+          mark(true);
+        } else if (adj === "0" && gap > 2e4) {
+          if (!hung) {
+            hung = true;
+            const parts = Process.enumerateThreads().map((thread) => `${read(`/proc/self/task/${thread.id}/comm`) || thread.id} ${describe(thread.id)}`);
+            log(`hang watch: on screen, no frame for ${Math.round(gap / 1e3)} s; restart armed; ${parts.join("; ")}`);
+          }
+          mark(false);
+        }
+      } catch (error) {
+        log(`hang watch: ${error}`);
+      }
+    }, 2e3);
   });
   let lastDeckStatsFetch = 0;
   function winRate(wins, losses) {

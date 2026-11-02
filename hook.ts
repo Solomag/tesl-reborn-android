@@ -1529,6 +1529,34 @@ void onLeave (GumInvocationContext * ic) {
         } catch (error) { log(`resume watch: ${error}`); clearInterval(timer); timer = null; }
       }, 2000);
     });
+    // Report 130: back after 23 minutes the game ran one tick and drew no
+    // frame again, so the watch above never started. Android keeps
+    // oom_score_adj at 0 for the app on screen: on screen with no frame for
+    // 20 s is a hang. The log gets every thread once, and the loading file
+    // says "not loaded" for this process, so GestureBridge restarts the game
+    // when it is left and opened again. A frame clears the mark. The timer
+    // thread writes with Frida's File, not through Unity.
+    const loadingFile = `${persistentPath()}/tesl-reborn-loading.json`;
+    const mark = (loaded: boolean) => (File as any).writeAllText(loadingFile, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
+    let hung = false, seenAdj = "";
+    setInterval(() => {
+      try {
+        const adj = read("/proc/self/oom_score_adj"), lastFrame = globalThis.__teslLastFrameAt;
+        if (adj !== seenAdj) { seenAdj = adj; if (hung || adj === "0") log(`hang watch: oom_score_adj ${adj}`); }
+        if (!lastFrame) return;
+        const gap = Date.now() - lastFrame;
+        if (hung && gap < 5000) {
+          hung = false; log("hang watch: frames are back"); mark(true);
+        } else if (adj === "0" && gap > 20000) {
+          if (!hung) {
+            hung = true;
+            const parts = Process.enumerateThreads().map((thread) => `${read(`/proc/self/task/${thread.id}/comm`) || thread.id} ${describe(thread.id)}`);
+            log(`hang watch: on screen, no frame for ${Math.round(gap / 1000)} s; restart armed; ${parts.join("; ")}`);
+          }
+          mark(false);
+        }
+      } catch (error) { log(`hang watch: ${error}`); }
+    }, 2000);
   });
 
   // The inventory refreshes on its own, so the statistics are not pulled
