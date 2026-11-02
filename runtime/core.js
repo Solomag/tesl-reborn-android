@@ -3944,7 +3944,29 @@ function invokeDelegatePtr(del, value) {
   method.invoke(argument);
 }
 const CREATE_ACCOUNT = false;
-Il2Cpp.perform(() => {
+function onUnityMainThread(body) {
+  const mainId = Il2Cpp.mainThread.id;
+  if (Process.getCurrentThreadId() === mainId) {
+    body();
+    return;
+  }
+  let done = false;
+  const listener = Interceptor.attach(Il2Cpp.module.getExportByName("il2cpp_runtime_invoke"), {
+    onEnter() {
+      if (done || Process.getCurrentThreadId() !== mainId) return;
+      done = true;
+      listener.detach();
+      const at = Date.now();
+      try {
+        body();
+      } catch (error) {
+        log(`setup on the main thread failed: ${error}`);
+      }
+      log(`setup ran on the Unity main thread in ${Date.now() - at} ms`);
+    }
+  });
+}
+Il2Cpp.perform(() => onUnityMainThread(() => {
   const warmStart = Date.now();
   for (const assembly of Il2Cpp.domain.assemblies) {
     try {
@@ -11932,4 +11954,4 @@ ${stack}`);
   });
   log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
   log("setup finished");
-});
+}));

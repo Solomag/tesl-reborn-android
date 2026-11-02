@@ -421,7 +421,28 @@ function invokeDelegatePtr(del: Il2Cpp.Object, value: NativePointer) {
 
 const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true if the server says "account not found"
 
-Il2Cpp.perform(() => {
+// Report 130: the hook thread set up its hooks while the game started on its
+// own main thread, and il2cpp's name lookups raced: now and then a class
+// came back as an unrelated one and a random feature failed. The setup runs
+// instead inside the first il2cpp_runtime_invoke the Unity main thread makes
+// (every Awake and Update goes through it): the game waits for it, so no
+// lookup of the game's runs at the same time.
+function onUnityMainThread(body: () => void) {
+  const mainId = Il2Cpp.mainThread.id;
+  if (Process.getCurrentThreadId() === mainId) { body(); return; }
+  let done = false;
+  const listener = Interceptor.attach(Il2Cpp.module.getExportByName("il2cpp_runtime_invoke"), {
+    onEnter() {
+      if (done || Process.getCurrentThreadId() !== mainId) return;
+      done = true; listener.detach();
+      const at = Date.now();
+      try { body(); } catch (error) { log(`setup on the main thread failed: ${error}`); }
+      log(`setup ran on the Unity main thread in ${Date.now() - at} ms`);
+    }
+  });
+}
+
+Il2Cpp.perform(() => onUnityMainThread(() => {
   // The first name lookup in an image builds its name table; built by two
   // threads at once it comes out broken for the rest of the run (see
   // checkedClass). Build every table now, before the game loads its scripts.
@@ -7446,4 +7467,4 @@ const chatWindows = new Map();
 
   log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
   log("setup finished");
-});
+}));
