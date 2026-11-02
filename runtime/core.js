@@ -4667,11 +4667,23 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map((a) => a.image);
     let found = null;
     for (const image of allImages) if (found = checkedClass(image, name, 0)) break;
+    if (!found) {
+      const before = allImages.length;
+      try {
+        const objects = Il2Cpp.corlib.class("System.AppDomain").method("get_CurrentDomain").invoke().method("GetAssemblies").overload().invoke();
+        allImages = Array.from(objects).map((o) => new Il2Cpp.Assembly(o.field("_mono_assembly").value).image);
+      } catch (error) {
+        classMisses.push(`assemblies not reread: ${error}`);
+      }
+      if (allImages.length !== before) classMisses.push(`assemblies ${before} -> ${allImages.length}`);
+      for (const image of allImages) if (found = checkedClass(image, name, 0)) break;
+    }
     const looked = !!found;
-    for (let round = 0; !found && round < 20; round++) {
+    for (let round = 0; !found && round < 5; round++) {
       if (round) Thread.sleep(0.1);
       for (const image of allImages) if (found = checkedClass(image, name, 1)) break;
     }
+    if (!found) classMisses.push(`${name}: not in ${allImages.length} assemblies`);
     if (found && !looked) classMisses.push(`${name}: found by walk`);
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;

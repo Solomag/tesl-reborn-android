@@ -1127,13 +1127,25 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map(a => a.image);
     let found: Il2Cpp.Class | null = null;
-    // Lookups first; then fresh walks over every image, up to 20 rounds.
+    // Lookups first; then fresh walks over every image, up to 5 rounds.
     for (const image of allImages) if ((found = checkedClass(image, name, 0))) break;
+    if (!found) {
+      // The assembly list is read once (Domain.assemblies is lazy) and can be
+      // read while assemblies still load: on a miss it is read again.
+      const before = allImages.length;
+      try {
+        const objects = Il2Cpp.corlib.class("System.AppDomain").method("get_CurrentDomain").invoke<Il2Cpp.Object>().method("GetAssemblies").overload().invoke<Il2Cpp.Array<Il2Cpp.Object>>();
+        allImages = Array.from(objects).map(o => new Il2Cpp.Assembly(o.field<NativePointer>("_mono_assembly").value).image);
+      } catch (error) { classMisses.push(`assemblies not reread: ${error}`); }
+      if (allImages.length !== before) classMisses.push(`assemblies ${before} -> ${allImages.length}`);
+      for (const image of allImages) if ((found = checkedClass(image, name, 0))) break;
+    }
     const looked = !!found;
-    for (let round = 0; !found && round < 20; round++) {
+    for (let round = 0; !found && round < 5; round++) {
       if (round) Thread.sleep(0.1);
       for (const image of allImages) if ((found = checkedClass(image, name, 1))) break;
     }
+    if (!found) classMisses.push(`${name}: not in ${allImages.length} assemblies`);
     if (found && !looked) classMisses.push(`${name}: found by walk`);
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
