@@ -3916,16 +3916,16 @@ function section(name, fn) {
     currentSection = "later";
   }
 }
-function checkedClass(img, full, waits = 20) {
+function checkedClass(img, full, walk = true) {
   const short = full.split(".").pop(), space = full.slice(0, Math.max(0, full.length - short.length - 1));
   const fits = (k) => !!k && k.name === short && (!space || k.namespace === space);
   let c = img.tryClass(full);
-  for (let tries = 0; !fits(c) && tries < waits; tries++) {
-    Thread.sleep(0.05);
-    c = img.tryClass(full);
-  }
-  return fits(c) ? c : null;
+  if (fits(c) || !walk) return fits(c) ? c : null;
+  const walked = img.classes.filter((k) => fits(k) && k.declaringClass == null);
+  classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
+  return walked[0] ?? null;
 }
+const classMisses = [];
 function cls(img, full) {
   const c = checkedClass(img, full);
   if (c) return c;
@@ -3941,6 +3941,14 @@ function invokeDelegatePtr(del, value) {
 }
 const CREATE_ACCOUNT = false;
 Il2Cpp.perform(() => {
+  const warmStart = Date.now();
+  for (const assembly of Il2Cpp.domain.assemblies) {
+    try {
+      assembly.image.tryClass("<Module>");
+    } catch (_) {
+    }
+  }
+  const warmMs = Date.now() - warmStart;
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
   const resourceTrace = [], resourceTraceStarted = Date.now();
   function recordResourceEvent(kind, path, status = 0) {
@@ -4632,10 +4640,8 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map((a) => a.image);
     let found = null;
-    for (let round = 0; !found && round < 20; round++) {
-      if (round) Thread.sleep(0.05);
-      for (const image of allImages) if (found = checkedClass(image, name, 0)) break;
-    }
+    for (const image of allImages) if (found = checkedClass(image, name, false)) break;
+    for (const image of allImages) if (!found && (found = checkedClass(image, name))) break;
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;
@@ -11915,5 +11921,6 @@ ${stack}`);
       }
     }
   });
+  log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
   log("setup finished");
 });

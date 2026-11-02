@@ -384,16 +384,18 @@ function section(name: string, fn: () => void) {
 // BestHTTP DigestStore, PlayerInfoPanel -> Cast5Engine) and random features
 // failed, versions.json among them. A result whose name differs is asked
 // for again.
-function checkedClass(img: Il2Cpp.Image, full: string, waits = 20): Il2Cpp.Class | null {
+function checkedClass(img: Il2Cpp.Image, full: string, walk = true): Il2Cpp.Class | null {
   const short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
   // A class outside any namespace is matched by its name alone.
   const fits = (k: Il2Cpp.Class | null) => !!k && k.name === short && (!space || k.namespace === space);
   let c = img.tryClass(full);
-  // Wrong or missing while the table is half-built: ask again for up to a
-  // second. A class that really is absent costs that second once.
-  for (let tries = 0; !fits(c) && tries < waits; tries++) { Thread.sleep(0.05); c = img.tryClass(full); }
-  return fits(c) ? c : null;
+  // Wrong or missing: the classes are walked by index instead.
+    if (fits(c) || !walk) return fits(c) ? c : null;
+  const walked = img.classes.filter(k => fits(k) && k.declaringClass == null);
+  classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
+  return walked[0] ?? null;
 }
+const classMisses: string[] = [];
 function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
   const c = checkedClass(img, full);
   if (c) return c;
@@ -412,6 +414,12 @@ function invokeDelegatePtr(del: Il2Cpp.Object, value: NativePointer) {
 const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true if the server says "account not found"
 
 Il2Cpp.perform(() => {
+  // The first name lookup in an image builds its name table; built by two
+  // threads at once it comes out broken for the rest of the run (see
+  // checkedClass). Build every table now, before the game loads its scripts.
+  const warmStart = Date.now();
+  for (const assembly of Il2Cpp.domain.assemblies) { try { assembly.image.tryClass("<Module>"); } catch (_) {} }
+  const warmMs = Date.now() - warmStart;
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
   // BEGIN android-ui: resource-events
   // Bounded startup trace, without request/response bodies or credentials.
@@ -1089,12 +1097,9 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     const cached = classCache[name];
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map(a => a.image);
-    // Each image is asked once per round; up to 20 rounds as in checkedClass.
     let found: Il2Cpp.Class | null = null;
-    for (let round = 0; !found && round < 20; round++) {
-      if (round) Thread.sleep(0.05);
-      for (const image of allImages) if ((found = checkedClass(image, name, 0))) break;
-    }
+    for (const image of allImages) if ((found = checkedClass(image, name, false))) break;
+    for (const image of allImages) if (!found && (found = checkedClass(image, name))) break;
     if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;
@@ -7425,5 +7430,6 @@ const chatWindows = new Map();
     }
   });
 
+  log(`name tables built in ${warmMs} ms${classMisses.length ? `; class lookups fixed by walk: ${classMisses.join("; ")}` : ""}`);
   log("setup finished");
 });
