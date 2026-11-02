@@ -5058,6 +5058,46 @@ void onLeave (GumInvocationContext * ic) {
         log(`main loop stalled ${gap}ms` + (loads || tasks ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
     }, 1e3);
   });
+  section("resume watch", () => {
+    const read = (path) => {
+      try {
+        return String(File.readAllText(path)).trim();
+      } catch (_) {
+        return "";
+      }
+    };
+    const describe = (id) => {
+      const stat = read(`/proc/self/task/${id}/stat`), close = stat.lastIndexOf(")");
+      const state = close < 0 ? "?" : stat.slice(close + 2).split(" ")[0];
+      return `${state} ${read(`/proc/self/task/${id}/syscall`).split(" ")[0] || "?"} ${read(`/proc/self/task/${id}/wchan`) || "-"}`;
+    };
+    let timer = null;
+    (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
+      if (timer) clearInterval(timer);
+      const started = Date.now();
+      timer = setInterval(() => {
+        try {
+          const since = Date.now() - started, gap = Date.now() - (globalThis.__teslLastFrameAt || started);
+          if (gap > 1e3 || since % 1e4 < 2e3) {
+            const parts = [];
+            for (const thread of Process.enumerateThreads()) {
+              const name = read(`/proc/self/task/${thread.id}/comm`);
+              if (/^(UnityMain|UnityGfxDeviceW|UnityChoreograp|Thread-|AudioTrack|FMOD)/.test(name) || thread.id === Process.id) parts.push(`${name || thread.id} ${describe(thread.id)}`);
+            }
+            log(`resume +${Math.round(since / 1e3)} s: last frame ${gap} ms ago; ${parts.slice(0, 12).join("; ")}`);
+          }
+          if (since >= 6e4) {
+            clearInterval(timer);
+            timer = null;
+          }
+        } catch (error) {
+          log(`resume watch: ${error}`);
+          clearInterval(timer);
+          timer = null;
+        }
+      }, 2e3);
+    });
+  });
   let lastDeckStatsFetch = 0;
   function winRate(wins, losses) {
     const total = wins + losses;
@@ -11411,6 +11451,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
             }
           }
           lastFrameAt = frameAt;
+          globalThis.__teslLastFrameAt = frameAt;
           const measured = fpsSample(fpsCounter, Date.now());
           if (Date.now() >= fpsLogAt && measured) {
             fpsLogAt = Date.now() + 15e3;

@@ -1496,6 +1496,40 @@ void onLeave (GumInvocationContext * ic) {
   });
   // END android-ui: stall-probe
 
+  // Report 128: a minute and a half in the background, the game came back and
+  // the log stopped half a second later, until it was restarted by hand. For a
+  // minute after a return the timer thread says, every two seconds, how long
+  // ago the last frame ran and what the game threads are doing (state, system
+  // call, kernel wait). Nothing is logged while frames keep coming, except
+  // every tenth second.
+  section("resume watch", () => {
+    const read = (path: string) => { try { return String((File as any).readAllText(path)).trim(); } catch (_) { return ""; } };
+    const describe = (id: number) => {
+      const stat = read(`/proc/self/task/${id}/stat`), close = stat.lastIndexOf(")");
+      const state = close < 0 ? "?" : stat.slice(close + 2).split(" ")[0];
+      return `${state} ${read(`/proc/self/task/${id}/syscall`).split(" ")[0] || "?"} ${read(`/proc/self/task/${id}/wchan`) || "-"}`;
+    };
+    let timer: any = null;
+    (globalThis.__teslOnResume ??= []).push(() => {
+      if (timer) clearInterval(timer);
+      const started = Date.now();
+      timer = setInterval(() => {
+        try {
+          const since = Date.now() - started, gap = Date.now() - (globalThis.__teslLastFrameAt || started);
+          if (gap > 1000 || since % 10000 < 2000) {
+            const parts = [];
+            for (const thread of Process.enumerateThreads()) {
+              const name = read(`/proc/self/task/${thread.id}/comm`);
+              if (/^(UnityMain|UnityGfxDeviceW|UnityChoreograp|Thread-|AudioTrack|FMOD)/.test(name) || thread.id === Process.id) parts.push(`${name || thread.id} ${describe(thread.id)}`);
+            }
+            log(`resume +${Math.round(since / 1000)} s: last frame ${gap} ms ago; ${parts.slice(0, 12).join("; ")}`);
+          }
+          if (since >= 60000) { clearInterval(timer); timer = null; }
+        } catch (error) { log(`resume watch: ${error}`); clearInterval(timer); timer = null; }
+      }, 2000);
+    });
+  });
+
   // The inventory refreshes on its own, so the statistics are not pulled
   // more often than necessary.
   let lastDeckStatsFetch = 0;
@@ -6979,7 +7013,7 @@ const chatWindows = new Map();
               try { handler(); } catch (error) { log(`resume: ${error}`); }
             }
           }
-          lastFrameAt = frameAt;
+          lastFrameAt = frameAt; globalThis.__teslLastFrameAt = frameAt;
           const measured = fpsSample(fpsCounter, Date.now());
           // Report 39: the setting looked like it did nothing; the log now
           // keeps the measured rate, so a report shows what changed.
