@@ -3916,8 +3916,13 @@ function section(name, fn) {
     currentSection = "later";
   }
 }
+function checkedClass(img, full) {
+  const c = img.tryClass(full), short = full.split(".").pop(), space = full.slice(0, Math.max(0, full.length - short.length - 1));
+  if (!c || c.name === short && c.namespace === space) return c;
+  return img.classes.find((k) => k.name === short && k.namespace === space && k.declaringClass == null) ?? null;
+}
 function cls(img, full) {
-  const c = img.tryClass(full);
+  const c = checkedClass(img, full);
   if (c) return c;
   const short = full.split(".").pop();
   const alt = img.classes.find((k) => k.name === short && k.declaringClass == null);
@@ -4621,9 +4626,9 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     const cached = classCache[name];
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map((a) => a.image);
-    const image = allImages.find((i) => i.tryClass(name) != null);
-    if (!image) throw new Error(`class ${name} not found in any assembly`);
-    const found = image.tryClass(name);
+    let found = null;
+    for (const image of allImages) if (found = checkedClass(image, name)) break;
+    if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;
   }
@@ -9368,6 +9373,34 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
       } catch (_) {
       }
     } });
+  });
+  section("sound settings saved", () => {
+    const manager = cls(img, "SettingsManager"), prefs = ucls("UnityEngine.PlayerPrefs");
+    let pending2 = 0;
+    for (const name of ["SetMasterVolume", "SetIsMasterVolumeMuted", "SetMusicVolume", "SetIsMusicMuted", "SetIsPlaySoundInBackground", "SetAutoMuteOpponentEmotes", "SetShowSubtitles"]) {
+      const method = manager.tryMethod(name, 1);
+      if (!method) {
+        log(`sound settings: ${name} not found`);
+        continue;
+      }
+      hookAttach(method.virtualAddress, {
+        onEnter(args) {
+          const self = new Il2Cpp.Object(args[0]).ref(false), ticket = ++pending2;
+          schedule(1e3, () => {
+            if (ticket !== pending2) return;
+            try {
+              const live = self.target;
+              if (!live || live.isNull()) return;
+              live.method("SaveSettings").invoke();
+              prefs.method("Save").invoke();
+              log(`sound settings: saved after ${name}`);
+            } catch (error) {
+              log(`sound settings: save failed: ${error}`);
+            }
+          }, "sound settings save");
+        }
+      });
+    }
   });
   const historyRows = /* @__PURE__ */ new Map(), historyTargets = /* @__PURE__ */ new Map();
   let historyUiReports = 0, historyPopup = null, historyActiveKey = null, historyLastFetch = 0;

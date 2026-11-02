@@ -378,8 +378,19 @@ function section(name: string, fn: () => void) {
   catch (e) { log(`FAIL ${name}: ${e}`); }
   finally { currentSection = "later"; }
 }
+// Report 130 (Pixel, restart after leaving a load): il2cpp_class_from_name
+// fills its name table lazily and the hook thread races the game for it, so
+// a lookup now and then returned an unrelated class (BundleVersionInfo ->
+// BestHTTP DigestStore, PlayerInfoPanel -> Cast5Engine) and random features
+// failed, versions.json among them. A result whose name differs is thrown
+// away for a walk over the image's classes, which reads them by index.
+function checkedClass(img: Il2Cpp.Image, full: string): Il2Cpp.Class | null {
+  const c = img.tryClass(full), short = full.split(".").pop()!, space = full.slice(0, Math.max(0, full.length - short.length - 1));
+  if (!c || (c.name === short && c.namespace === space)) return c;
+  return img.classes.find(k => k.name === short && k.namespace === space && k.declaringClass == null) ?? null;
+}
 function cls(img: Il2Cpp.Image, full: string): Il2Cpp.Class {
-  const c = img.tryClass(full);
+  const c = checkedClass(img, full);
   if (c) return c;
   const short = full.split(".").pop()!;
   const alt = img.classes.find(k => k.name === short && k.declaringClass == null);
@@ -1071,9 +1082,9 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     const cached = classCache[name];
     if (cached) return cached;
     if (!allImages) allImages = Il2Cpp.domain.assemblies.map(a => a.image);
-    const image = allImages.find(i => i.tryClass(name) != null);
-    if (!image) throw new Error(`class ${name} not found in any assembly`);
-    const found = image.tryClass(name)!;
+    let found: Il2Cpp.Class | null = null;
+    for (const image of allImages) if ((found = checkedClass(image, name))) break;
+    if (!found) throw new Error(`class ${name} not found in any assembly`);
     classCache[name] = found;
     return found;
   }
@@ -5265,6 +5276,32 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
     }});
   });
   // END android-ui: settings-diagnostics
+
+  // Sound settings came back to the defaults on every start: the sliders
+  // and toggles change SettingsManager in memory only, and SaveSettings runs
+  // from the desktop window's apply step, which the mobile window lacks. A
+  // second after the last change the settings are saved and flushed.
+  section("sound settings saved", () => {
+    const manager = cls(img, "SettingsManager"), prefs = ucls("UnityEngine.PlayerPrefs");
+    let pending = 0;
+    for (const name of ["SetMasterVolume", "SetIsMasterVolumeMuted", "SetMusicVolume", "SetIsMusicMuted", "SetIsPlaySoundInBackground", "SetAutoMuteOpponentEmotes", "SetShowSubtitles"]) {
+      const method = manager.tryMethod(name, 1);
+      if (!method) { log(`sound settings: ${name} not found`); continue; }
+      hookAttach(method.virtualAddress, {
+        onEnter(args) {
+          const self = new Il2Cpp.Object(args[0]).ref(false), ticket = ++pending;
+          schedule(1000, () => {
+            if (ticket !== pending) return;
+            try {
+              const live = self.target; if (!live || live.isNull()) return;
+              live.method("SaveSettings").invoke(); prefs.method("Save").invoke();
+              log(`sound settings: saved after ${name}`);
+            } catch (error) { log(`sound settings: save failed: ${error}`); }
+          }, "sound settings save");
+        }
+      });
+    }
+  });
 
   // BEGIN android-ui: history-ui
 const historyRows = new Map(), historyTargets = new Map();
