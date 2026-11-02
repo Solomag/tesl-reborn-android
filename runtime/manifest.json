@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 207,
-  "version": "android-207-account-fingerprint",
-  "bytes": 504760,
-  "sha256": "9f95e5dc00291da67ba1e638b4169eaf52fde49f73ba35aa967f89997d7ce6c6",
+  "revision": 208,
+  "version": "android-208-account-fingerprint",
+  "bytes": 505051,
+  "sha256": "f8b3c4312a1e854eb72783b20fa82a584a328fcc27315ef7e03c8cde8f13cefd",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "0b3681f690a3bdee154c5326ffd2835e689cc89f9c5f2d3c296dfcf6abe80824"
+  "sourceSha256": "7f2bcbff49b83dd858ea02e82fa8cca9bd15e510f5acb619ed2ffda949cca6f9"
 }

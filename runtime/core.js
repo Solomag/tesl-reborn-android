@@ -4023,6 +4023,13 @@ Il2Cpp.perform(() => {
       }
     });
   });
+  function writeAuthBody(req, uri, obj, changed) {
+    const out = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    const arr = Il2Cpp.array(byteClass, out.length);
+    for (let i = 0; i < out.length; i++) arr.set(i, out.charCodeAt(i));
+    call(req, "set_RawData", arr);
+    log(`rewrote ${uri.split("/").pop()}: ${changed.join(",")}`);
+  }
   function rewriteAuthBody(req, uri) {
     try {
       if (uri.indexOf("/api/account/") < 0) return;
@@ -4035,11 +4042,24 @@ Il2Cpp.perform(() => {
       let bin = "";
       for (let i = 0; i < len; i++) bin += String.fromCharCode(Number(raw.get(i)));
       const obj = JSON.parse(decodeURIComponent(Array.from(bin, (ch) => "%" + ch.charCodeAt(0).toString(16).padStart(2, "0")).join("")));
+      let fingerprinted = false;
+      if (typeof obj === "object" && obj !== null) {
+        if (typeof obj.deviceId === "string" && obj.deviceId) authDeviceId = obj.deviceId;
+        if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0 && typeof obj.username === "string" && obj.username) authLogin = obj.username;
+        if ("fingerprint" in obj && authDeviceId) {
+          const fingerprint = accountFingerprint(authDeviceId, authLogin);
+          if (obj.fingerprint !== fingerprint) {
+            obj.fingerprint = fingerprint;
+            fingerprinted = true;
+          }
+        }
+      }
       if (typeof obj !== "object" || obj === null || !("componentType" in obj)) {
-        log(`normalizer: ${uri.split("/").pop()} has no componentType`);
+        if (fingerprinted) writeAuthBody(req, uri, obj, ["fingerprint"]);
+        else log(`normalizer: ${uri.split("/").pop()} has no componentType`);
         return;
       }
-      const changed = [];
+      const changed = fingerprinted ? ["fingerprint"] : [];
       const language = resourceLanguage();
       if (language && typeof obj.language === "string") {
         const selected = shapedLanguage(language, obj.language);
@@ -4054,25 +4074,11 @@ Il2Cpp.perform(() => {
           changed.push(k);
         }
       }
-      if (typeof obj.deviceId === "string" && obj.deviceId) authDeviceId = obj.deviceId;
-      if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0 && typeof obj.username === "string" && obj.username) authLogin = obj.username;
-      if ("fingerprint" in obj && authDeviceId) {
-        const login = authLogin || (readSavedLogin()?.username ?? "");
-        const fingerprint = accountFingerprint(authDeviceId, login);
-        if (obj.fingerprint !== fingerprint) {
-          obj.fingerprint = fingerprint;
-          changed.push("fingerprint");
-        }
-      }
       if (changed.length === 0) {
         log(`normalizer: ${uri.split("/").pop()} needs no change`);
         return;
       }
-      const out = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-      const arr = Il2Cpp.array(byteClass, out.length);
-      for (let i = 0; i < out.length; i++) arr.set(i, out.charCodeAt(i));
-      call(req, "set_RawData", arr);
-      log(`rewrote ${uri.split("/").pop()}: ${changed.join(",")}`);
+      writeAuthBody(req, uri, obj, changed);
     } catch (e) {
       log(`normalizer error: ${e}`);
     }
@@ -6418,6 +6424,7 @@ void onLeave (GumInvocationContext * ic) {
   }
   section("auto login", () => {
     const credentials = cls(img, "SparkleServices.UsernameAndPassword");
+    authLogin = readSavedLogin()?.username ?? "";
     const useRemembered = (callback, saved, failed) => {
       const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
       autoLoginAt = Date.now();

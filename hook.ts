@@ -499,6 +499,13 @@ Il2Cpp.perform(() => {
   });
 
   // Rewrites the JSON body of an auth request so that the service sees a Windows client.
+  function writeAuthBody(req, uri: string, obj: any, changed: string[]) {
+    const out = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    const arr = Il2Cpp.array<number>(byteClass, out.length);
+    for (let i = 0; i < out.length; i++) arr.set(i, out.charCodeAt(i));
+    call(req, "set_RawData", arr);
+    log(`rewrote ${uri.split("/").pop()}: ${changed.join(",")}`);
+  }
   function rewriteAuthBody(req: Il2Cpp.Object, uri: string): void {
     try {
       if (uri.indexOf("/api/account/") < 0) return;
@@ -508,11 +515,27 @@ Il2Cpp.perform(() => {
       let bin = "";
       for (let i = 0; i < len; i++) bin += String.fromCharCode(Number(raw.get(i)));
       const obj = JSON.parse(decodeURIComponent(Array.from(bin, ch => "%" + ch.charCodeAt(0).toString(16).padStart(2, "0")).join("")));
+      let fingerprinted = false;
+      if (typeof obj === "object" && obj !== null) {
+        // A fingerprint stands for one account on one device: the service binds
+        // it to the account of the first username and password login and later
+        // signs that device in by it alone, so one fingerprint cannot serve two
+        // accounts (HTTP 500). Requests without componentType (legal documents,
+        // device id map) carry it too. It is sha1(game device id + login), stable for
+        // each account on a phone; without a known login, sha1(device id).
+        if (typeof obj.deviceId === "string" && obj.deviceId) authDeviceId = obj.deviceId;
+        if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0 && typeof obj.username === "string" && obj.username) authLogin = obj.username;
+        if ("fingerprint" in obj && authDeviceId) {
+          const fingerprint = accountFingerprint(authDeviceId, authLogin);
+          if (obj.fingerprint !== fingerprint) { obj.fingerprint = fingerprint; fingerprinted = true; }
+        }
+      }
       if (typeof obj !== "object" || obj === null || !("componentType" in obj)) {
-        log(`normalizer: ${uri.split("/").pop()} has no componentType`);
+        if (fingerprinted) writeAuthBody(req, uri, obj, ["fingerprint"]);
+        else log(`normalizer: ${uri.split("/").pop()} has no componentType`);
         return;
       }
-      const changed: string[] = [];
+      const changed: string[] = fingerprinted ? ["fingerprint"] : [];
       const language = resourceLanguage();
       if (language && typeof obj.language === "string") {
         const selected = shapedLanguage(language, obj.language);
@@ -521,24 +544,8 @@ Il2Cpp.perform(() => {
       for (const k of Object.keys(overrides)) {
         if (k in obj && obj[k] !== overrides[k]) { obj[k] = overrides[k]; changed.push(k); }
       }
-      // A fingerprint stands for one account on one device: the service binds
-      // it to the account of the first username and password login and later
-      // signs that device in by it alone, so one fingerprint cannot serve two
-      // accounts (HTTP 500). It is sha1(game device id + login), stable for
-      // each account on a phone; without a known login, sha1(device id).
-      if (typeof obj.deviceId === "string" && obj.deviceId) authDeviceId = obj.deviceId;
-      if (uri.indexOf("bnetUsernameAndPasswordLogin") >= 0 && typeof obj.username === "string" && obj.username) authLogin = obj.username;
-      if ("fingerprint" in obj && authDeviceId) {
-        const login = authLogin || (readSavedLogin()?.username ?? "");
-        const fingerprint = accountFingerprint(authDeviceId, login);
-        if (obj.fingerprint !== fingerprint) { obj.fingerprint = fingerprint; changed.push("fingerprint"); }
-      }
       if (changed.length === 0) { log(`normalizer: ${uri.split("/").pop()} needs no change`); return; }
-      const out = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-      const arr = Il2Cpp.array<number>(byteClass, out.length);
-      for (let i = 0; i < out.length; i++) arr.set(i, out.charCodeAt(i));
-      call(req, "set_RawData", arr);
-      log(`rewrote ${uri.split("/").pop()}: ${changed.join(",")}`);
+      writeAuthBody(req, uri, obj, changed);
     } catch (e) { log(`normalizer error: ${e}`); }
   }
 
@@ -2783,6 +2790,9 @@ void onLeave (GumInvocationContext * ic) {
 
   section("auto login", () => {
     const credentials = cls(img, "SparkleServices.UsernameAndPassword");
+    // The account fingerprint needs the login before any request; requests
+    // are sent from worker threads, where the file is not read.
+    authLogin = readSavedLogin()?.username ?? "";
 
     // Hands the remembered credentials to the login callback instead of
     // showing the login window.

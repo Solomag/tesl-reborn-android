@@ -63,7 +63,7 @@ const request=Buffer.from(JSON.stringify({componentType:'android',language:'en',
 const normalizer={escape:undefined,unescape:undefined,byteClass:{},overrides:{componentType:'win'},resourceLanguage:()=>"ru_ru",shapedLanguage:()=>"ru",readSavedLogin:()=>null,log:()=>{},
  call:(_,method,value)=>method==='get_RawData'?{handle:{isNull:()=>false},length:request.length,get:i=>request[i]}:(rewritten=value),
  Il2Cpp:{array:(_,length)=>{const bytes=new Uint8Array(length);bytes.set=(index,value)=>{bytes[index]=value};return bytes}}};
-vm.createContext(normalizer);vm.runInContext(extract('  let authLogin', '  // Allocates an object')+extract('  function rewriteAuthBody(', '  // The credentials of the login'),normalizer);
+vm.createContext(normalizer);vm.runInContext(extract('  let authLogin', '  // Allocates an object')+extract('  function writeAuthBody(', '  // The credentials of the login'),normalizer);
 normalizer.rewriteAuthBody({},'https://tesl-reborn.com/api/account/bnetUsernameAndPasswordLogin');
 const normalized=JSON.parse(Buffer.from(rewritten).toString('utf8'));
 assert.equal(normalized.password,'сложный"пароль');assert.equal(normalized.componentType,'win');assert.equal(normalized.language,'ru');const sha1=x=>require('node:crypto').createHash('sha1').update(x,'utf8').digest('hex');
