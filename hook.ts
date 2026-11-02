@@ -397,11 +397,8 @@ function checkedClass(img: Il2Cpp.Image, full: string, rounds = 20): Il2Cpp.Clas
   let walked: Il2Cpp.Class[] = [];
   for (let round = 0; !walked.length && round < rounds; round++) {
     if (round) Thread.sleep(0.1);
-    const count = Il2Cpp.exports.imageGetClassCount(img) as number;
-    for (let i = 0; i < count; i++) {
-      const k = new Il2Cpp.Class(Il2Cpp.exports.imageGetClass(img, i));
-      if (!k.isNull() && fits(k) && k.declaringClass == null) walked.push(k);
-    }
+    // A new Image object has its own, still empty cache.
+    for (const k of new Il2Cpp.Image(img.handle).classes) if (!k.isNull() && fits(k) && k.declaringClass == null) walked.push(k);
   }
   if (walked.length || rounds > 1) classMisses.push(`${full}: lookup gave ${c ? `${c.namespace}.${c.name}` : "nothing"}, walk found ${walked.length}`);
   return walked[0] ?? null;
