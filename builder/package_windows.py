@@ -59,8 +59,12 @@ def main():
     shutil.copyfile(
         ROOT / "JNIBridge_a.patched.smali", bundle / "JNIBridge_a.patched.smali"
     )
+    shutil.copytree(ROOT / "languages", bundle / "languages")
     notices = bundle / "third-party-notices"
     notices.mkdir()
+    shutil.copyfile(
+        ROOT / "languages/zh_cn/LICENSE-NotoSansSC.txt", notices / "LICENSE-NotoSansSC.txt"
+    )
     shutil.copyfile(
         ROOT / "runtime/IL2CPP-BRIDGE-LICENSE", notices / "IL2CPP-BRIDGE-LICENSE"
     )

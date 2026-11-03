@@ -47,8 +47,10 @@ public final class LaunchActivity extends Activity {
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       JSONObject choice = PackInstaller.json(new File(root, "tesl-reborn-language.json"));
       String language = choice.getString("language");
+      String system = ResourceActivity.systemLanguageCode();
       if (choice.optBoolean("system", false)
-          && !language.equals(ResourceActivity.systemLanguageCode()))
+          && !(language.equals(ResourceActivity.packCode(system))
+              && choice.optString("overlay").equals(ResourceActivity.overlayCode(system))))
         throw new java.io.IOException("System game language changed");
       PackInstaller installer =
           new PackInstaller(root, new File(getFilesDir(), "tesl-resource-downloads"), s -> {});

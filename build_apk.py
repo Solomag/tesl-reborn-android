@@ -130,6 +130,8 @@ extra = {
 }
 for name in emoji_resources:
     extra[f"assets/tesl-reborn/emojis/{name}"] = os.path.join(HERE, "resources", "emojis", name)
+for name in sorted(os.listdir(os.path.join(HERE, "languages", "zh_cn"))):
+    extra[f"assets/tesl-reborn/zh_cn/{name}"] = os.path.join(HERE, "languages", "zh_cn", name)
 with zipfile.ZipFile(BASE) as zin, zipfile.ZipFile(unsigned, "w", zipfile.ZIP_DEFLATED) as zout:
     for item in zin.infolist():
         n = item.filename
@@ -139,7 +141,7 @@ with zipfile.ZipFile(BASE) as zin, zipfile.ZipFile(unsigned, "w", zipfile.ZIP_DE
             continue                       # replaced below
         zout.writestr(item, zin.read(n), compress_type=item.compress_type)
     for name, path in extra.items():
-        zout.write(path, name, compress_type=zipfile.ZIP_STORED if name.startswith("assets/tesl-reborn/emojis/") else zipfile.ZIP_DEFLATED)
+        zout.write(path, name, compress_type=zipfile.ZIP_STORED if name.startswith(("assets/tesl-reborn/emojis/", "assets/tesl-reborn/zh_cn/")) else zipfile.ZIP_DEFLATED)
 
 # 4) align + sign: without --ks uber-apk-signer uses its one fixed, public debug keystore, so every build from every user carries the same key
 aligned = os.path.join(WORK, "aligned.apk")

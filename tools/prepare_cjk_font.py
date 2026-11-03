@@ -85,7 +85,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("font", type=Path, help="Noto Sans SC (SIL OFL) OTF/TTF")
     parser.add_argument("translation", type=Path, help="zh_cn.json")
-    parser.add_argument("--output", type=Path, default=Path("resources/fonts"))
+    parser.add_argument("--output", type=Path, default=Path("languages/zh_cn"))
     args = parser.parse_args()
     alpha, table, missing, used = build(args.font, characters(args.translation))
     args.output.mkdir(parents=True, exist_ok=True)

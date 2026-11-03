@@ -17,7 +17,7 @@ import org.json.*;
 public class ResourceActivity extends Activity {
   private static final String[] CODES = {
     "system", "en_us", "de_de", "es_es", "es_mx", "fr_fr", "it_it", "pl_pl", "pt_br", "ru_ru",
-    "tr_tr"
+    "tr_tr", "zh_cn"
   };
   private static final String[] LABELS = {
     "Phone system language",
@@ -30,8 +30,12 @@ public class ResourceActivity extends Activity {
     "Polski",
     "Português (Brasil)",
     "Русский",
-    "Türkçe"
+    "Türkçe",
+    "简体中文"
   };
+  /** Text-only languages: the game runs in English and the hook swaps the text and font in. */
+  static String packCode(String code) { return "zh_cn".equals(code) ? "en_us" : code; }
+  static String overlayCode(String code) { return "zh_cn".equals(code) ? code : ""; }
   private ExecutorService worker = Executors.newSingleThreadExecutor();
   private PackInstaller installer;
   private JSONObject setup;
@@ -596,10 +600,11 @@ public class ResourceActivity extends Activity {
     return Arrays.asList(CODES).contains(value) ? value : "en_us";
   }
 
-  private String selected() {
+  private String selected() { return packCode(chosenLanguage()); }
+
+  private String chosenLanguage() {
     String code = selection();
-    if (!code.equals("system")) return code;
-    return systemLanguageCode();
+    return code.equals("system") ? systemLanguageCode() : code;
   }
 
   static String systemLanguageCode() {
@@ -946,6 +951,7 @@ public class ResourceActivity extends Activity {
       return;
     }
     final String code = selected();
+    final String overlay = overlayCode(chosenLanguage());
     final String chosen = selection();
     run(
         () -> {
@@ -953,11 +959,14 @@ public class ResourceActivity extends Activity {
           installer.verifyInstalled("common");
           installer.verifyInstalled(code);
           String previousLanguage = "";
-          try { previousLanguage = PackInstaller.json(new File(root, "tesl-reborn-language.json")).optString("language"); }
-          catch (Exception ignored) {}
-          if (dataChanged || graphicsChanged || !code.equals(previousLanguage)) stopGameProcess();
+          try {
+            JSONObject previous = PackInstaller.json(new File(root, "tesl-reborn-language.json"));
+            previousLanguage = previous.optString("language") + "+" + previous.optString("overlay");
+          } catch (Exception ignored) {}
+          if (dataChanged || graphicsChanged || !(code + "+" + overlay).equals(previousLanguage)) stopGameProcess();
           PackInstaller.writeJson(new File(root, "tesl-reborn-language.json"),
-              new JSONObject().put("language", code).put("system", chosen.equals("system")));
+              new JSONObject().put("language", code).put("system", chosen.equals("system"))
+                  .putOpt("overlay", overlay.isEmpty() ? null : overlay));
           getPreferences(0).edit().putBoolean("setupComplete", true).putInt("setupVersion", 2)
               .putString("language", chosen).commit();
           PackInstaller.writeJson(new File(root, "tesl-reborn-handoff.json"), new JSONObject()

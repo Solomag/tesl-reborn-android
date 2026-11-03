@@ -584,6 +584,9 @@ def native_base(base, work, vendor, setup, embedded, catalog, log):
         if sha256(path) != expected:
             raise ValueError("Emoji resources failed verification")
         extra["assets/tesl-reborn/emojis/" + name] = path
+    # Simplified Chinese: a text-only language over English (see hook.ts).
+    for path in sorted((data_root() / "languages" / "zh_cn").iterdir()):
+        extra["assets/tesl-reborn/zh_cn/" + path.name] = path
     small = work / "small-unsigned.apk"
     with zipfile.ZipFile(patched) as source, zipfile.ZipFile(small, "w") as dest:
         for entry in source.infolist():

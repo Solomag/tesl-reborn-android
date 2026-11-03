@@ -2173,9 +2173,9 @@ void onLeave (GumInvocationContext * ic) {
       let text = "";
       // The file is named after the language ("en"), but the game also uses
       // the full language name ("en_US") for the text bundles.
-      const selected = resourceLanguage() || code;
+      const selected = resourceLanguage() || code, overlay = textOverlay();
       const regional = selected.includes("_") ? selected.slice(0, 2) + "_" + selected.slice(3).toUpperCase() : selected;
-      for (const name of [selected, regional, shortLanguage(selected)]) {
+      for (const name of overlay ? [overlay] : [selected, regional, shortLanguage(selected)]) {
         text = readTextFile(`${persistentPath()}/tesl-localization-${name}.json`);
         if (text) break;
       }
@@ -2183,7 +2183,7 @@ void onLeave (GumInvocationContext * ic) {
       const json = JSON.parse(text);
       const keys = Object.keys(json);
       if (keys.length === 0) return 0;
-      installCjkFont();
+      if (overlay) installCjkFont();
       const stringClass = Il2Cpp.corlib.class("System.String");
       const dictionary = Il2Cpp.corlib.class("System.Collections.Generic.Dictionary`2")
         .inflate(stringClass, stringClass).new();
@@ -2194,7 +2194,7 @@ void onLeave (GumInvocationContext * ic) {
         for (const key of keys) {
           (retained.target.method("set_Item") as any).invoke(Il2Cpp.string(key), Il2Cpp.string(String(json[key])));
         }
-        const fixes = TRANSLATIONS[selected] || TRANSLATIONS[shortLanguage(selected)] || {};
+        const fixes = overlay ? {} : TRANSLATIONS[selected] || TRANSLATIONS[shortLanguage(selected)] || {};
         for (const key of Object.keys(fixes))
           (retained.target.method("set_Item") as any).invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
         manager.field<any>("_localizedData").value = retained.target;
@@ -2212,6 +2212,16 @@ void onLeave (GumInvocationContext * ic) {
     try {
       const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
       if (choice && /^(en_us|de_de|es_es|es_mx|fr_fr|it_it|pl_pl|pt_br|ru_ru|tr_tr)$/.test(choice.language)) return choice.language;
+    } catch (_) {}
+    return "";
+  }
+
+  // A text-only language (Simplified Chinese) runs the game, its resources and
+  // the server in English; only the dictionary and the font are swapped.
+  function textOverlay(): string {
+    try {
+      const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
+      if (choice && choice.overlay === "zh_cn" && choice.language === "en_us") return "zh_cn";
     } catch (_) {}
     return "";
   }
@@ -2682,6 +2692,26 @@ void onLeave (GumInvocationContext * ic) {
       zip.copy(entry, target);
       if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid emoji payload: ${name}`);
       log(`emoji payload: restored ${name}`);
+    }
+    // Simplified Chinese is a text-only language: the dictionary and the
+    // atlas of its font come with the APK (languages/zh_cn in the repository).
+    const chineseFiles = {
+      "zh_cn.json": ["tesl-localization-zh_cn.json", "d9869df0e4446265c0f2ea90ef2dc361431cacd9a41320d7b829fb817bd40d5f"],
+      "cjk.json": ["tesl-reborn-fonts/cjk.json", "31ac33b7860eed1b5334d77c4f008e8cd3bf72ad114ba6587517aaa7056206d2"],
+      "cjk.png": ["tesl-reborn-fonts/cjk.png", "f4efdf31c89d2094ae9053ed582e060ad22b789633a81656cea7d7f0be0eb094"]
+    };
+    for (const [name, [path, expected]] of Object.entries(chineseFiles)) {
+      const entry = zip.find(`assets/tesl-reborn/zh_cn/${name}`);
+      if (!entry) continue;
+      if (entry.method !== 0 || entry.size > 4 * 1024 * 1024) throw Error("Invalid Chinese APK entry");
+      const target = `${persistentPath()}/${path}`;
+      let current = false;
+      try { current = Checksum.compute("sha256", File.readAllBytes(target)) === expected; } catch (_) {}
+      if (current) continue;
+      makeDirectory(target.substring(0, target.lastIndexOf("/")));
+      zip.copy(entry, target);
+      if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid Chinese payload: ${name}`);
+      log(`chinese payload: restored ${name}`);
     }
     const obb = zip.find("assets/tesl-payload/obb.bin");
     const cache = zip.find("assets/tesl-payload/cache.bin");
@@ -5308,7 +5338,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         at: new Date().toISOString(), buttons: [], classes: [], localizationFiles: [] };
       try {
         const choice = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-language.json`) || "null");
-        report.choice = choice && { language: choice.language, system: choice.system };
+        report.choice = choice && { language: choice.language, system: choice.system, overlay: choice.overlay };
       } catch (_) {}
       try {
         const status = JSON.parse(readTextFile(`${persistentPath()}/tesl-reborn-update-status.json`) || "null");
