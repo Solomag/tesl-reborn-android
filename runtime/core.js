@@ -9344,11 +9344,18 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
     (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => applyRate("resumed"));
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
+    const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
+    const gameRates = /* @__PURE__ */ new Set();
+    if (!engineAt.isNull()) hookAttach(engineAt, { onEnter(args) {
+      const asked = args[0].toInt32(), limit = currentRate() || ceiling;
+      const next = rate ? currentRate() : asked > 0 && asked < limit ? asked : limit;
+      if (asked !== next && !gameRates.has(asked)) {
+        gameRates.add(asked);
+        log(`graphics: game asked for frame rate ${asked}, kept ${next}`);
+      }
+      args[0] = ptr(next);
+    } });
     if (rate) {
-      const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
-      if (!engineAt.isNull()) hookAttach(engineAt, { onEnter(args) {
-        args[0] = ptr(currentRate());
-      } });
       schedule(0, () => applyRate("start"), "graphics frame rate");
       log(`graphics: engine frame rate setter ${engineSetRate ? "found" : "missing"}, vSync setter ${setVSync ? "found" : "missing"}`);
     }
