@@ -5,7 +5,7 @@ const objects=new Map();let opened=0,created=0;
 const root={};const self={};let rootName="SettingsWin_Mobile(Clone)", controls=1;
 const window={handle:{equals:()=>true,toString:()=> 'settings'},method:()=>({overload:()=>({invoke:()=>({length:controls,get:()=>({})})})}),ref:()=>({target:window,free:()=>{}})};
 const logs=[];
-const c={resourceSettingsWindow:null,log:m=>logs.push(m),section:()=>{},resourceLanguage:()=>"en_us",fileExists:()=>true,persistentPath:()=>'/files',isNull:x=>x==null,
+const c={resourceSettingsWindow:null,log:m=>logs.push(m),section:()=>{},textOverlay:()=>"",resourceLanguage:()=>"en_us",fileExists:()=>true,persistentPath:()=>'/files',isNull:x=>x==null,
  call:(o,n,...args)=>n==='get_transform'?root:n==='get_gameObject'?(o.action?o:window):n==='get_name'?{content:rootName}:n==='Find'?objects.get(args[0])||null:n==='SetActive'?(o.active=args[0]):undefined,
  Il2Cpp:{string:x=>x},uiLabeledButton:(name,parent,label,x,y,width,action)=>{created++;objects.set(name,{action});return{}},uiAdd:()=>({}),
  uiPlace:()=>{},ucls:()=>({type:{object:{}},method:()=>({invoke:()=>opened++})})};

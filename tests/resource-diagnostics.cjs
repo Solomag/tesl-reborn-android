@@ -2,7 +2,7 @@ const vm=require('node:vm'),assert=require('node:assert/strict'),{transformSync}
 const source=require('./source.cjs');
 let now=1000,index=0,hook;const reports=[];
 const c={Date:class extends Date{static now(){return now;}},section:(_,fn)=>fn(),img:{},
- globalThis:null,resourceLanguage:()=> 'pl_pl',persistentPath:()=>'/files',schedule:(_,fn)=>fn(),
+ globalThis:null,textOverlay:()=>"",resourceLanguage:()=> 'pl_pl',persistentPath:()=>'/files',schedule:(_,fn)=>fn(),
  Interceptor:{attach:(_,value)=>hook=value},writeTextFile:(path,value)=>reports.push(JSON.parse(value)),
  cls:(img,name)=>name==='AssetBundles.AssetBundleManager'?{fields:[
   {isStatic:true,name:'m_DownloadingBundles',type:{name:'Dictionary<System.String,Operation>'},value:{}},

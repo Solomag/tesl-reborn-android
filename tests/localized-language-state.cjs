@@ -73,7 +73,7 @@ const context={installCjkFont:()=>{},textOverlay:()=>'',isNull:x=>x==null,resour
 vm.createContext(context);vm.runInContext(transformSync(hook.slice(from,to),{loader:'ts'}).code,context);
 assert.equal(context.restoreLocalization({field:()=>slot},'en'),1);assert.equal(restored.get('menu'),'Settings');assert.equal(restored.get('pluginKey'),'Plugin label');assert.equal(slot.value,dictionary);assert.equal(pinned,false,"temporary handle is released after manager ownership");
 restored.clear();let fontInstalled=0;const read=[];context.textOverlay=()=>'zh_cn';context.installCjkFont=()=>fontInstalled++;context.readTextFile=path=>{read.push(path);return JSON.stringify({menu:'设置'});};
-assert.equal(context.restoreLocalization({field:()=>slot},'en'),1);assert.deepEqual(read,['/files/tesl-localization-zh_cn.json']);assert.equal(restored.get('menu'),'设置');assert.equal(restored.has('pluginKey'),false,'English plugin fixes are not mixed into the Chinese text');assert.equal(fontInstalled,1);
+assert.equal(context.restoreLocalization({field:()=>slot},'en'),1);assert.deepEqual(read,['/files/tesl-localization-zh_cn.json','/files/tesl-localization-zh_cn-login.json']);assert.equal(restored.get('menu'),'设置');assert.equal(restored.has('pluginKey'),false,'English plugin fixes are not mixed into the Chinese text');assert.equal(fontInstalled,1);
 
 for(const [label,code] of Object.entries({'English':'en_us','Deutsch':'de_de','Español':'es_es','Español Mexicano':'es_mx','Français':'fr_fr','Italiano':'it_it','Polski':'pl_pl','Português':'pt_br','Русский язык':'ru_ru','Türkçe':'tr_tr'})) {
  assert.equal(c.languageLabel(label),code); labels[1]=label; selected=code==='en_us'?'ru_ru':'en_us';

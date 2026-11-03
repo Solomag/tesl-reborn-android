@@ -42,7 +42,7 @@ function fixture(){
     Interceptor:{attach:(address,callbacks)=>{if(address?.tag==='UpdateUi')updateUi=callbacks;else update=callbacks.onLeave;}},
     schedule:(_,fn)=>fn(),call,isNull:x=>x==null,Il2Cpp:{string:x=>x,Object:function(p){return p;}},
     uiEnum:()=>0,enumBox:(_,v)=>v,rgba:()=>({}),vec2:(x,y)=>({x,y}),
-    resourceLanguage:()=> 'en_us',uiRect:o=>o,uiStretch:()=>{},uiPlace:()=>{},
+    textOverlay:()=>"",resourceLanguage:()=> 'en_us',uiRect:o=>o,uiStretch:()=>{},uiPlace:()=>{},
     loadNativeUiSprite:()=>{},uiComponent:()=>object('component'),
     uiLabeledButton:()=>object('button'),log:m=>messages.push(m),
     uiNew(name){const o=object(name);if(name==='RebornDeckSearch')bars.push(o);return o;},

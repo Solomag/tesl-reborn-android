@@ -95,7 +95,7 @@ const r={Date:class extends Date {static now(){return clock;}},PLUGIN_VERSION:'1
  uiAdd:(go,type)=>{assert(!/GraphicRaycaster|Button|EventTrigger/.test(type));return object(type);},
  uiEnum:(type,field)=>field,enumBox:(_,v)=>v,enumVal:v=>v,vec2:(x,y)=>({x,y}),rgba:(...values)=>values,
  uiNew:name=>object(name),uiRect:value=>value,uiStretch:()=>{},uiText:(go,text)=>object('label'),
- uiPlace:(...args)=>placements.push(args),chatScreen:()=>screen,resourceLanguage:()=> 'ru_ru',log:value=>logs.push(value),
+ uiPlace:(...args)=>placements.push(args),chatScreen:()=>screen,textOverlay:()=>"",resourceLanguage:()=> 'ru_ru',log:value=>logs.push(value),
  call:(value,method,...args)=>{
   if(value.dead)throw Error('destroyed native object');
   calls.push([value,method,...args]);

@@ -14,11 +14,11 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage import distance_transform_edt
 
-SIZE, PADDING, SUPER, ATLAS = 32, 4, 4, 2048
+SIZE, PADDING, SUPER, ATLAS = 30, 4, 4, 2048
 
 
-def characters(translation):
-    text = "".join(json.loads(translation.read_text(encoding="utf-8")).values())
+def characters(translations):
+    text = "".join(v for t in translations for v in json.loads(t.read_text(encoding="utf-8")).values())
     return sorted({c for c in text if ord(c) >= 0x2000 and not c.isspace()})
 
 
@@ -84,10 +84,10 @@ def build(font_path, chars):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("font", type=Path, help="Noto Sans SC (SIL OFL) OTF/TTF")
-    parser.add_argument("translation", type=Path, help="zh_cn.json")
+    parser.add_argument("translations", type=Path, nargs="+", help="zh_cn.json zh_cn-login.json")
     parser.add_argument("--output", type=Path, default=Path("languages/zh_cn"))
     args = parser.parse_args()
-    alpha, table, missing, used = build(args.font, characters(args.translation))
+    alpha, table, missing, used = build(args.font, characters(args.translations))
     args.output.mkdir(parents=True, exist_ok=True)
     rgba = np.zeros((ATLAS, ATLAS, 4), np.uint8)
     rgba[..., :3] = 255

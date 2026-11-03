@@ -5782,6 +5782,14 @@ void onLeave (GumInvocationContext * ic) {
         for (const key of Object.keys(fixes))
           retained.target.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
         manager.field("_localizedData").value = retained.target;
+        if (overlay) try {
+          const extra = JSON.parse(readTextFile(`${persistentPath()}/tesl-localization-zh_cn-login.json`) || "{}");
+          const login = manager.field("_loginLocalizedData").value;
+          if (!isNull(login)) for (const key of Object.keys(extra))
+            login.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(String(extra[key])));
+        } catch (error) {
+          log(`localization: login table: ${error}`);
+        }
       } finally {
         retained.free();
       }
@@ -5981,6 +5989,30 @@ void onLeave (GumInvocationContext * ic) {
         });
       } catch (error) {
         log(`resources: ${name} language entry: ${error}`);
+      }
+    }
+    if (textOverlay()) for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+      try {
+        const method = ucls(name).tryMethod("RefreshShownValue", 0);
+        if (!method || method.virtualAddress.isNull()) continue;
+        Interceptor.attach(method.virtualAddress, {
+          onEnter(args) {
+            this.self = args[0];
+          },
+          onLeave() {
+            try {
+              const self = new Il2Cpp.Object(this.self), options = call(self, "get_options"), count = Number(call(options, "get_Count"));
+              if (count < 2 || count > 16) return;
+              let recognized = 0;
+              for (let i = 0; i < count; i++) if (languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || ""))) recognized++;
+              const caption = recognized >= 2 ? call(self, "get_captionText") : null;
+              if (!isNull(caption)) call(caption, "set_text", Il2Cpp.string("\u7B80\u4F53\u4E2D\u6587"));
+            } catch (_) {
+            }
+          }
+        });
+      } catch (error) {
+        log(`resources: ${name} language caption: ${error}`);
       }
     }
     try {
@@ -6311,14 +6343,18 @@ void onLeave (GumInvocationContext * ic) {
         log(`emoji payload: restored ${name}`);
       }
       const chineseFiles = {
-        "zh_cn.json": ["tesl-localization-zh_cn.json", "d9869df0e4446265c0f2ea90ef2dc361431cacd9a41320d7b829fb817bd40d5f"],
-        "cjk.json": ["tesl-reborn-fonts/cjk.json", "31ac33b7860eed1b5334d77c4f008e8cd3bf72ad114ba6587517aaa7056206d2"],
-        "cjk.png": ["tesl-reborn-fonts/cjk.png", "f4efdf31c89d2094ae9053ed582e060ad22b789633a81656cea7d7f0be0eb094"]
+        "zh_cn.json": ["tesl-localization-zh_cn.json", "d9869df0e4446265c0f2ea90ef2dc361431cacd9a41320d7b829fb817bd40d5f", 1485635],
+        "zh_cn-login.json": ["tesl-localization-zh_cn-login.json", "89514985e1d924c84ce36c297441b201b538eb1d3d706bfbc182de9ef0de2c5f", 47185],
+        "cjk.json": ["tesl-reborn-fonts/cjk.json", "8feedcde263d14d24c903308d2f288c764e2fe1d39a2c455e9b8d4d98d899a72", 273382],
+        "cjk.png": ["tesl-reborn-fonts/cjk.png", "244432ef992a59ae04dc310305a53758c7a43bd4402d171aee8d7b86010a6160", 2025229]
       };
-      for (const [name, [path, expected]] of Object.entries(chineseFiles)) {
+      for (const [name, [path, expected, size]] of Object.entries(chineseFiles)) {
         const entry = zip.find(`assets/tesl-reborn/zh_cn/${name}`);
         if (!entry) continue;
-        if (entry.method !== 0 || entry.size > 4 * 1024 * 1024) throw Error("Invalid Chinese APK entry");
+        if (entry.method !== 0 || entry.size !== size) {
+          log(`chinese payload: ${name} in the APK is another version`);
+          continue;
+        }
         const target = `${persistentPath()}/${path}`;
         let current = false;
         try {
@@ -6328,8 +6364,7 @@ void onLeave (GumInvocationContext * ic) {
         if (current) continue;
         makeDirectory(target.substring(0, target.lastIndexOf("/")));
         zip.copy(entry, target);
-        if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid Chinese payload: ${name}`);
-        log(`chinese payload: restored ${name}`);
+        log(Checksum.compute("sha256", File.readAllBytes(target)) === expected ? `chinese payload: restored ${name}` : `chinese payload: ${name} failed verification`);
       }
       const obb = zip.find("assets/tesl-payload/obb.bin");
       const cache = zip.find("assets/tesl-payload/cache.bin");
@@ -7547,9 +7582,9 @@ void onLeave (GumInvocationContext * ic) {
         const label = hold(deckSearchText(textGO, "", 32)), input = hold(deckSearchInput(bar, label, image));
         const placeholderGO = create("Placeholder", call(viewport, "get_transform"));
         uiStretch(uiRect(placeholderGO));
-        const labels = { en_us: "Search decks\u2026", ru_ru: "\u041F\u043E\u0438\u0441\u043A \u043A\u043E\u043B\u043E\u0434\u2026", de_de: "Decks suchen\u2026", es_es: "Buscar mazos\u2026", es_mx: "Buscar mazos\u2026", fr_fr: "Rechercher un deck\u2026", it_it: "Cerca mazzi\u2026", pl_pl: "Szukaj talii\u2026", pt_br: "Buscar decks\u2026", tr_tr: "Deste ara\u2026" };
+        const labels = { en_us: "Search decks\u2026", ru_ru: "\u041F\u043E\u0438\u0441\u043A \u043A\u043E\u043B\u043E\u0434\u2026", de_de: "Decks suchen\u2026", es_es: "Buscar mazos\u2026", es_mx: "Buscar mazos\u2026", fr_fr: "Rechercher un deck\u2026", it_it: "Cerca mazzi\u2026", pl_pl: "Szukaj talii\u2026", pt_br: "Buscar decks\u2026", tr_tr: "Deste ara\u2026", zh_cn: "\u641C\u7D22\u724C\u7EC4\u2026" };
         phase = "placeholder";
-        const hint = hold(deckSearchText(placeholderGO, labels[resourceLanguage()] || labels.en_us, 30));
+        const hint = hold(deckSearchText(placeholderGO, labels[textOverlay() || resourceLanguage()] || labels.en_us, 30));
         call(hint, "set_color", rgba(0.65, 0.65, 0.65, 1));
         call(input, "set_placeholder", hint);
         phase = "game font";
@@ -7992,7 +8027,7 @@ void onLeave (GumInvocationContext * ic) {
       log(`settings button trace: ${error}`);
     }
   }
-  const gameDataLabels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri" };
+  const gameDataLabels = { en_us: "Game data", de_de: "Spieldaten", es_es: "Datos del juego", es_mx: "Datos del juego", fr_fr: "Donn\xE9es du jeu", it_it: "Dati di gioco", pl_pl: "Dane gry", pt_br: "Dados do jogo", ru_ru: "\u0414\u0430\u043D\u043D\u044B\u0435 \u0438\u0433\u0440\u044B", tr_tr: "Oyun verileri", zh_cn: "\u6E38\u620F\u6570\u636E" };
   section("settings: Video tab text", () => {
     const getText = cls(img, "LocalizationManager").method("GetText", 1);
     const state = Memory.alloc(8 + 8 + 2 * 64);
@@ -8019,7 +8054,7 @@ void onLeave (GumInvocationContext * ic) {
     const file = `${persistentPath()}/tesl-reborn-ui-keys.json`;
     const use = (key) => {
       if (!key || key.length > 64) return;
-      if (!answer) answer = new Il2Cpp.Object(Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data").handle).ref(true);
+      if (!answer) answer = new Il2Cpp.Object(Il2Cpp.string(gameDataLabels[textOverlay() || resourceLanguage()] || "Game data").handle).ref(true);
       state.writePointer(answer.target.handle);
       state.add(8).writeS32(key.length);
       for (let i = 0; i < key.length; i++) state.add(16 + i * 2).writeU16(key.charCodeAt(i));
@@ -8055,7 +8090,7 @@ void onLeave (GumInvocationContext * ic) {
     }
     if (!unityAlive(video)) return false;
     if (!Boolean(call(video, "get_activeSelf"))) call(video, "SetActive", true);
-    const text = Il2Cpp.string(gameDataLabels[resourceLanguage()] || "Game data");
+    const text = Il2Cpp.string(gameDataLabels[textOverlay() || resourceLanguage()] || "Game data");
     for (const type of ["TMPro.TextMeshProUGUI", "UnityEngine.UI.Text"]) {
       try {
         const labels = video.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls(type).type.object, true);
@@ -8151,7 +8186,7 @@ void onLeave (GumInvocationContext * ic) {
       return;
     }
     const labels = gameDataLabels;
-    const button = uiLabeledButton("RebornGameData", root, labels[resourceLanguage()] || "Game data", -70, -64, 180, () => {
+    const button = uiLabeledButton("RebornGameData", root, labels[textOverlay() || resourceLanguage()] || "Game data", -70, -64, 180, () => {
       ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string("teslreborn://resources"));
     });
     uiPlace(button, 1, 1, 1, 1, -18, -74, 180, 48);

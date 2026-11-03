@@ -60,7 +60,7 @@ console.log('PASS: UTF-8 login capture without legacy escape() global');
 
 let rewritten;
 const request=Buffer.from(JSON.stringify({componentType:'android',language:'en',password:'сложный"пароль',fingerprint:'old'}),'utf8');
-const normalizer={escape:undefined,unescape:undefined,byteClass:{},overrides:{componentType:'win'},resourceLanguage:()=>"ru_ru",shapedLanguage:()=>"ru",freshFingerprint:()=>"fresh",log:()=>{},
+const normalizer={escape:undefined,unescape:undefined,byteClass:{},overrides:{componentType:'win'},textOverlay:()=>"",resourceLanguage:()=>"ru_ru",shapedLanguage:()=>"ru",freshFingerprint:()=>"fresh",log:()=>{},
  call:(_,method,value)=>method==='get_RawData'?{handle:{isNull:()=>false},length:request.length,get:i=>request[i]}:(rewritten=value),
  Il2Cpp:{array:(_,length)=>{const bytes=new Uint8Array(length);bytes.set=(index,value)=>{bytes[index]=value};return bytes}}};
 vm.createContext(normalizer);vm.runInContext(extract('  function rewriteAuthBody(', '  // The credentials of the login'),normalizer);
