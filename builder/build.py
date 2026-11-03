@@ -16,6 +16,7 @@ from .resources import (
     PACKAGE,
     OBB,
     LANGUAGES,
+    TEXT_LANGUAGES,
     ensure_outside,
     find_assets,
     unpack_xapk,
@@ -782,9 +783,9 @@ def _build(
     apk_only = format == "apk"
     if apk_only:
         languages, default_language, embedded = [], "system", False
-    if default_language not in ("system", *LANGUAGES):
+    if default_language not in ("system", *LANGUAGES, *TEXT_LANGUAGES):
         raise ValueError("Unknown default language")
-    if default_language != "system" and default_language not in languages:
+    if default_language != "system" and TEXT_LANGUAGES.get(default_language, default_language) not in languages:
         raise ValueError("Include the default language in the languages to prepare")
     if format not in ("xapk", "manual", "apk", "data"):
         raise ValueError("Unknown output format")

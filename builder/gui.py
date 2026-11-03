@@ -17,7 +17,9 @@ from urllib.parse import urlsplit
 
 from .build import build, application_directory, data_root, cancel_build, BuildCancelled
 from . import selfupdate
-from .resources import LANGUAGES, NAMES, find_assets, ensure_outside, source_roots
+from .resources import LANGUAGES, NAMES, TEXT_LANGUAGES, TEXT_NAMES, find_assets, ensure_outside, source_roots
+
+ALL_NAMES = {**NAMES, **TEXT_NAMES}
 from .server import ResourceServer
 
 
@@ -245,7 +247,7 @@ class BuilderWindow:
         uirow.pack(fill="x", pady=4)
         ttk.Label(uirow, text="Interface language:").pack(side="left")
         self.ui_locale = ttk.Combobox(
-            uirow, values=list(NAMES.values()), state="readonly"
+            uirow, values=list(ALL_NAMES.values()), state="readonly"
         )
         self.ui_locale.current(0)
         self.ui_locale.pack(side="left", padx=8)
@@ -310,17 +312,17 @@ class BuilderWindow:
         languages.pack(fill="x", pady=6)
         self.languages = {}
         self.language_checks = []
-        for i, code in enumerate(LANGUAGES):
+        for i, code in enumerate(ALL_NAMES):
             value = tk.BooleanVar(value=code == "en_us")
             self.languages[code] = value
-            check = ttk.Checkbutton(languages, text=NAMES[code], variable=value)
+            check = ttk.Checkbutton(languages, text=ALL_NAMES[code], variable=value)
             check.grid(row=i // 5, column=i % 5, sticky="w", padx=6)
             self.language_checks.append(check)
         row = ttk.Frame(root)
         row.pack(fill="x")
         ttk.Label(row, text="Default game language:").pack(side="left")
         self.default = ttk.Combobox(
-            row, values=["Phone system language", *NAMES.values()], state="readonly"
+            row, values=["Phone system language", *ALL_NAMES.values()], state="readonly"
         )
         self.default.current(1)
         self.default.pack(side="left", padx=8)
@@ -434,7 +436,7 @@ class BuilderWindow:
         translations = json.loads(
             (Path(__file__).with_name("ui-text.json")).read_text(encoding="utf-8")
         )
-        code = list(NAMES)[self.ui_locale.current()]
+        code = list(ALL_NAMES)[self.ui_locale.current()]
 
         def visit(widget):
             if "text" in widget.keys():
@@ -447,7 +449,7 @@ class BuilderWindow:
 
         visit(parent)
         index = self.default.current()
-        self.default.configure(values=[self.tr("Phone system language"), *NAMES.values()])
+        self.default.configure(values=[self.tr("Phone system language"), *ALL_NAMES.values()])
         if index >= 0:
             self.default.current(index)
         self.build_button.configure(text=self.build_text())
@@ -464,7 +466,7 @@ class BuilderWindow:
         translations = json.loads(
             Path(__file__).with_name("ui-text.json").read_text(encoding="utf-8")
         )
-        return translations.get(key, {}).get(list(NAMES)[self.ui_locale.current()], key)
+        return translations.get(key, {}).get(list(ALL_NAMES)[self.ui_locale.current()], key)
 
     def build_text(self):
         if self.running:
@@ -601,7 +603,7 @@ class BuilderWindow:
             default = (
                 "system"
                 if self.apk_only.get() or self.default.current() == 0
-                else list(LANGUAGES)[self.default.current() - 1]
+                else list(ALL_NAMES)[self.default.current() - 1]
             )
             if (
                 not self.apk_only.get()
@@ -619,7 +621,7 @@ class BuilderWindow:
             args = dict(
                 game=game,
                 xapk=source,
-                languages=selected,
+                languages=list(dict.fromkeys(TEXT_LANGUAGES.get(c, c) for c in selected)),
                 default_language=default,
                 embedded=not self.apk_only.get() and not self.data_only.get() and self.format.get() == "xapk",
                 format="apk" if self.apk_only.get() else "data" if self.data_only.get() else self.format.get(),

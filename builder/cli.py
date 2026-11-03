@@ -14,7 +14,7 @@ from pathlib import Path
 import sys
 
 from .build import build
-from .resources import LANGUAGES
+from .resources import LANGUAGES, TEXT_LANGUAGES
 
 
 def find_game():
@@ -34,7 +34,7 @@ def main(argv=None):
                         help="manual: APK + data ZIP (default); xapk: offline XAPK; "
                              "apk: APK only; data: data ZIP only")
     parser.add_argument("--languages", default="en_us",
-                        help="comma-separated game languages: " + ",".join(LANGUAGES))
+                        help="comma-separated game languages: " + ",".join([*LANGUAGES, *TEXT_LANGUAGES]))
     parser.add_argument("--default-language", default="system")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
@@ -42,13 +42,13 @@ def main(argv=None):
     if not game:
         parser.error("--game is needed: the PC game was not found in exactly one Steam library")
     languages = [code for code in args.languages.split(",") if code] if args.format != "apk" else []
-    unknown = [code for code in languages if code not in LANGUAGES]
+    unknown = [code for code in languages if code not in LANGUAGES and code not in TEXT_LANGUAGES]
     if unknown:
         parser.error("unknown languages: " + ", ".join(unknown))
     result = build(
         game=game,
         xapk=args.xapk,
-        languages=languages,
+        languages=list(dict.fromkeys(TEXT_LANGUAGES.get(c, c) for c in languages)),
         default_language=args.default_language,
         embedded=args.format == "xapk",
         format=args.format,

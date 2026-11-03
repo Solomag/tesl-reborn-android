@@ -9,7 +9,8 @@
     "pl_pl": "Przygotowanie danych gry",
     "pt_br": "Preparar dados do jogo",
     "ru_ru": "Подготовка данных игры",
-    "tr_tr": "Oyun verilerini hazırla"
+    "tr_tr": "Oyun verilerini hazırla",
+    "zh_cn": "游戏数据设置"
   },
   "Game language": {
     "en_us": "Game language",
@@ -21,7 +22,8 @@
     "pl_pl": "Język gry",
     "pt_br": "Idioma do jogo",
     "ru_ru": "Язык игры",
-    "tr_tr": "Oyun dili"
+    "tr_tr": "Oyun dili",
+    "zh_cn": "游戏语言"
   },
   "Import OBB file": {
     "en_us": "Import OBB file",
@@ -33,7 +35,8 @@
     "pl_pl": "Importuj plik OBB",
     "pt_br": "Importar arquivo OBB",
     "ru_ru": "Импортировать файл OBB",
-    "tr_tr": "OBB dosyasını içe aktar"
+    "tr_tr": "OBB dosyasını içe aktar",
+    "zh_cn": "导入 OBB 文件"
   },
   "Install included language packs": {
     "en_us": "Install included language packs",
@@ -45,7 +48,8 @@
     "pl_pl": "Zainstaluj dołączone języki",
     "pt_br": "Instalar idiomas incluídos",
     "ru_ru": "Установить встроенные языки",
-    "tr_tr": "Dahil edilen dilleri yükle"
+    "tr_tr": "Dahil edilen dilleri yükle",
+    "zh_cn": "安装内置语言包"
   },
   "Remove selected language": {
     "en_us": "Remove selected language",
@@ -57,7 +61,8 @@
     "pl_pl": "Usuń wybrany język",
     "pt_br": "Remover idioma selecionado",
     "ru_ru": "Удалить выбранный язык",
-    "tr_tr": "Seçili dili kaldır"
+    "tr_tr": "Seçili dili kaldır",
+    "zh_cn": "移除所选语言"
   },
   "Launch game": {
     "en_us": "Launch game",
@@ -69,7 +74,8 @@
     "pl_pl": "Uruchom grę",
     "pt_br": "Iniciar jogo",
     "ru_ru": "Запустить игру",
-    "tr_tr": "Oyunu başlat"
+    "tr_tr": "Oyunu başlat",
+    "zh_cn": "启动游戏"
   },
   "Base game data (OBB)": {
     "en_us": "Base game data (OBB)",
@@ -81,7 +87,8 @@
     "pl_pl": "Podstawowe dane gry (OBB)",
     "pt_br": "Dados base do jogo (OBB)",
     "ru_ru": "Основные данные игры (OBB)",
-    "tr_tr": "Temel oyun verileri (OBB)"
+    "tr_tr": "Temel oyun verileri (OBB)",
+    "zh_cn": "基础游戏数据（OBB）"
   },
   "Common resources": {
     "en_us": "Common resources",
@@ -93,7 +100,8 @@
     "pl_pl": "Wspólne zasoby",
     "pt_br": "Recursos comuns",
     "ru_ru": "Общие ресурсы",
-    "tr_tr": "Ortak kaynaklar"
+    "tr_tr": "Ortak kaynaklar",
+    "zh_cn": "通用资源"
   },
   "Language pack": {
     "en_us": "Language pack",
@@ -105,7 +113,8 @@
     "pl_pl": "Pakiet językowy",
     "pt_br": "Pacote de idioma",
     "ru_ru": "Языковой пакет",
-    "tr_tr": "Dil paketi"
+    "tr_tr": "Dil paketi",
+    "zh_cn": "语言包"
   },
   "Installed": {
     "en_us": "Installed",
@@ -117,7 +126,8 @@
     "pl_pl": "Zainstalowano",
     "pt_br": "Instalado",
     "ru_ru": "Установлено",
-    "tr_tr": "Yüklü"
+    "tr_tr": "Yüklü",
+    "zh_cn": "已安装"
   },
   "Missing": {
     "en_us": "Missing",
@@ -129,7 +139,8 @@
     "pl_pl": "Brak",
     "pt_br": "Ausente",
     "ru_ru": "Отсутствует",
-    "tr_tr": "Eksik"
+    "tr_tr": "Eksik",
+    "zh_cn": "缺失"
   },
   "Ready to launch": {
     "en_us": "Ready to launch",
@@ -141,7 +152,8 @@
     "pl_pl": "Gotowe do uruchomienia",
     "pt_br": "Pronto para iniciar",
     "ru_ru": "Всё готово к запуску",
-    "tr_tr": "Başlatmaya hazır"
+    "tr_tr": "Başlatmaya hazır",
+    "zh_cn": "可以启动"
   },
   "Connection code shown on your PC": {
     "en_us": "Connection code shown on your PC",
@@ -153,7 +165,8 @@
     "pl_pl": "Kod wyświetlony na komputerze",
     "pt_br": "Código mostrado no PC",
     "ru_ru": "Код подключения с экрана ПК",
-    "tr_tr": "Bilgisayarda gösterilen bağlantı kodu"
+    "tr_tr": "Bilgisayarda gösterilen bağlantı kodu",
+    "zh_cn": "电脑上显示的连接码"
   },
   "Transfer incomplete": {
     "en_us": "Transfer incomplete",
@@ -165,7 +178,8 @@
     "pl_pl": "Transfer nieukończony",
     "pt_br": "Transferência incompleta",
     "ru_ru": "Передача не завершена",
-    "tr_tr": "Aktarım tamamlanmadı"
+    "tr_tr": "Aktarım tamamlanmadı",
+    "zh_cn": "传输未完成"
   },
   "Build": {
     "en_us": "Build",
@@ -177,7 +191,8 @@
     "pl_pl": "Zbuduj",
     "pt_br": "Criar",
     "ru_ru": "Собрать",
-    "tr_tr": "Oluştur"
+    "tr_tr": "Oluştur",
+    "zh_cn": "构建"
   },
   "Browse…": {
     "en_us": "Browse…",
@@ -189,7 +204,8 @@
     "pl_pl": "Przeglądaj…",
     "pt_br": "Procurar…",
     "ru_ru": "Выбрать…",
-    "tr_tr": "Gözat…"
+    "tr_tr": "Gözat…",
+    "zh_cn": "浏览…"
   },
   "PC game": {
     "en_us": "PC game",
@@ -201,7 +217,8 @@
     "pl_pl": "Gra PC",
     "pt_br": "Jogo de PC",
     "ru_ru": "ПК-игра",
-    "tr_tr": "PC oyunu"
+    "tr_tr": "PC oyunu",
+    "zh_cn": "电脑版游戏"
   },
   "Original XAPK": {
     "en_us": "Original XAPK",
@@ -213,7 +230,8 @@
     "pl_pl": "Oryginalny XAPK",
     "pt_br": "XAPK original",
     "ru_ru": "Оригинальный XAPK",
-    "tr_tr": "Orijinal XAPK"
+    "tr_tr": "Orijinal XAPK",
+    "zh_cn": "原版 XAPK"
   },
   "Output folder": {
     "en_us": "Output folder",
@@ -225,7 +243,8 @@
     "pl_pl": "Folder wynikowy",
     "pt_br": "Pasta de saída",
     "ru_ru": "Папка результатов",
-    "tr_tr": "Çıktı klasörü"
+    "tr_tr": "Çıktı klasörü",
+    "zh_cn": "输出文件夹"
   },
   "Game languages to prepare": {
     "en_us": "Game languages to prepare",
@@ -237,7 +256,8 @@
     "pl_pl": "Języki gry do przygotowania",
     "pt_br": "Idiomas do jogo a preparar",
     "ru_ru": "Языки игры для подготовки",
-    "tr_tr": "Hazırlanacak oyun dilleri"
+    "tr_tr": "Hazırlanacak oyun dilleri",
+    "zh_cn": "要准备的游戏语言"
   },
   "Default game language:": {
     "en_us": "Default game language:",
@@ -249,7 +269,8 @@
     "pl_pl": "Domyślny język gry:",
     "pt_br": "Idioma padrão do jogo:",
     "ru_ru": "Язык игры по умолчанию:",
-    "tr_tr": "Varsayılan oyun dili:"
+    "tr_tr": "Varsayılan oyun dili:",
+    "zh_cn": "默认游戏语言："
   },
   "Transfer game data to phone": {
     "en_us": "Transfer game data to phone",
@@ -261,7 +282,8 @@
     "pl_pl": "Prześlij dane na telefon",
     "pt_br": "Transferir dados para o telefone",
     "ru_ru": "Передача данных игры на телефон",
-    "tr_tr": "Oyun verilerini telefona aktar"
+    "tr_tr": "Oyun verilerini telefona aktar",
+    "zh_cn": "将游戏数据传输到手机"
   },
   "Start transfer": {
     "en_us": "Start transfer",
@@ -273,7 +295,8 @@
     "pl_pl": "Rozpocznij transfer",
     "pt_br": "Iniciar transferência",
     "ru_ru": "Начать передачу",
-    "tr_tr": "Aktarımı başlat"
+    "tr_tr": "Aktarımı başlat",
+    "zh_cn": "开始传输"
   },
   "Stop": {
     "en_us": "Stop",
@@ -285,7 +308,8 @@
     "pl_pl": "Zatrzymaj",
     "pt_br": "Parar",
     "ru_ru": "Остановить",
-    "tr_tr": "Durdur"
+    "tr_tr": "Durdur",
+    "zh_cn": "停止"
   },
   "Open a previous build…": {
     "en_us": "Open a previous build…",
@@ -297,7 +321,8 @@
     "pl_pl": "Otwórz poprzednią kompilację…",
     "pt_br": "Abrir compilação anterior…",
     "ru_ru": "Открыть предыдущую сборку…",
-    "tr_tr": "Önceki derlemeyi aç…"
+    "tr_tr": "Önceki derlemeyi aç…",
+    "zh_cn": "打开以前的构建…"
   },
   "Advanced connection…": {
     "en_us": "Advanced connection…",
@@ -309,7 +334,8 @@
     "pl_pl": "Zaawansowane połączenie…",
     "pt_br": "Conexão avançada…",
     "ru_ru": "Дополнительные настройки связи…",
-    "tr_tr": "Gelişmiş bağlantı…"
+    "tr_tr": "Gelişmiş bağlantı…",
+    "zh_cn": "高级连接设置…"
   },
   "Copy connection details": {
     "en_us": "Copy connection details",
@@ -321,7 +347,8 @@
     "pl_pl": "Kopiuj dane połączenia",
     "pt_br": "Copiar conexão",
     "ru_ru": "Скопировать подключение",
-    "tr_tr": "Bağlantı bilgilerini kopyala"
+    "tr_tr": "Bağlantı bilgilerini kopyala",
+    "zh_cn": "复制连接信息"
   },
   "Interface language": {
     "en_us": "Interface language",
@@ -333,7 +360,8 @@
     "pl_pl": "Język interfejsu",
     "pt_br": "Idioma da interface",
     "ru_ru": "Язык интерфейса",
-    "tr_tr": "Arayüz dili"
+    "tr_tr": "Arayüz dili",
+    "zh_cn": "界面语言"
   },
   "Interface language:": {
     "en_us": "Interface language:",
@@ -345,7 +373,8 @@
     "pl_pl": "Język interfejsu:",
     "pt_br": "Idioma da interface:",
     "ru_ru": "Язык интерфейса:",
-    "tr_tr": "Arayüz dili:"
+    "tr_tr": "Arayüz dili:",
+    "zh_cn": "界面语言："
   },
   "Import data ZIP": {
     "en_us": "Import data ZIP",
@@ -357,7 +386,8 @@
     "pl_pl": "Importuj ZIP z danymi",
     "pt_br": "Importar ZIP de dados",
     "ru_ru": "Импортировать ZIP с данными",
-    "tr_tr": "Veri ZIP dosyasını içe aktar"
+    "tr_tr": "Veri ZIP dosyasını içe aktar",
+    "zh_cn": "导入数据 ZIP"
   },
   "Small APK + data ZIP": {
     "en_us": "Small APK + data ZIP",
@@ -369,7 +399,8 @@
     "pl_pl": "Mały APK + ZIP z danymi",
     "pt_br": "APK pequeno + ZIP de dados",
     "ru_ru": "Маленький APK + ZIP с данными",
-    "tr_tr": "Küçük APK + veri ZIP dosyası"
+    "tr_tr": "Küçük APK + veri ZIP dosyası",
+    "zh_cn": "小型 APK + 数据 ZIP"
   },
   "Offline XAPK": {
     "en_us": "Offline XAPK",
@@ -381,7 +412,8 @@
     "pl_pl": "XAPK offline",
     "pt_br": "XAPK offline",
     "ru_ru": "Автономный XAPK",
-    "tr_tr": "Çevrimdışı XAPK"
+    "tr_tr": "Çevrimdışı XAPK",
+    "zh_cn": "离线 XAPK"
   },
   "Use system language for the game": {
     "en_us": "Use system language for the game",
@@ -393,7 +425,8 @@
     "pl_pl": "Użyj języka systemu w grze",
     "pt_br": "Usar o idioma do sistema no jogo",
     "ru_ru": "Установить в игре язык системы",
-    "tr_tr": "Oyunda sistem dilini kullan"
+    "tr_tr": "Oyunda sistem dilini kullan",
+    "zh_cn": "游戏使用系统语言"
   },
   "Scan QR code to download game data from your PC": {
     "en_us": "Scan QR code to download game data from your PC",
@@ -405,7 +438,8 @@
     "pl_pl": "Zeskanuj QR, aby pobrać dane gry z komputera",
     "pt_br": "Ler QR para baixar dados do jogo do PC",
     "ru_ru": "Сканировать QR для скачивания данных игры с ПК",
-    "tr_tr": "Oyun verilerini bilgisayardan indirmek için QR tara"
+    "tr_tr": "Oyun verilerini bilgisayardan indirmek için QR tara",
+    "zh_cn": "扫描二维码，从电脑下载游戏数据"
   },
   "Download missing game data": {
     "en_us": "Download missing game data",
@@ -417,7 +451,8 @@
     "pl_pl": "Pobierz brakujące dane gry",
     "pt_br": "Baixar dados do jogo ausentes",
     "ru_ru": "Скачать недостающие данные игры",
-    "tr_tr": "Eksik oyun verilerini indir"
+    "tr_tr": "Eksik oyun verilerini indir",
+    "zh_cn": "下载缺失的游戏数据"
   },
   "QR code scanned. Choose your language, then tap Download missing game data.": {
     "en_us": "QR code scanned. Choose your language, then tap Download missing game data.",
@@ -429,7 +464,8 @@
     "pl_pl": "Kod QR odczytany. Wybierz język i pobierz brakujące dane gry.",
     "pt_br": "QR lido. Escolha o idioma e baixe os dados do jogo ausentes.",
     "ru_ru": "QR-код считан. Выбери язык и нажми «Скачать недостающие данные игры».",
-    "tr_tr": "QR okundu. Dili seçip eksik oyun verilerini indir."
+    "tr_tr": "QR okundu. Dili seçip eksik oyun verilerini indir.",
+    "zh_cn": "已扫描二维码。请选择语言，然后点击“下载缺失的游戏数据”。"
   },
   "Expert mode…": {
     "en_us": "Expert mode…",
@@ -441,7 +477,8 @@
     "pl_pl": "Tryb ekspercki…",
     "pt_br": "Modo avançado…",
     "ru_ru": "Экспертный режим…",
-    "tr_tr": "Uzman modu…"
+    "tr_tr": "Uzman modu…",
+    "zh_cn": "专家模式…"
   },
   "APK only (keep installed game data)": {
     "en_us": "APK only (keep installed game data)",
@@ -453,7 +490,8 @@
     "pl_pl": "Tylko APK (zachowaj zainstalowane dane)",
     "pt_br": "Somente APK (manter dados instalados)",
     "ru_ru": "Только APK (сохранить данные на телефоне)",
-    "tr_tr": "Yalnızca APK (kurulu verileri koru)"
+    "tr_tr": "Yalnızca APK (kurulu verileri koru)",
+    "zh_cn": "仅 APK（保留已安装的游戏数据）"
   },
   "APK update only": {
     "en_us": "APK update only",
@@ -465,7 +503,8 @@
     "pl_pl": "Aktualizuj tylko APK",
     "pt_br": "Atualizar somente APK",
     "ru_ru": "Обновление только APK",
-    "tr_tr": "Yalnızca APK güncellemesi"
+    "tr_tr": "Yalnızca APK güncellemesi",
+    "zh_cn": "仅更新 APK"
   },
   "Build APK only": {
     "en_us": "Build APK only",
@@ -477,7 +516,8 @@
     "pl_pl": "Zbuduj tylko APK",
     "pt_br": "Criar somente APK",
     "ru_ru": "Собрать только APK",
-    "tr_tr": "Yalnızca APK oluştur"
+    "tr_tr": "Yalnızca APK oluştur",
+    "zh_cn": "仅构建 APK"
   },
   "Build only the APK? Game data must already be installed on the phone. No language packs, OBB or data ZIP will be produced.": {
     "en_us": "Build only the APK? Game data must already be installed on the phone. No language packs, OBB or data ZIP will be produced.",
@@ -489,7 +529,8 @@
     "pl_pl": "Zbudować tylko APK? Dane gry muszą już być zainstalowane na telefonie. Pakiety językowe, OBB i ZIP danych nie zostaną utworzone.",
     "pt_br": "Criar somente o APK? Os dados já devem estar instalados no telefone. Não serão criados idiomas, OBB ou ZIP de dados.",
     "ru_ru": "Собрать только APK? Игровые данные уже должны быть установлены на телефоне. Языковые пакеты, OBB и ZIP с данными создаваться не будут.",
-    "tr_tr": "Yalnızca APK oluşturulsun mu? Oyun verileri telefonda kurulu olmalıdır. Dil paketleri, OBB veya veri ZIP dosyası oluşturulmaz."
+    "tr_tr": "Yalnızca APK oluşturulsun mu? Oyun verileri telefonda kurulu olmalıdır. Dil paketleri, OBB veya veri ZIP dosyası oluşturulmaz.",
+    "zh_cn": "只构建 APK？手机上必须已安装游戏数据。不会生成语言包、OBB 或数据 ZIP。"
   },
   "Expert mode": {
     "en_us": "Expert mode",
@@ -501,7 +542,8 @@
     "pt_br": "Modo especialista",
     "ru_ru": "Режим эксперта",
     "tr_tr": "Uzman modu",
-    "es_mx": "Modo experto"
+    "es_mx": "Modo experto",
+    "zh_cn": "专家模式"
   },
   "Your PC game and original XAPK are read-only.": {
     "en_us": "Your PC game and original XAPK are read-only.",
@@ -513,7 +555,8 @@
     "pt_br": "O jogo de PC e o XAPK original não são alterados.",
     "ru_ru": "ПК-игра и оригинальный XAPK не изменяются.",
     "tr_tr": "PC oyunu ve özgün XAPK değiştirilmez.",
-    "es_mx": "El juego de PC y el XAPK original no se modifican."
+    "es_mx": "El juego de PC y el XAPK original no se modifican.",
+    "zh_cn": "电脑版游戏和原版 XAPK 不会被修改。"
   },
   "Each build gets its own folder. Temporary files are removed automatically.": {
     "en_us": "Each build gets its own folder. Temporary files are removed automatically.",
@@ -525,7 +568,8 @@
     "pt_br": "Cada compilação tem sua pasta. Arquivos temporários são removidos automaticamente.",
     "ru_ru": "Для каждой сборки создаётся отдельная папка. Временные файлы удаляются автоматически.",
     "tr_tr": "Her derlemenin ayrı klasörü olur. Geçici dosyalar otomatik silinir.",
-    "es_mx": "Cada compilación tiene su carpeta. Los archivos temporales se eliminan automáticamente."
+    "es_mx": "Cada compilación tiene su carpeta. Los archivos temporales se eliminan automáticamente.",
+    "zh_cn": "每次构建都有单独的文件夹。临时文件会自动删除。"
   },
   "ZIP: import once on the phone, or download missing data from this PC.": {
     "en_us": "ZIP: import once on the phone, or download missing data from this PC.",
@@ -537,7 +581,8 @@
     "pt_br": "Importe o ZIP no celular ou baixe os dados ausentes deste PC.",
     "ru_ru": "Импортируйте ZIP на телефоне или скачайте недостающие данные с этого ПК.",
     "tr_tr": "ZIP dosyasını telefonda içe aktarın veya eksik verileri bu PC’den indirin.",
-    "es_mx": "Importa el ZIP en el teléfono o descarga los datos que faltan desde este PC."
+    "es_mx": "Importa el ZIP en el teléfono o descarga los datos que faltan desde este PC.",
+    "zh_cn": "ZIP：在手机上导入一次，或从这台电脑下载缺失的数据。"
   },
   "Transfer stops 60 seconds after the phone is ready, or after 15 minutes idle.": {
     "en_us": "Transfer stops 60 seconds after the phone is ready, or after 15 minutes idle.",
@@ -549,7 +594,8 @@
     "pt_br": "A transferência termina 60 segundos após a confirmação do celular ou após 15 minutos de inatividade.",
     "ru_ru": "Передача завершится через 60 секунд после подтверждения телефона или через 15 минут бездействия.",
     "tr_tr": "Aktarım telefonun onayından 60 saniye sonra veya 15 dakika işlem yapılmayınca durur.",
-    "es_mx": "La transferencia termina 60 segundos tras la confirmación del teléfono o tras 15 minutos de inactividad."
+    "es_mx": "La transferencia termina 60 segundos tras la confirmación del teléfono o tras 15 minutos de inactividad.",
+    "zh_cn": "手机准备就绪60秒后，或空闲15分钟后，传输会停止。"
   },
   "Wi-Fi and Tailscale need no certificate. These optional settings are only for an existing public HTTPS server.": {
     "en_us": "Wi-Fi and Tailscale need no certificate. These optional settings are only for an existing public HTTPS server.",
@@ -561,7 +607,8 @@
     "pt_br": "Wi-Fi e Tailscale não precisam de certificado. Estas opções são para um servidor HTTPS público existente.",
     "ru_ru": "Для Wi-Fi и Tailscale сертификат не нужен. Эти настройки — для уже настроенного публичного HTTPS-сервера.",
     "tr_tr": "Wi-Fi ve Tailscale sertifika gerektirmez. Bu ayarlar mevcut bir genel HTTPS sunucusu içindir.",
-    "es_mx": "Wi-Fi y Tailscale no necesitan certificado. Estas opciones son para un servidor HTTPS público existente."
+    "es_mx": "Wi-Fi y Tailscale no necesitan certificado. Estas opciones son para un servidor HTTPS público existente.",
+    "zh_cn": "Wi-Fi 和 Tailscale 不需要证书。这些可选设置仅用于已有的公共 HTTPS 服务器。"
   },
   "Leave these fields empty for Wi-Fi or Tailscale.": {
     "en_us": "Leave these fields empty for Wi-Fi or Tailscale.",
@@ -573,7 +620,8 @@
     "pt_br": "Deixe estes campos vazios para Wi-Fi ou Tailscale.",
     "ru_ru": "Для Wi-Fi или Tailscale оставьте эти поля пустыми.",
     "tr_tr": "Wi-Fi veya Tailscale için bu alanları boş bırakın.",
-    "es_mx": "Deja estos campos vacíos para Wi-Fi o Tailscale."
+    "es_mx": "Deja estos campos vacíos para Wi-Fi o Tailscale.",
+    "zh_cn": "使用 Wi-Fi 或 Tailscale 时请留空这些字段。"
   },
   "PC address (Wi-Fi / Tailscale)": {
     "en_us": "PC address (Wi-Fi / Tailscale)",
@@ -585,7 +633,8 @@
     "pt_br": "Endereço do PC (Wi-Fi / Tailscale)",
     "ru_ru": "Адрес ПК (Wi-Fi / Tailscale)",
     "tr_tr": "PC adresi (Wi-Fi / Tailscale)",
-    "es_mx": "Dirección del PC (Wi-Fi / Tailscale)"
+    "es_mx": "Dirección del PC (Wi-Fi / Tailscale)",
+    "zh_cn": "电脑地址（Wi-Fi / Tailscale）"
   },
   "Public HTTPS URL": {
     "en_us": "Public HTTPS URL",
@@ -597,7 +646,8 @@
     "pt_br": "URL HTTPS pública",
     "ru_ru": "Публичный HTTPS-адрес",
     "tr_tr": "Genel HTTPS adresi",
-    "es_mx": "URL HTTPS pública"
+    "es_mx": "URL HTTPS pública",
+    "zh_cn": "公共 HTTPS 地址"
   },
   "Server port (0 = auto)": {
     "en_us": "Server port (0 = auto)",
@@ -609,7 +659,8 @@
     "pt_br": "Porta do servidor (0 = automática)",
     "ru_ru": "Порт сервера (0 = автоматически)",
     "tr_tr": "Sunucu bağlantı noktası (0 = otomatik)",
-    "es_mx": "Puerto del servidor (0 = automático)"
+    "es_mx": "Puerto del servidor (0 = automático)",
+    "zh_cn": "服务器端口（0 = 自动）"
   },
   "Done": {
     "en_us": "Done",
@@ -621,7 +672,8 @@
     "pt_br": "Concluído",
     "ru_ru": "Готово",
     "tr_tr": "Bitti",
-    "es_mx": "Listo"
+    "es_mx": "Listo",
+    "zh_cn": "完成"
   },
   "Close": {
     "en_us": "Close",
@@ -633,7 +685,8 @@
     "pt_br": "Fechar",
     "ru_ru": "Закрыть",
     "tr_tr": "Kapat",
-    "es_mx": "Cerrar"
+    "es_mx": "Cerrar",
+    "zh_cn": "关闭"
   },
   "Connect your phone": {
     "en_us": "Connect your phone",
@@ -645,7 +698,8 @@
     "pt_br": "Conecte o celular",
     "ru_ru": "Подключение телефона",
     "tr_tr": "Telefonunuzu bağlayın",
-    "es_mx": "Conecta el teléfono"
+    "es_mx": "Conecta el teléfono",
+    "zh_cn": "连接手机"
   },
   "Scan with your phone camera to install the APK, or scan inside TESL Reborn to download game data.": {
     "en_us": "Scan with your phone camera to install the APK, or scan inside TESL Reborn to download game data.",
@@ -657,7 +711,8 @@
     "pt_br": "Leia com a câmera para instalar o APK, ou no TESL Reborn para baixar dados.",
     "ru_ru": "Сканируйте камерой телефона для установки APK или в TESL Reborn для загрузки игровых данных.",
     "tr_tr": "APK kurulumu için telefon kamerasıyla, oyun verileri için TESL Reborn içinden tarayın.",
-    "es_mx": "Escanea con la cámara para instalar el APK, o dentro de TESL Reborn para descargar datos."
+    "es_mx": "Escanea con la cámara para instalar el APK, o dentro de TESL Reborn para descargar datos.",
+    "zh_cn": "用手机相机扫描以安装 APK，或在 TESL Reborn 中扫描以下载游戏数据。"
   },
   "Keep this builder open until the phone is ready.": {
     "en_us": "Keep this builder open until the phone is ready.",
@@ -669,7 +724,8 @@
     "pt_br": "Mantenha o programa aberto até o celular terminar.",
     "ru_ru": "Не закрывайте Builder до завершения передачи на телефон.",
     "tr_tr": "Telefon hazır olana kadar bu programı açık tutun.",
-    "es_mx": "Mantén el programa abierto hasta que el teléfono termine."
+    "es_mx": "Mantén el programa abierto hasta que el teléfono termine.",
+    "zh_cn": "在手机准备就绪之前，请不要关闭本构建器。"
   },
   "Transfer an existing build…": {
     "en_us": "Transfer an existing build…",
@@ -681,7 +737,8 @@
     "pt_br": "Transferir uma compilação existente…",
     "ru_ru": "Передать готовую сборку…",
     "tr_tr": "Mevcut derlemeyi aktar…",
-    "es_mx": "Transferir una compilación existente…"
+    "es_mx": "Transferir una compilación existente…",
+    "zh_cn": "传输已有的构建…"
   },
   "Reuse an output folder to transfer it again without rebuilding.": {
     "en_us": "Reuse an output folder to transfer it again without rebuilding.",
@@ -693,7 +750,8 @@
     "pt_br": "Use uma pasta de saída para transferir sem recompilar.",
     "ru_ru": "Выберите папку из output для повторной передачи без новой сборки.",
     "tr_tr": "Yeniden derlemeden aktarmak için çıktı klasörünü seçin.",
-    "es_mx": "Usa una carpeta de salida para transferir de nuevo sin recompilar."
+    "es_mx": "Usa una carpeta de salida para transferir de nuevo sin recompilar.",
+    "zh_cn": "选择一个输出文件夹，无需重新构建即可再次传输。"
   },
   "Select an existing output folder": {
     "en_us": "Select an existing output folder",
@@ -705,7 +763,8 @@
     "pt_br": "Selecione uma pasta de saída existente",
     "ru_ru": "Выберите папку готовой сборки в output",
     "tr_tr": "Mevcut çıktı klasörünü seçin",
-    "es_mx": "Selecciona una carpeta de salida existente"
+    "es_mx": "Selecciona una carpeta de salida existente",
+    "zh_cn": "选择已有的输出文件夹"
   },
   "Select the PC game folder or StreamingAssets": {
     "en_us": "Select the PC game folder or StreamingAssets",
@@ -717,7 +776,8 @@
     "pt_br": "Selecione a pasta do jogo PC ou StreamingAssets",
     "ru_ru": "Выберите папку ПК-игры или StreamingAssets",
     "tr_tr": "PC oyunu klasörünü veya StreamingAssets’i seçin",
-    "es_mx": "Selecciona la carpeta del juego PC o StreamingAssets"
+    "es_mx": "Selecciona la carpeta del juego PC o StreamingAssets",
+    "zh_cn": "选择电脑版游戏文件夹或 StreamingAssets"
   },
   "Show QR / connection": {
     "en_us": "Show QR / connection",
@@ -729,7 +789,8 @@
     "pt_br": "Mostrar QR / conexão",
     "ru_ru": "QR и подключение",
     "tr_tr": "QR / bağlantıyı göster",
-    "es_mx": "Ver QR / conexión"
+    "es_mx": "Ver QR / conexión",
+    "zh_cn": "显示二维码 / 连接"
   },
   "APK only: installed game data is kept. No languages, OBB or data ZIP are built.": {
     "en_us": "APK only: installed game data is kept. No languages, OBB or data ZIP are built.",
@@ -741,7 +802,8 @@
     "pt_br": "Só APK: os dados instalados são mantidos. Sem idiomas, OBB ou ZIP de dados.",
     "ru_ru": "Только APK: установленные данные сохраняются. Языки, OBB и ZIP с данными не создаются.",
     "tr_tr": "Yalnızca APK: kurulu oyun verileri korunur. Dil, OBB veya veri ZIP’i oluşturulmaz.",
-    "es_mx": "Solo APK: se conservan los datos instalados. No se crean idiomas, OBB ni ZIP de datos."
+    "es_mx": "Solo APK: se conservan los datos instalados. No se crean idiomas, OBB ni ZIP de datos.",
+    "zh_cn": "仅 APK：保留已安装的游戏数据。不会构建语言、OBB 或数据 ZIP。"
   },
   "Checking files and starting transfer…": {
     "en_us": "Checking files and starting transfer…",
@@ -753,7 +815,8 @@
     "pt_br": "Verificando arquivos e iniciando transferência…",
     "ru_ru": "Проверяем файлы и запускаем передачу…",
     "tr_tr": "Dosyalar denetleniyor ve aktarım başlatılıyor…",
-    "es_mx": "Verificando archivos e iniciando transferencia…"
+    "es_mx": "Verificando archivos e iniciando transferencia…",
+    "zh_cn": "正在检查文件并开始传输…"
   },
   "Transfer stopped.": {
     "en_us": "Transfer stopped.",
@@ -765,7 +828,8 @@
     "pt_br": "Transferência encerrada.",
     "ru_ru": "Передача остановлена.",
     "tr_tr": "Aktarım durduruldu.",
-    "es_mx": "Transferencia detenida."
+    "es_mx": "Transferencia detenida.",
+    "zh_cn": "传输已停止。"
   },
   "Install / connect: {link}\nAddress: {url}\nConnection code: {code}": {
     "en_us": "Install / connect: {link}\nAddress: {url}\nConnection code: {code}",
@@ -777,7 +841,8 @@
     "pt_br": "Instalar / conectar: {link}\nEndereço: {url}\nCódigo: {code}",
     "ru_ru": "Установка / подключение: {link}\nАдрес: {url}\nКод подключения: {code}",
     "tr_tr": "Kur / bağlan: {link}\nAdres: {url}\nBağlantı kodu: {code}",
-    "es_mx": "Instalar / conectar: {link}\nDirección: {url}\nCódigo: {code}"
+    "es_mx": "Instalar / conectar: {link}\nDirección: {url}\nCódigo: {code}",
+    "zh_cn": "安装 / 连接：{link}\n地址：{url}\n连接码：{code}"
   },
   "TESL Reborn · Android builder": {
     "en_us": "TESL Reborn · Android builder",
@@ -789,7 +854,8 @@
     "pt_br": "TESL Reborn · Android builder",
     "ru_ru": "TESL Reborn · Android builder",
     "tr_tr": "TESL Reborn · Android builder",
-    "es_mx": "TESL Reborn · Android builder"
+    "es_mx": "TESL Reborn · Android builder",
+    "zh_cn": "TESL Reborn · 安卓构建器"
   },
   "Check for updates": {
     "en_us": "Check for updates",
@@ -801,7 +867,8 @@
     "pl_pl": "Sprawdź aktualizacje",
     "pt_br": "Verificar atualizações",
     "ru_ru": "Проверить обновления",
-    "tr_tr": "Güncellemeleri denetle"
+    "tr_tr": "Güncellemeleri denetle",
+    "zh_cn": "检查更新"
   },
   "You have the latest Builder.": {
     "en_us": "You have the latest Builder.",
@@ -813,7 +880,8 @@
     "pl_pl": "Masz najnowszy Builder.",
     "pt_br": "Você tem o Builder mais recente.",
     "ru_ru": "У вас последняя версия Builder.",
-    "tr_tr": "En güncel Builder sizde."
+    "tr_tr": "En güncel Builder sizde.",
+    "zh_cn": "你的构建器已是最新版本。"
   },
   "Wait for the build to finish, then update.": {
     "en_us": "Wait for the build to finish, then update.",
@@ -825,7 +893,8 @@
     "pl_pl": "Poczekaj na koniec budowania, potem zaktualizuj.",
     "pt_br": "Aguarde o fim da compilação e depois atualize.",
     "ru_ru": "Дождитесь окончания сборки, затем обновите.",
-    "tr_tr": "Derlemenin bitmesini bekleyin, sonra güncelleyin."
+    "tr_tr": "Derlemenin bitmesini bekleyin, sonra güncelleyin.",
+    "zh_cn": "请等待构建完成后再更新。"
   },
   "A new Builder is available. Update and restart now?": {
     "en_us": "A new Builder is available. Update and restart now?",
@@ -837,7 +906,8 @@
     "pl_pl": "Dostępny jest nowy Builder. Zaktualizować i uruchomić ponownie?",
     "pt_br": "Há um novo Builder disponível. Atualizar e reiniciar agora?",
     "ru_ru": "Доступен новый Builder. Обновить и перезапустить сейчас?",
-    "tr_tr": "Yeni bir Builder var. Şimdi güncellenip yeniden başlatılsın mı?"
+    "tr_tr": "Yeni bir Builder var. Şimdi güncellenip yeniden başlatılsın mı?",
+    "zh_cn": "有新的构建器可用。现在更新并重启吗？"
   },
   "Open folder": {
     "en_us": "Open folder",
@@ -849,7 +919,8 @@
     "pl_pl": "Otwórz folder",
     "pt_br": "Abrir pasta",
     "ru_ru": "Открыть папку",
-    "tr_tr": "Klasörü aç"
+    "tr_tr": "Klasörü aç",
+    "zh_cn": "打开文件夹"
   },
   "Could not open the folder.": {
     "en_us": "Could not open the folder.",
@@ -861,7 +932,8 @@
     "pl_pl": "Nie udało się otworzyć folderu.",
     "pt_br": "Não foi possível abrir a pasta.",
     "ru_ru": "Не удалось открыть папку.",
-    "tr_tr": "Klasör açılamadı."
+    "tr_tr": "Klasör açılamadı.",
+    "zh_cn": "无法打开文件夹。"
   },
   "Data ZIP only (keep installed APK)": {
     "en_us": "Data ZIP only (keep installed APK)",
@@ -873,7 +945,8 @@
     "pl_pl": "Tylko ZIP z danymi (zachowaj zainstalowany APK)",
     "pt_br": "Somente ZIP de dados (manter o APK instalado)",
     "ru_ru": "Только ZIP с данными (APK уже установлен)",
-    "tr_tr": "Yalnızca veri ZIP’i (yüklü APK korunur)"
+    "tr_tr": "Yalnızca veri ZIP’i (yüklü APK korunur)",
+    "zh_cn": "仅数据 ZIP（保留已安装的 APK）"
   },
   "Build data ZIP only": {
     "en_us": "Build data ZIP only",
@@ -885,7 +958,8 @@
     "pl_pl": "Utwórz tylko ZIP z danymi",
     "pt_br": "Criar somente o ZIP de dados",
     "ru_ru": "Собрать только ZIP с данными",
-    "tr_tr": "Yalnızca veri ZIP’ini oluştur"
+    "tr_tr": "Yalnızca veri ZIP’ini oluştur",
+    "zh_cn": "仅构建数据 ZIP"
   },
   "Cancel build": {
     "en_us": "Cancel build",
@@ -897,7 +971,8 @@
     "pl_pl": "Anuluj budowanie",
     "pt_br": "Cancelar compilação",
     "ru_ru": "Отменить сборку",
-    "tr_tr": "Derlemeyi iptal et"
+    "tr_tr": "Derlemeyi iptal et",
+    "zh_cn": "取消构建"
   },
   "Cancelling…": {
     "en_us": "Cancelling…",
@@ -909,7 +984,8 @@
     "pl_pl": "Anulowanie…",
     "pt_br": "Cancelando…",
     "ru_ru": "Отмена…",
-    "tr_tr": "İptal ediliyor…"
+    "tr_tr": "İptal ediliyor…",
+    "zh_cn": "正在取消…"
   },
   "Cancel this build? Its partial output folder is removed.": {
     "en_us": "Cancel this build? Its partial output folder is removed.",
@@ -921,7 +997,8 @@
     "pl_pl": "Anulować to budowanie? Niepełny folder wyjściowy zostanie usunięty.",
     "pt_br": "Cancelar esta compilação? A pasta de saída incompleta será removida.",
     "ru_ru": "Отменить сборку? Недоделанная папка сборки будет удалена.",
-    "tr_tr": "Bu derleme iptal edilsin mi? Yarım kalan çıktı klasörü silinir."
+    "tr_tr": "Bu derleme iptal edilsin mi? Yarım kalan çıktı klasörü silinir.",
+    "zh_cn": "取消本次构建？未完成的输出文件夹将被删除。"
   },
   "Build cancelled. The partial output folder was removed.": {
     "en_us": "Build cancelled. The partial output folder was removed.",
@@ -933,6 +1010,7 @@
     "pl_pl": "Budowanie anulowane. Niepełny folder wyjściowy został usunięty.",
     "pt_br": "Compilação cancelada. A pasta de saída incompleta foi removida.",
     "ru_ru": "Сборка отменена. Недоделанная папка удалена.",
-    "tr_tr": "Derleme iptal edildi. Yarım kalan çıktı klasörü silindi."
+    "tr_tr": "Derleme iptal edildi. Yarım kalan çıktı klasörü silindi.",
+    "zh_cn": "构建已取消。未完成的输出文件夹已删除。"
   }
 }
