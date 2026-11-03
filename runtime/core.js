@@ -5757,6 +5757,39 @@ void onLeave (GumInvocationContext * ic) {
       log(`cjk font: ${error}`);
     }
   }
+  let serverTextHooked = false;
+  function translateServerText(chinese) {
+    if (serverTextHooked) return;
+    serverTextHooked = true;
+    try {
+      const english = JSON.parse(readTextFile(`${persistentPath()}/tesl-localization-en_us.json`) || "{}");
+      const byEnglish = /* @__PURE__ */ new Map();
+      for (const key of Object.keys(english)) {
+        const from = String(english[key]).trim(), to = chinese[key];
+        if (from.length >= 4 && /[A-Za-z]{3}/.test(from) && to && /[　-鿿]/.test(to) && !byEnglish.has(from)) byEnglish.set(from, to);
+      }
+      const pinned = /* @__PURE__ */ new Map();
+      const method = ucls("TMPro.TMP_Text").method("set_text", 1);
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) {
+          if (args[1].isNull()) return;
+          const text = new Il2Cpp.String(args[1]).content;
+          if (!text || text.length < 4) return;
+          const to = byEnglish.get(text.trim());
+          if (!to) return;
+          let handle = pinned.get(to);
+          if (!handle) {
+            handle = new Il2Cpp.Object(Il2Cpp.string(to).handle).ref(true);
+            pinned.set(to, handle);
+          }
+          args[1] = handle.target.handle;
+        }
+      });
+      log(`localization: ${byEnglish.size} server texts translatable`);
+    } catch (error) {
+      log(`localization: server text: ${error}`);
+    }
+  }
   function restoreLocalization(manager, code) {
     try {
       let text = "";
@@ -5782,6 +5815,7 @@ void onLeave (GumInvocationContext * ic) {
         for (const key of Object.keys(fixes))
           retained.target.method("set_Item").invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
         manager.field("_localizedData").value = retained.target;
+        if (overlay) translateServerText(json);
         if (overlay) try {
           const extra = JSON.parse(readTextFile(`${persistentPath()}/tesl-localization-zh_cn-login.json`) || "{}");
           const login = manager.field("_loginLocalizedData").value;

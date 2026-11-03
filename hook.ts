@@ -2165,6 +2165,38 @@ void onLeave (GumInvocationContext * ic) {
     } catch (error) { log(`cjk font: ${error}`); }
   }
 
+  // Store offers arrive from the server as finished English text, never as
+  // keys. A text set to exactly an English dictionary value is replaced by
+  // the Chinese value of the same key.
+  let serverTextHooked = false;
+  function translateServerText(chinese: Record<string, string>): void {
+    if (serverTextHooked) return;
+    serverTextHooked = true;
+    try {
+      const english = JSON.parse(readTextFile(`${persistentPath()}/tesl-localization-en_us.json`) || "{}");
+      const byEnglish = new Map<string, string>();
+      for (const key of Object.keys(english)) {
+        const from = String(english[key]).trim(), to = chinese[key];
+        if (from.length >= 4 && /[A-Za-z]{3}/.test(from) && to && /[　-鿿]/.test(to) && !byEnglish.has(from)) byEnglish.set(from, to);
+      }
+      const pinned = new Map<string, any>();
+      const method = ucls("TMPro.TMP_Text").method("set_text", 1);
+      Interceptor.attach(method.virtualAddress, {
+        onEnter(args) {
+          if (args[1].isNull()) return;
+          const text = new Il2Cpp.String(args[1]).content;
+          if (!text || text.length < 4) return;
+          const to = byEnglish.get(text.trim());
+          if (!to) return;
+          let handle = pinned.get(to);
+          if (!handle) { handle = new Il2Cpp.Object(Il2Cpp.string(to).handle).ref(true); pinned.set(to, handle); }
+          args[1] = handle.target.handle;
+        }
+      });
+      log(`localization: ${byEnglish.size} server texts translatable`);
+    } catch (error) { log(`localization: server text: ${error}`); }
+  }
+
   // Puts the strings that were recovered from the cached text bundle into the
   // game's localization dictionary, so the user interface shows the text
   // instead of the raw keys.
@@ -2198,6 +2230,7 @@ void onLeave (GumInvocationContext * ic) {
         for (const key of Object.keys(fixes))
           (retained.target.method("set_Item") as any).invoke(Il2Cpp.string(key), Il2Cpp.string(fixes[key]));
         manager.field<any>("_localizedData").value = retained.target;
+        if (overlay) translateServerText(json);
         // Menus, Audio, errors and loading tips come from a second, built-in
         // table that the text bundles never replace.
         if (overlay) try {
