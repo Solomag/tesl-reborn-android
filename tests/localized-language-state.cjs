@@ -68,7 +68,7 @@ const from=hook.indexOf('  function restoreLocalization('),to=hook.indexOf('  //
 let pinned=false,installed=null;
 const restored=new Map(),slot={get value(){return installed;},set value(value){assert(pinned,'manager receives a still-rooted complete table');installed=value;}};
 const dictionary={ref:()=>{pinned=true;return{target:dictionary,free:()=>{pinned=false;}};},method:()=>({invoke:(key,value)=>{assert(pinned,'dictionary must survive GC during string allocation');restored.set(key,value);}})};
-const context={isNull:x=>x==null,resourceLanguage:()=> 'en_us',shortLanguage:x=>x.slice(0,2),persistentPath:()=>'/files',readTextFile:()=>JSON.stringify({menu:'Settings'}),
+const context={installCjkFont:()=>{},isNull:x=>x==null,resourceLanguage:()=> 'en_us',shortLanguage:x=>x.slice(0,2),persistentPath:()=>'/files',readTextFile:()=>JSON.stringify({menu:'Settings'}),
  Il2Cpp:{string:x=>x,corlib:{class:()=>({inflate:()=>({new:()=>dictionary})})}},TRANSLATIONS:{en:{pluginKey:'Plugin label'}},log:()=>{}};
 vm.createContext(context);vm.runInContext(transformSync(hook.slice(from,to),{loader:'ts'}).code,context);
 assert.equal(context.restoreLocalization({field:()=>slot},'en'),1);assert.equal(restored.get('menu'),'Settings');assert.equal(restored.get('pluginKey'),'Plugin label');assert.equal(slot.value,dictionary);assert.equal(pinned,false,"temporary handle is released after manager ownership");

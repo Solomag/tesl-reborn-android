@@ -5686,6 +5686,77 @@ void onLeave (GumInvocationContext * ic) {
       return 0;
     }
   }
+  let cjkFont = null, cjkFontTries = 0;
+  function installCjkFont() {
+    if (cjkFont || cjkFontTries >= 30) return;
+    const path = `${persistentPath()}/tesl-reborn-fonts`;
+    const tableText = readTextFile(`${path}/cjk.json`);
+    if (!tableText) return;
+    const fontClass = ucls("TMPro.TMP_FontAsset");
+    let source = fontClass.method("get_defaultFontAsset").invoke();
+    if (isNull(source)) {
+      const loaded = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(fontClass.type.object);
+      source = loaded.length ? loaded.get(0) : null;
+    }
+    if (isNull(source)) {
+      if (cjkFontTries++ === 0) log("cjk font: waiting for a TMP font");
+      schedule(1e3, installCjkFont, "cjk font");
+      return;
+    }
+    cjkFontTries = 30;
+    try {
+      const table = JSON.parse(tableText);
+      const texture = ucls("UnityEngine.Texture2D").alloc(), handles = [texture.ref(false)];
+      texture.method(".ctor").overload("System.Int32", "System.Int32", "UnityEngine.TextureFormat", "System.Boolean").invoke(2, 2, enumBox(ucls("UnityEngine.TextureFormat"), 4), false);
+      const loadAtlas = () => Boolean(ucls("UnityEngine.ImageConversion").method("LoadImage").overload("UnityEngine.Texture2D", "System.Byte[]").invoke(texture, Il2Cpp.corlib.class("System.IO.File").method("ReadAllBytes", 1).invoke(Il2Cpp.string(`${path}/cjk.png`))));
+      if (!loadAtlas()) throw Error("PNG decoding failed");
+      const material = ucls("UnityEngine.Material").alloc();
+      handles.push(material.ref(false));
+      material.method(".ctor").overload("UnityEngine.Material").invoke(source.field("material").value);
+      call(material, "set_name", Il2Cpp.string("Noto Sans SC Material"));
+      call(material, "set_mainTexture", texture);
+      const face = table.face;
+      for (const [name, value] of [["_TextureWidth", face.AtlasWidth], ["_TextureHeight", face.AtlasHeight], ["_GradientScale", face.Padding + 1]])
+        material.method("SetFloat").overload("System.String", "System.Single").invoke(Il2Cpp.string(name), value);
+      const asset = ucls("UnityEngine.ScriptableObject").method("CreateInstance").overload("System.Type").invoke(fontClass.type.object);
+      handles.push(asset.ref(false));
+      call(asset, "set_name", Il2Cpp.string("Noto Sans SC"));
+      const info = newWith(ucls("TMPro.FaceInfo"));
+      for (const [key, value] of Object.entries(face)) info.field(key).value = key === "Name" ? Il2Cpp.string(String(value)) : value;
+      const glyphClass = ucls("TMPro.TMP_Glyph"), glyphs = Il2Cpp.array(glyphClass, table.glyphs.length);
+      table.glyphs.forEach((item, i) => {
+        const glyph = newWith(glyphClass);
+        for (const [key, value] of Object.entries(item)) glyph.field(key).value = value;
+        glyphs.set(i, glyph);
+      });
+      call(asset, "AddFaceInfo", info);
+      call(asset, "AddGlyphInfo", glyphs);
+      asset.field("m_kerningInfo").value = newWith(ucls("TMPro.KerningTable"));
+      try {
+        asset.field("fontWeights").value = source.field("fontWeights").value;
+      } catch (_) {
+      }
+      try {
+        asset.field("fallbackFontAssets").value = uiList(fontClass);
+      } catch (_) {
+      }
+      asset.field("atlas").value = texture;
+      asset.field("material").value = material;
+      try {
+        asset.field("fontAssetType").value = enumBox(ucls("TMPro.TMP_FontAsset/FontAssetTypes"), 1);
+      } catch (_) {
+      }
+      call(asset, "ReadFontDefinition");
+      const fallbacks = ucls("TMPro.TMP_Settings").method("get_fallbackFontAssets").invoke();
+      if (isNull(fallbacks)) throw Error("TMP settings have no fallback list");
+      call(fallbacks, "Add", asset);
+      cjkFont = { asset, handles };
+      (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => log(`cjk font: atlas ${loadAtlas() ? "reloaded" : "reload failed"} after resume`));
+      log(`cjk font: ${table.glyphs.length} glyphs added as a TMP fallback`);
+    } catch (error) {
+      log(`cjk font: ${error}`);
+    }
+  }
   function restoreLocalization(manager, code) {
     try {
       let text = "";
@@ -5699,6 +5770,7 @@ void onLeave (GumInvocationContext * ic) {
       const json = JSON.parse(text);
       const keys = Object.keys(json);
       if (keys.length === 0) return 0;
+      installCjkFont();
       const stringClass = Il2Cpp.corlib.class("System.String");
       const dictionary = Il2Cpp.corlib.class("System.Collections.Generic.Dictionary`2").inflate(stringClass, stringClass).new();
       const retained = dictionary.ref(false);
@@ -9270,10 +9342,9 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
         schedule(0, () => {
           try {
             const dropdown = window.target.field("_qualityDropdown").value;
-            let state;
+            let state, tabs = "";
             if (!unityAlive(dropdown)) state = "no quality dropdown in this window";
             else {
-              let tabs = "";
               try {
                 tabs = videoTabAsGameData(window.target) ? "video tab is Game data" : "no video tab";
               } catch (error) {
@@ -9288,7 +9359,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
             try {
               const root = call(window.target, "get_transform"), button = findGameDataButton(root);
               const name = (node) => String(call(node, "get_name")?.content || "?");
-              let where = "none";
+              let where = tabs === "video tab is Game data" ? "in the Video tab" : "none";
               if (!isNull(button)) {
                 const go = call(button, "get_gameObject"), parent = call(button, "get_parent");
                 const p = call(button, "get_position"), sd = call(button, "get_sizeDelta");
@@ -11218,7 +11289,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     return loading.test(String(sceneName || "")) || names.some((name) => loading.test(String(name)));
   }
   let startupVersionComplete = false, startupReadyHooked = false;
-  let versionScreenCheck = 0, versionScreenState = { visible: false, scene: "" };
+  let versionScreenCheck = 0, versionScreenState = { visible: false, scene: "", popup: "" };
   function installStartupVersionTracking() {
     try {
       const owner = img.classes.find((c) => c.name === "MainMenuNavManager");
@@ -11240,7 +11311,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
   function loadingVersionState() {
     if (Date.now() < versionScreenCheck) return versionScreenState;
     versionScreenCheck = Date.now() + 500;
-    if (startupVersionComplete) return versionScreenState = { visible: false, scene: versionScreenState.scene };
+    if (startupVersionComplete) return versionScreenState = { visible: false, scene: versionScreenState.scene, popup: "" };
     let scene = "", names = [];
     try {
       const value = ucls("UnityEngine.SceneManagement.SceneManager").method("GetActiveScene", 0).invoke();
@@ -11281,7 +11352,17 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       }
     } catch (_) {
     }
-    return versionScreenState = { visible: startupVersionVisible(scene, startupVersionComplete), scene };
+    const visible = startupVersionVisible(scene, startupVersionComplete);
+    let popup = "";
+    if (visible) try {
+      const find = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type");
+      for (const owner of img.classes.filter((c) => /^(?:PopupWin|UIPopupWindow|ReconnectDialog)$/.test(c.name) && Array.from(c.hierarchy()).some((base) => base.type.name === "UnityEngine.Component"))) {
+        const values = find.invoke(owner.type.object);
+        for (let i = 0; i < values.length && !popup; i++) if (call(call(values.get(i), "get_gameObject"), "get_activeInHierarchy")) popup = owner.name;
+      }
+    } catch (_) {
+    }
+    return versionScreenState = { visible, scene, popup };
   }
   const fpsCounter = {
     base: 0,
@@ -11509,9 +11590,11 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
             const badgeAnchor = locateLoginVersion(call(root.target, "get_transform")) || locateSplashVersion();
             uiPlace(badge, badgeAnchor.x, badgeAnchor.y, 0.5, 1, 0, 0, Math.min(620, Math.max(240, width)), 72);
           }
-          if (badgeShown !== versionScreen.visible) {
-            badgeShown = versionScreen.visible;
-            call(badge, "SetActive", versionScreen.visible);
+          const badgeVisible = versionScreen.visible && !versionScreen.popup;
+          if (badgeShown !== badgeVisible) {
+            if (versionScreen.popup) log(`loading version: hidden under ${versionScreen.popup}`);
+            badgeShown = badgeVisible;
+            call(badge, "SetActive", badgeVisible);
           }
           const loaded = !versionScreen.visible || loginAnchorLogged;
           if (loadingState !== loaded) {
@@ -11868,12 +11951,27 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
   let unityLogCallbackRef = null;
   section("persistent Unity errors", () => {
     const application = ucls("UnityEngine.Application");
+    let lastError = "", lastLoggedAt = 0, repeats = 0;
+    const logUnity = (kind, message, stack) => {
+      const key = `${kind}
+${message}
+${stack}`, now = Date.now();
+      if (key === lastError && now - lastLoggedAt < 6e4) {
+        repeats++;
+        return;
+      }
+      if (repeats) log(`Unity: the previous message repeated ${repeats} more times`);
+      lastError = key;
+      lastLoggedAt = now;
+      repeats = 0;
+      log(`Unity ${kind}: ${message}
+${stack}`);
+    };
     const subscribe = application.tryMethod("add_logMessageReceivedThreaded", 1);
     if (subscribe && !subscribe.virtualAddress.isNull()) {
       const delegate = Il2Cpp.delegate(subscribe.parameters[0].type.class, (message, stack, value) => {
         const kind = enumVal(value);
-        if ([0, 1, 2, 4].includes(kind)) log(`Unity ${kind}: ${message?.content || ""}
-${stack?.content || ""}`);
+        if ([0, 1, 2, 4].includes(kind)) logUnity(kind, message?.content || "", stack?.content || "");
       });
       unityLogCallbackRef = delegate.ref(false);
       subscribe.invoke(delegate);
@@ -11887,8 +11985,7 @@ ${stack?.content || ""}`);
       try {
         const message = args[0].isNull() ? "" : new Il2Cpp.String(args[0]).content || "";
         const stack = args[1].isNull() ? "" : new Il2Cpp.String(args[1]).content || "";
-        log(`Unity ${kind}: ${message}
-${stack}`);
+        logUnity(kind, message, stack);
       } catch (_) {
       }
     } });
