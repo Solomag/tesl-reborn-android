@@ -6343,10 +6343,10 @@ void onLeave (GumInvocationContext * ic) {
         log(`emoji payload: restored ${name}`);
       }
       const chineseFiles = {
-        "zh_cn.json": ["tesl-localization-zh_cn.json", "d9869df0e4446265c0f2ea90ef2dc361431cacd9a41320d7b829fb817bd40d5f", 1485635],
+        "zh_cn.json": ["tesl-localization-zh_cn.json", "a907539a59efadd7fd249d4ceb4f9a5b4606d9e7c47680ea8f5617ccb17177b8", 1497505],
         "zh_cn-login.json": ["tesl-localization-zh_cn-login.json", "89514985e1d924c84ce36c297441b201b538eb1d3d706bfbc182de9ef0de2c5f", 47185],
-        "cjk.json": ["tesl-reborn-fonts/cjk.json", "8feedcde263d14d24c903308d2f288c764e2fe1d39a2c455e9b8d4d98d899a72", 273382],
-        "cjk.png": ["tesl-reborn-fonts/cjk.png", "244432ef992a59ae04dc310305a53758c7a43bd4402d171aee8d7b86010a6160", 2025229]
+        "cjk.json": ["tesl-reborn-fonts/cjk.json", "805a7f598ee17a3e2d4aa8c752a051a927df647b2021df538712a664aeb5422c", 273492],
+        "cjk.png": ["tesl-reborn-fonts/cjk.png", "685dfa43b2b8e1621b83e6b851b4c94435ad18d5a3c9b9c0884a078bb67dd17c", 2026142]
       };
       for (const [name, [path, expected, size]] of Object.entries(chineseFiles)) {
         const entry = zip.find(`assets/tesl-reborn/zh_cn/${name}`);
