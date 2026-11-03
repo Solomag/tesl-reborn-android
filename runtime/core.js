@@ -5907,7 +5907,8 @@ void onLeave (GumInvocationContext * ic) {
       pl_pl: ["polski", "polish", "\u043F\u043E\u043B\u044C\u0441\u043A\u0438\u0439"],
       pt_br: ["portugu\xEAsbrasil", "brazilianportuguese", "portugu\xEAs", "portuguese"],
       ru_ru: ["\u0440\u0443\u0441\u0441\u043A\u0438\u0439", "\u0440\u0443\u0441\u0441\u043A\u0438\u0439\u044F\u0437\u044B\u043A", "russian"],
-      tr_tr: ["t\xFCrk\xE7e", "turkish", "\u0442\u0443\u0440\u0435\u0446\u043A\u0438\u0439"]
+      tr_tr: ["t\xFCrk\xE7e", "turkish", "\u0442\u0443\u0440\u0435\u0446\u043A\u0438\u0439"],
+      zh_cn: ["\u7B80\u4F53\u4E2D\u6587", "\u4E2D\u6587", "simplifiedchinese", "chinese", "\u043A\u0438\u0442\u0430\u0439\u0441\u043A\u0438\u0439"]
     };
     return Object.keys(native).find((code) => native[code].includes(label));
   }
@@ -6025,28 +6026,33 @@ void onLeave (GumInvocationContext * ic) {
         log(`resources: ${name} language entry: ${error}`);
       }
     }
-    if (textOverlay()) for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
       try {
         const method = ucls(name).tryMethod("RefreshShownValue", 0);
         if (!method || method.virtualAddress.isNull()) continue;
         Interceptor.attach(method.virtualAddress, {
           onEnter(args) {
-            this.self = args[0];
-          },
-          onLeave() {
             try {
-              const self = new Il2Cpp.Object(this.self), options = call(self, "get_options"), count = Number(call(options, "get_Count"));
+              const self = new Il2Cpp.Object(args[0]), options = call(self, "get_options"), count = Number(call(options, "get_Count"));
               if (count < 2 || count > 16) return;
-              let recognized = 0;
-              for (let i = 0; i < count; i++) if (languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || ""))) recognized++;
-              const caption = recognized >= 2 ? call(self, "get_captionText") : null;
-              if (!isNull(caption)) call(caption, "set_text", Il2Cpp.string("\u7B80\u4F53\u4E2D\u6587"));
+              let recognized = 0, chinese = -1;
+              for (let i = 0; i < count; i++) {
+                const code = languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || ""));
+                if (code) recognized++;
+                if (code === "zh_cn") chinese = i;
+              }
+              if (recognized < 2) return;
+              if (chinese >= 0) return;
+              const option = call(options, "get_Item", 0).class.alloc();
+              option.method(".ctor").overload("System.String").invoke(Il2Cpp.string(textOverlay() ? "\u7B80\u4F53\u4E2D\u6587" : "Simplified Chinese"));
+              call(options, "Add", option);
+              if (textOverlay()) self.field("m_Value").value = count;
             } catch (_) {
             }
           }
         });
       } catch (error) {
-        log(`resources: ${name} language caption: ${error}`);
+        log(`resources: ${name} Chinese entry: ${error}`);
       }
     }
     try {
@@ -6132,7 +6138,7 @@ void onLeave (GumInvocationContext * ic) {
                 if (selectedIndex < 0 || selectedIndex >= count || count < 2 || count > 16) return;
                 const labels = [];
                 for (let i = 0; i < count; i++) labels.push(languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || "")));
-                if (labels.filter(Boolean).length >= 2 && labels[selectedIndex]) requestLanguage(labels[selectedIndex], resourceLanguage());
+                if (labels.filter(Boolean).length >= 2 && labels[selectedIndex]) requestLanguage(labels[selectedIndex], textOverlay() || resourceLanguage());
               } catch (error) {
                 log(`resources: language dropdown: ${error}`);
               } finally {
@@ -7998,7 +8004,7 @@ void onLeave (GumInvocationContext * ic) {
         const label = String(call(call(options, "get_Item", index), "get_text")?.content || "");
         const code = languageLabel(label);
         if (!code) throw Error("Unknown language label " + JSON.stringify(label.slice(0, 120)));
-        if (code === resourceLanguage()) return;
+        if (code === (textOverlay() || resourceLanguage())) return;
         log(`native language dropdown: selected ${code}`);
         schedule(0, () => ucls("UnityEngine.Application").method("OpenURL", 1).invoke(Il2Cpp.string(languageSetupUri("language=" + code + "&apply=1"))));
       } catch (error) {

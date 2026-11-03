@@ -37,13 +37,13 @@ const hook=require('node:fs').readFileSync('hook.ts','utf8');
 const labelSource=hook.slice(hook.indexOf('  function languageLabel('),hook.indexOf('  section("translation fixes"'));
 const labelCode=transformSync(labelSource,{loader:'ts'}).code;
 const native=transformSync(source('native-language-dropdown'),{loader:'ts'}).code;
-let selected='ru_ru',labels=['English','Русский язык'];
+let selected='ru_ru',overlay='',labels=['English','Русский язык'];
 const hooks={},opened=[],original=[],logs=[];const handler={virtualAddress:{isNull:()=>false},invokeRaw:(...args)=>original.push(args)};
 const dropdown={options:true},self={handle:'language-component',class:{fields:[{isStatic:false,name:'selector',type:{name:'UnityEngine.UI.Dropdown'}}]},field:()=>({value:dropdown})};
 const c={section:(_,f)=>f(),img:{classes:[{name:'LanguageSelectDropdown',tryMethod:()=>handler}]},
  Interceptor:{attach:(address,h)=>hooks[address]=h},ucls:name=>name==='UnityEngine.UI.Dropdown'?{tryMethod:()=>({virtualAddress:{isNull:()=>false,toString:()=>"select"}})}:name==='UnityEngine.Application'?{method:()=>({invoke:value=>opened.push(value)})}:{tryMethod:()=>null},
  call:(o,name,...args)=>{if(name==='get_options'){if(!o.options)throw Error('component');return{};}if(name==='get_Count')return labels.length;if(name==='get_Item')return {text:labels[args[0]]};if(name==='get_text')return {content:o.text};},
- isNull:x=>x==null,resourceLanguage:()=>selected,schedule:(_,f)=>f(),Il2Cpp:{string:x=>x},log:value=>logs.push(value)};
+ isNull:x=>x==null,resourceLanguage:()=>selected,textOverlay:()=>overlay,schedule:(_,f)=>f(),Il2Cpp:{string:x=>x},log:value=>logs.push(value)};
 vm.createContext(c);vm.runInContext(labelCode,c);
 vm.runInContext(transformSync(hook.slice(hook.indexOf('  function languageSetupUri('),hook.indexOf('  function resourceSettingsOpen(')),{loader:'ts'}).code,c);
 vm.runInContext(native,c);handler.implementation.call(self,0);assert.equal(original.length,1,'programmatic initialization is preserved');
@@ -52,6 +52,10 @@ assert.equal(original.length,1,'user selection cannot run the logout coroutine')
 selected='en_us';hooks.select.onEnter();handler.implementation.call(self,1);hooks.select.onLeave();
 assert.equal(opened[1],'teslreborn://resources?language=ru_ru&apply=1','the actual Русский язык label must apply Russian directly, without opening the manual chooser');
 assert.equal(original.length,1,'Russian selection must also suppress the logout coroutine');
+opened.length=0;overlay='zh_cn';selected='en_us';labels[1]='简体中文';hooks.select.onEnter();handler.implementation.call(self,0);hooks.select.onLeave();
+assert(opened[0]&&opened[0].includes('language=en_us&apply=1'),'English is a change while Chinese is the text');
+opened.length=0;hooks.select.onEnter();handler.implementation.call(self,1);hooks.select.onLeave();assert.equal(opened.length,0,'choosing the current Chinese does nothing');
+opened.push('x','y');overlay='';labels[1]='Русский язык';
 assert.equal(c.languageLabel('<b>Русский\u00a0язык</b>'),'ru_ru');
 assert.equal(c.languageLabel('Русский'),'ru_ru');assert.equal(c.languageLabel('Russian'),'ru_ru');
 selected='ru_ru';hooks.select.onEnter();handler.implementation.call(self,1);hooks.select.onLeave();

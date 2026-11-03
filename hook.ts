@@ -2313,7 +2313,8 @@ void onLeave (GumInvocationContext * ic) {
       es_es:["español","spanish","испанский"],es_mx:["españolmexicano","españollatinoamérica","latinamericanspanish","españolméxico"],
       fr_fr:["français","french","французский"],it_it:["italiano","italian","итальянский"],
       pl_pl:["polski","polish","польский"],pt_br:["portuguêsbrasil","brazilianportuguese","português","portuguese"],
-      ru_ru:["русский","русскийязык","russian"],tr_tr:["türkçe","turkish","турецкий"] };
+      ru_ru:["русский","русскийязык","russian"],tr_tr:["türkçe","turkish","турецкий"],
+      zh_cn:["简体中文","中文","simplifiedchinese","chinese","китайский"] };
     return Object.keys(native).find(code => native[code].includes(label));
   }
 
@@ -2415,26 +2416,36 @@ void onLeave (GumInvocationContext * ic) {
         });
       } catch (error) { log(`resources: ${name} language entry: ${error}`); }
     }
-    // The game's own list has no Chinese: while it is the text, the closed
-    // language dropdown names it instead of the English the game runs in.
-    if (textOverlay()) for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
+    // The game's own list has no Chinese. It is added as one more entry, and
+    // is the selected one while it is the text; choosing it goes through
+    // Game data like any other language.
+    for (const name of ["UnityEngine.UI.Dropdown", "TMPro.TMP_Dropdown"]) {
       try {
         const method = ucls(name).tryMethod("RefreshShownValue", 0);
         if (!method || method.virtualAddress.isNull()) continue;
         Interceptor.attach(method.virtualAddress, {
-          onEnter(args) { this.self = args[0]; },
-          onLeave() {
+          onEnter(args) {
             try {
-              const self = new Il2Cpp.Object(this.self), options = call(self, "get_options"), count = Number(call(options, "get_Count"));
+              const self = new Il2Cpp.Object(args[0]), options = call(self, "get_options"), count = Number(call(options, "get_Count"));
               if (count < 2 || count > 16) return;
-              let recognized = 0;
-              for (let i=0; i<count; i++) if (languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || ""))) recognized++;
-              const caption = recognized >= 2 ? call(self, "get_captionText") : null;
-              if (!isNull(caption)) call(caption, "set_text", Il2Cpp.string("简体中文"));
+              let recognized = 0, chinese = -1;
+              for (let i=0; i<count; i++) {
+                const code = languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || ""));
+                if (code) recognized++;
+                if (code === "zh_cn") chinese = i;
+              }
+              if (recognized < 2) return;
+              if (chinese >= 0) return;
+              // Only when the entry is added: afterwards the player's choice stands.
+              // The CJK font is loaded only for Chinese; other languages get a Latin name.
+              const option = call(options, "get_Item", 0).class.alloc();
+              option.method(".ctor").overload("System.String").invoke(Il2Cpp.string(textOverlay() ? "简体中文" : "Simplified Chinese"));
+              call(options, "Add", option);
+              if (textOverlay()) self.field("m_Value").value = count;
             } catch (_) {}
           }
         });
-      } catch (error) { log(`resources: ${name} language caption: ${error}`); }
+      } catch (error) { log(`resources: ${name} Chinese entry: ${error}`); }
     }
     // Some game prefabs use a button/custom selector instead of a Unity
     // dropdown. A language-specific persistent callback identifies that button
@@ -2525,7 +2536,7 @@ void onLeave (GumInvocationContext * ic) {
                 if (selectedIndex < 0 || selectedIndex >= count || count < 2 || count > 16) return;
                 const labels = [];
                 for (let i = 0; i < count; i++) labels.push(languageLabel(String(call(call(options, "get_Item", i), "get_text")?.content || "")));
-                if (labels.filter(Boolean).length >= 2 && labels[selectedIndex]) requestLanguage(labels[selectedIndex], resourceLanguage());
+                if (labels.filter(Boolean).length >= 2 && labels[selectedIndex]) requestLanguage(labels[selectedIndex], textOverlay() || resourceLanguage());
               } catch (error) { log(`resources: language dropdown: ${error}`); }
               finally { retained.free(); }
             });
@@ -4056,7 +4067,7 @@ function uiComponent(go, type) {
         const label=String(call(call(options,"get_Item",index),"get_text")?.content||"");
         const code=languageLabel(label);
         if(!code) throw Error("Unknown language label " + JSON.stringify(label.slice(0,120)));
-        if(code===resourceLanguage()) return;
+        if(code===(textOverlay()||resourceLanguage())) return;
         log(`native language dropdown: selected ${code}`);
         schedule(0,()=>ucls("UnityEngine.Application").method("OpenURL",1).invoke(Il2Cpp.string(languageSetupUri("language="+code+"&apply=1"))));
       } catch(error) {
