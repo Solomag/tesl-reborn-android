@@ -5733,10 +5733,6 @@ void onLeave (GumInvocationContext * ic) {
       call(asset, "AddGlyphInfo", glyphs);
       asset.field("m_kerningInfo").value = newWith(ucls("TMPro.KerningTable"));
       try {
-        asset.field("fontWeights").value = source.field("fontWeights").value;
-      } catch (_) {
-      }
-      try {
         asset.field("fallbackFontAssets").value = uiList(fontClass);
       } catch (_) {
       }
@@ -5750,6 +5746,24 @@ void onLeave (GumInvocationContext * ic) {
       const fallbacks = ucls("TMPro.TMP_Settings").method("get_fallbackFontAssets").invoke();
       if (isNull(fallbacks)) throw Error("TMP settings have no fallback list");
       call(fallbacks, "Add", asset);
+      try {
+        const settings = ucls("TMPro.TMP_Settings").method("get_instance").invoke();
+        if (!isNull(settings) && isNull(settings.field("m_defaultFontAsset").value)) {
+          settings.field("m_defaultFontAsset").value = asset;
+          log("cjk font: also the TMP default font (there was none)");
+        }
+      } catch (error) {
+        log(`cjk font: default font: ${error}`);
+      }
+      try {
+        const settings = ucls("TMPro.TMP_Settings").method("get_instance").invoke();
+        if (!isNull(settings)) {
+          settings.field("m_matchMaterialPreset").value = false;
+          log("cjk font: fallback material presets off");
+        }
+      } catch (error) {
+        log(`cjk font: material presets: ${error}`);
+      }
       cjkFont = { asset, handles };
       (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => log(`cjk font: atlas ${loadAtlas() ? "reloaded" : "reload failed"} after resume`));
       log(`cjk font: ${table.glyphs.length} glyphs added as a TMP fallback`);
@@ -6385,8 +6399,8 @@ void onLeave (GumInvocationContext * ic) {
       const chineseFiles = {
         "zh_cn.json": ["tesl-localization-zh_cn.json", "a907539a59efadd7fd249d4ceb4f9a5b4606d9e7c47680ea8f5617ccb17177b8", 1497505],
         "zh_cn-login.json": ["tesl-localization-zh_cn-login.json", "89514985e1d924c84ce36c297441b201b538eb1d3d706bfbc182de9ef0de2c5f", 47185],
-        "cjk.json": ["tesl-reborn-fonts/cjk.json", "805a7f598ee17a3e2d4aa8c752a051a927df647b2021df538712a664aeb5422c", 273492],
-        "cjk.png": ["tesl-reborn-fonts/cjk.png", "685dfa43b2b8e1621b83e6b851b4c94435ad18d5a3c9b9c0884a078bb67dd17c", 2026142]
+        "cjk.json": ["tesl-reborn-fonts/cjk.json", "94d97387bc4410e1ef8fcd6663af331eed34802fe1eaf8b314313bc6a443ae50", 274879],
+        "cjk.png": ["tesl-reborn-fonts/cjk.png", "d29137bd7ae0bb0496055604e0863b613ab8f68896f95ca1612c251dc3e6b73a", 2029736]
       };
       for (const [name, [path, expected, size]] of Object.entries(chineseFiles)) {
         const entry = zip.find(`assets/tesl-reborn/zh_cn/${name}`);

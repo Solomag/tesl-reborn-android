@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 253,
-  "version": "android-253-rate-clamp",
-  "bytes": 517854,
-  "sha256": "da413c3873bdf1d4e61457e1411bb7bb507e7c8e197622fc991bb126045cf04e",
+  "revision": 260,
+  "version": "android-260-cjk-battle",
+  "bytes": 518492,
+  "sha256": "a7cd8b52b719721ebab9285a7048454e3fa8d07a43f31b138605f5a62a939171",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "10dffaaa553e314b9e26d0346cb8b3228af638001ae30a197247d4ab61a6c6d6"
+  "sourceSha256": "ca99475997f30d8155d238ef3d4e2da4cc29e590d9ed7baf193a2a0f926ee7c8"
 }
