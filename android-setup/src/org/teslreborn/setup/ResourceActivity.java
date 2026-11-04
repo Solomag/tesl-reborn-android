@@ -1070,7 +1070,7 @@ public class ResourceActivity extends Activity {
       run(
           () ->
               DataArchive.install(
-                  getContentResolver().openInputStream(uri),
+                  openPicked(uri),
                   setup.optJSONObject("obb"),
                   new File(getCacheDir(), "tesl-import"),
                   installer,
@@ -1078,9 +1078,28 @@ public class ResourceActivity extends Activity {
                   this::message));
     } else if (request == 11 && data.getData() != null) {
       final Uri uri = data.getData();
-      run(() -> installObb(getContentResolver().openInputStream(uri), setup.optJSONObject("obb")));
+      run(() -> installObb(openPicked(uri), setup.optJSONObject("obb")));
     }
   }
+
+  /**
+   * Samsung's Downloads entry hands out media links it may not read itself
+   * when another app (Telegram) saved the file: say how to pick it instead.
+   */
+  private InputStream openPicked(Uri uri) throws IOException {
+    try {
+      InputStream in = getContentResolver().openInputStream(uri);
+      if (in == null) throw new IOException("Cannot open " + uri);
+      return in;
+    } catch (SecurityException e) {
+      throw new IOException(tr(PICKED_FILE_DENIED) + "\n\n" + e.getMessage());
+    }
+  }
+
+  static final String PICKED_FILE_DENIED =
+      "Android did not allow reading this file through Downloads. Copy it to another folder"
+          + " (for example Documents) with a file manager, then choose it again through the"
+          + " phone's internal storage, not Downloads.";
 
   @Override
   public void onBackPressed() {

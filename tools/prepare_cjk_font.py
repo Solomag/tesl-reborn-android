@@ -8,6 +8,7 @@ FaceInfo and the TMP_Glyph table in atlas pixels (y from the top).
 """
 import argparse
 import json
+import unicodedata
 from pathlib import Path
 
 import numpy as np
@@ -19,7 +20,7 @@ SIZE, PADDING, SUPER, ATLAS = 30, 4, 4, 2048
 
 def characters(translations):
     text = "".join(v for t in translations for v in json.loads(t.read_text(encoding="utf-8")).values())
-    return sorted({c for c in text if ord(c) >= 0x2000 and not c.isspace()})
+    return sorted({c for c in text if ord(c) >= 0x80 and unicodedata.category(c) != "Mn" and not c.isspace()})
 
 
 def sdf(mask):

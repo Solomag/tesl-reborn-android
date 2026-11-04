@@ -2150,7 +2150,10 @@ void onLeave (GumInvocationContext * ic) {
       call(asset, "AddGlyphInfo", glyphs);
       // ReadFontDefinition walks the kerning pairs; an asset made in code has none.
       asset.field("m_kerningInfo").value = newWith(ucls("TMPro.KerningTable"));
-      try { asset.field("fontWeights").value = (source as Il2Cpp.Object).field("fontWeights").value; } catch (_) {}
+      // Chinese reports: the template's font weights sent bold CJK text (card
+      // keywords) to RubikUnityBold, which has no CJK glyphs: its 3D sub mesh
+      // got no material and TextMeshPro.GenerateTextMesh threw, stopping the
+      // battle. Without weights TMP draws bold with this font itself.
       try { asset.field("fallbackFontAssets").value = uiList(fontClass); } catch (_) {}
       asset.field("atlas").value = texture;
       asset.field("material").value = material;
@@ -2159,6 +2162,26 @@ void onLeave (GumInvocationContext * ic) {
       const fallbacks = ucls("TMPro.TMP_Settings").method("get_fallbackFontAssets").invoke() as Il2Cpp.Object;
       if (isNull(fallbacks)) throw Error("TMP settings have no fallback list");
       call(fallbacks, "Add", asset);
+      // Chinese report: a glyph missing from a card's font and every fallback
+      // made TMP look in TMP_Settings' default font, null in this game; the
+      // NullReferenceException ended BoardConductor's coroutine and the battle
+      // stopped. The CJK font is that default when there is none.
+      try {
+        const settings = ucls("TMPro.TMP_Settings").method("get_instance").invoke() as Il2Cpp.Object;
+        if (!isNull(settings) && isNull(settings.field<Il2Cpp.Object>("m_defaultFontAsset").value)) {
+          settings.field("m_defaultFontAsset").value = asset;
+          log("cjk font: also the TMP default font (there was none)");
+        }
+      } catch (error) { log(`cjk font: default font: ${error}`); }
+      // Chinese reports: 3D card text refreshed after a mulligan threw in
+      // TextMeshPro.GenerateTextMesh. TMP 1.x makes a per-text copy of the
+      // fallback material and destroys it by reference count; with the preset
+      // match off, CJK glyphs use this font's own material and nothing is
+      // copied or destroyed.
+      try {
+        const settings = ucls("TMPro.TMP_Settings").method("get_instance").invoke() as Il2Cpp.Object;
+        if (!isNull(settings)) { settings.field("m_matchMaterialPreset").value = false; log("cjk font: fallback material presets off"); }
+      } catch (error) { log(`cjk font: material presets: ${error}`); }
       cjkFont = { asset, handles };
       (globalThis.__teslOnResume ??= []).push(() => log(`cjk font: atlas ${loadAtlas() ? "reloaded" : "reload failed"} after resume`));
       log(`cjk font: ${table.glyphs.length} glyphs added as a TMP fallback`);
@@ -2177,7 +2200,9 @@ void onLeave (GumInvocationContext * ic) {
       const byEnglish = new Map<string, string>();
       for (const key of Object.keys(english)) {
         const from = String(english[key]).trim(), to = chinese[key];
-        if (from.length >= 4 && /[A-Za-z]{3}/.test(from) && to && /[　-鿿]/.test(to) && !byEnglish.has(from)) byEnglish.set(from, to);
+        // One word can be a player's name (Centurion, Victor): only texts of
+        // several words, like store offers, are taken.
+        if (/\s/.test(from) && /[A-Za-z]{3}/.test(from) && to && /[　-鿿]/.test(to) && !byEnglish.has(from)) byEnglish.set(from, to);
       }
       const pinned = new Map<string, any>();
       const method = ucls("TMPro.TMP_Text").method("set_text", 1);
@@ -2185,7 +2210,7 @@ void onLeave (GumInvocationContext * ic) {
         onEnter(args) {
           if (args[1].isNull()) return;
           const text = new Il2Cpp.String(args[1]).content;
-          if (!text || text.length < 4) return;
+          if (!text || text.indexOf(" ") < 0) return;
           const to = byEnglish.get(text.trim());
           if (!to) return;
           let handle = pinned.get(to);
@@ -2771,8 +2796,8 @@ void onLeave (GumInvocationContext * ic) {
     const chineseFiles = {
       "zh_cn.json": ["tesl-localization-zh_cn.json", "a907539a59efadd7fd249d4ceb4f9a5b4606d9e7c47680ea8f5617ccb17177b8", 1497505],
       "zh_cn-login.json": ["tesl-localization-zh_cn-login.json", "89514985e1d924c84ce36c297441b201b538eb1d3d706bfbc182de9ef0de2c5f", 47185],
-      "cjk.json": ["tesl-reborn-fonts/cjk.json", "805a7f598ee17a3e2d4aa8c752a051a927df647b2021df538712a664aeb5422c", 273492],
-      "cjk.png": ["tesl-reborn-fonts/cjk.png", "685dfa43b2b8e1621b83e6b851b4c94435ad18d5a3c9b9c0884a078bb67dd17c", 2026142]
+      "cjk.json": ["tesl-reborn-fonts/cjk.json", "94d97387bc4410e1ef8fcd6663af331eed34802fe1eaf8b314313bc6a443ae50", 274879],
+      "cjk.png": ["tesl-reborn-fonts/cjk.png", "d29137bd7ae0bb0496055604e0863b613ab8f68896f95ca1612c251dc3e6b73a", 2029736]
     };
     // An APK from another patch carries other versions: they are left alone
     // (and the rest of the payload still installs).
