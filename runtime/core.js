@@ -5780,7 +5780,7 @@ void onLeave (GumInvocationContext * ic) {
       const byEnglish = /* @__PURE__ */ new Map();
       for (const key of Object.keys(english)) {
         const from = String(english[key]).trim(), to = chinese[key];
-        if (from.length >= 4 && /[A-Za-z]{3}/.test(from) && to && /[　-鿿]/.test(to) && !byEnglish.has(from)) byEnglish.set(from, to);
+        if (/\s/.test(from) && /[A-Za-z]{3}/.test(from) && to && /[　-鿿]/.test(to) && !byEnglish.has(from)) byEnglish.set(from, to);
       }
       const pinned = /* @__PURE__ */ new Map();
       const method = ucls("TMPro.TMP_Text").method("set_text", 1);
@@ -5788,7 +5788,7 @@ void onLeave (GumInvocationContext * ic) {
         onEnter(args) {
           if (args[1].isNull()) return;
           const text = new Il2Cpp.String(args[1]).content;
-          if (!text || text.length < 4) return;
+          if (!text || text.indexOf(" ") < 0) return;
           const to = byEnglish.get(text.trim());
           if (!to) return;
           let handle = pinned.get(to);

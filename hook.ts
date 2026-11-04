@@ -2200,7 +2200,9 @@ void onLeave (GumInvocationContext * ic) {
       const byEnglish = new Map<string, string>();
       for (const key of Object.keys(english)) {
         const from = String(english[key]).trim(), to = chinese[key];
-        if (from.length >= 4 && /[A-Za-z]{3}/.test(from) && to && /[　-鿿]/.test(to) && !byEnglish.has(from)) byEnglish.set(from, to);
+        // One word can be a player's name (Centurion, Victor): only texts of
+        // several words, like store offers, are taken.
+        if (/\s/.test(from) && /[A-Za-z]{3}/.test(from) && to && /[　-鿿]/.test(to) && !byEnglish.has(from)) byEnglish.set(from, to);
       }
       const pinned = new Map<string, any>();
       const method = ucls("TMPro.TMP_Text").method("set_text", 1);
@@ -2208,7 +2210,7 @@ void onLeave (GumInvocationContext * ic) {
         onEnter(args) {
           if (args[1].isNull()) return;
           const text = new Il2Cpp.String(args[1]).content;
-          if (!text || text.length < 4) return;
+          if (!text || text.indexOf(" ") < 0) return;
           const to = byEnglish.get(text.trim());
           if (!to) return;
           let handle = pinned.get(to);

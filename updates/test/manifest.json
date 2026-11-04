@@ -4,9 +4,9 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 260,
-  "version": "android-260-cjk-battle",
-  "bytes": 518492,
-  "sha256": "a7cd8b52b719721ebab9285a7048454e3fa8d07a43f31b138605f5a62a939171",
-  "url": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/a7cd8b52b719721ebab9285a7048454e3fa8d07a43f31b138605f5a62a939171.js"
+  "revision": 262,
+  "version": "android-262-cjk-names",
+  "bytes": 518497,
+  "sha256": "9b59a0667b0232f5f0330e3652daa9ce74215c951c497a93af8485570b56de3a",
+  "url": "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/payloads/9b59a0667b0232f5f0330e3652daa9ce74215c951c497a93af8485570b56de3a.js"
 }
