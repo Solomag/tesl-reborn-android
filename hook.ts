@@ -5244,10 +5244,14 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
       }
     } catch (error) { log(`cameras: probe unavailable: ${error}`); }
     schedule(3000, camerasWithoutMsaa, "graphics camera msaa");
+    let resumeQuiet = 0;
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
       try { engineCuts(); } catch (_) {}
       if (loading) return;
+      // Report 135: the samples around a pause read 1-4 FPS and dropped the
+      // battle rate to 30; a resume is not the phone being slow.
+      if (Date.now() < resumeQuiet) { for (const m in modes) modes[m].low = 0; return; }
       mainThreadReport();
       let next = mode;
       try { next = inBattle() ? "battle" : "menu"; } catch (_) {}
@@ -5309,7 +5313,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
       }
     };
     globalThis.__teslApplyRate = applyRate;
-    (globalThis.__teslOnResume ??= []).push(() => applyRate("resumed"));
+    (globalThis.__teslOnResume ??= []).push(() => { resumeQuiet = Date.now() + 35000; applyRate("resumed"); });
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     // Report 133: without a chosen rate the game's own setter was left

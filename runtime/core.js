@@ -9263,6 +9263,7 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
       log(`cameras: probe unavailable: ${error}`);
     }
     schedule(3e3, camerasWithoutMsaa, "graphics camera msaa");
+    let resumeQuiet = 0;
     globalThis.__teslGovernor = (measured, loading) => {
       camerasWithoutMsaa();
       try {
@@ -9270,6 +9271,10 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
       } catch (_) {
       }
       if (loading) return;
+      if (Date.now() < resumeQuiet) {
+        for (const m in modes) modes[m].low = 0;
+        return;
+      }
       mainThreadReport();
       let next = mode;
       try {
@@ -9355,7 +9360,10 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
       }
     };
     globalThis.__teslApplyRate = applyRate;
-    (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => applyRate("resumed"));
+    (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
+      resumeQuiet = Date.now() + 35e3;
+      applyRate("resumed");
+    });
     const application = ucls("UnityEngine.Application"), quality = ucls("UnityEngine.QualitySettings");
     const setRate = application.method("set_targetFrameRate", 1);
     const engineAt = resolve(Memory.allocUtf8String("UnityEngine.Application::set_targetFrameRate(System.Int32)"));
