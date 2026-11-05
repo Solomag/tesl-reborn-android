@@ -7519,6 +7519,56 @@ const chatWindows = new Map();
       write({schema:1,patch:globalThis.TeslRebornUpdater?.current()?.revision,events:events.slice()});
     };
   }
+  // Report 135: in Russian the arena rules before a match (MatchIntroModal)
+  // grew taller than a 20:9 screen and pushed the confirm button off it.
+  // The popup is scaled down until everything in it fits.
+  section("match intro modal fits the screen", () => {
+    const rectType = ucls("UnityEngine.RectTransform"), utility = ucls("UnityEngine.RectTransformUtility").method("WorldToScreenPoint", 2);
+    const fit = (popup) => {
+      const root = call(popup, "get_transform"), go = call(popup, "get_gameObject");
+      if (!call(go, "get_activeInHierarchy")) return;
+      const screenH = chatScreen().height;
+      let canvas = null, camera = null;
+      try { canvas = call(go, "GetComponentInParent", ucls("UnityEngine.Canvas").type.object); } catch (_) {}
+      try { if (canvas && !isNull(canvas)) camera = call(call(canvas, "get_rootCanvas"), "get_worldCamera"); } catch (_) {}
+      const toY = (rect, x, y) => Number(utility.invoke(camera, rect.method("TransformPoint").overload("UnityEngine.Vector3")
+        .invoke(unityStruct("UnityEngine.Vector3", { x, y, z: 0 }))).field("y").value);
+      const rects = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(rectType.type.object, false);
+      let low = Infinity, high = -Infinity;
+      for (let i = 0; i < rects.length; i++) {
+        const rect = rects.get(i), area = call(rect, "get_rect");
+        const x = Number(area.field("m_XMin").value), y = Number(area.field("m_YMin").value);
+        const a = toY(rect, x, y), b = toY(rect, x, y + Number(area.field("m_Height").value));
+        const bottom = Math.min(a, b), top = Math.max(a, b);
+        if (top - bottom >= screenH * 0.97) continue; // dimmed backdrop
+        low = Math.min(low, bottom); high = Math.max(high, top);
+      }
+      if (!Number.isFinite(low)) return;
+      const scale = call(root, "get_localScale"), current = Number(scale.field("y").value) || 1;
+      const over = Math.max(0, -low, high - screenH), height = high - low;
+      if (over < 2) return;
+      const factor = Math.max(0.6, Math.min(1, screenH * 0.95 / height));
+      const next = current * factor;
+      call(root, "set_localScale", unityStruct("UnityEngine.Vector3", { x: next, y: next, z: Number(scale.field("z").value) || 1 }));
+      log(`match intro modal: ${Math.round(height)} px on a ${screenH} px screen, scale ${current.toFixed(2)} -> ${next.toFixed(2)}`);
+    };
+    const klass = cls(img, "MatchIntroModalController");
+    let hooks = 0;
+    for (const name of ["Show", "ShowRulesOnly"]) {
+      const method = klass.tryMethod(name, 3);
+      if (!method || method.virtualAddress.isNull()) continue;
+      hookAttach(method.virtualAddress, {
+        onEnter(args) { this.popup = args[1]; },
+        onLeave() {
+          const popup = new Il2Cpp.Object(this.popup);
+          if (isNull(popup)) return;
+          for (const at of [150, 600, 1500]) schedule(at, () => { try { if (unityAlive(popup)) fit(popup); } catch (error) { log(`match intro modal: fit failed: ${error}`); } }, "match intro modal fit");
+        }
+      });
+      hooks++;
+    }
+    if (!hooks) throw Error("MatchIntroModalController.Show not found");
+  });
   section("Settings display diagnostics",()=>{
     let watchUntil=0,root=null,nextCapture=0,nextSettingsCheck=0;
     let pendingReport=null,flushQueued=false,lastFlush=0,lastDimensions="";
