@@ -12001,9 +12001,20 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       }
       const toY = (rect, x, y) => Number(utility.invoke(camera, rect.method("TransformPoint").overload("UnityEngine.Vector3").invoke(unityStruct("UnityEngine.Vector3", { x, y, z: 0 }))).field("y").value);
       const rects = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(rectType.type.object, false);
+      const contents = [];
+      try {
+        const scrolls = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.UI.ScrollRect").type.object, false);
+        for (let i = 0; i < scrolls.length; i++) {
+          const content = call(scrolls.get(i), "get_content");
+          if (!isNull(content)) contents.push(content);
+        }
+      } catch (_) {
+      }
       let low = Infinity, high = -Infinity;
       for (let i = 0; i < rects.length; i++) {
-        const rect = rects.get(i), area = call(rect, "get_rect");
+        const rect = rects.get(i);
+        if (contents.some((content) => call(rect, "IsChildOf", content))) continue;
+        const area = call(rect, "get_rect");
         const x = Number(area.field("m_XMin").value), y = Number(area.field("m_YMin").value);
         const a = toY(rect, x, y), b = toY(rect, x, y + Number(area.field("m_Height").value));
         const bottom = Math.min(a, b), top = Math.max(a, b);
@@ -12018,7 +12029,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       const factor = Math.max(0.6, Math.min(1, screenH * 0.95 / height));
       const next = current * factor;
       call(root, "set_localScale", unityStruct("UnityEngine.Vector3", { x: next, y: next, z: Number(scale.field("z").value) || 1 }));
-      log(`match intro modal: ${Math.round(height)} px on a ${screenH} px screen, scale ${current.toFixed(2)} -> ${next.toFixed(2)}`);
+      log(`popup fit: ${call(go, "get_name")} ${Math.round(height)} px on a ${screenH} px screen, scale ${current.toFixed(2)} -> ${next.toFixed(2)}`);
     };
     const klass = cls(img, "MatchIntroModalController");
     let hooks = 0;
@@ -12039,6 +12050,28 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
               log(`match intro modal: fit failed: ${error}`);
             }
           }, "match intro modal fit");
+        }
+      });
+      hooks++;
+    }
+    const later = (popup) => {
+      for (const at of [150, 600, 1500]) schedule(at, () => {
+        try {
+          if (unityAlive(popup)) fit(popup);
+        } catch (error) {
+          log(`popup fit failed: ${error}`);
+        }
+      }, "popup fit");
+    };
+    const show = cls(img, "UIPopupWindow").tryMethod("Show", 6);
+    if (show && !show.virtualAddress.isNull()) {
+      hookAttach(show.virtualAddress, {
+        onEnter(args) {
+          this.popup = args[0];
+        },
+        onLeave() {
+          const popup = new Il2Cpp.Object(this.popup);
+          if (!isNull(popup)) later(popup);
         }
       });
       hooks++;
