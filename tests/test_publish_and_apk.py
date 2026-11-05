@@ -29,6 +29,18 @@ class PublishingTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'HTTPS'):
                 prepare(code, 26, 'test-26', 'http://example.com/updates', 'test', root)
 
+    def test_unreferenced_payloads_are_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = 'https://example.com/updates'
+            core = lambda tag: f'// TESL-REBORN-ANDROID-CORE v1\nglobalThis.TeslRebornUpdater.ready(); // {tag}'
+            stable = json.loads(prepare(core('stable 1'), 1, 's1', base, 'stable', root).read_text())['sha256']
+            old = json.loads(prepare(core('test 1'), 1, 't1', base, 'test', root).read_text())['sha256']
+            new = json.loads(prepare(core('test 2'), 2, 't2', base, 'test', root).read_text())['sha256']
+            left = {p.stem for p in (root / 'payloads').glob('*.js')}
+            self.assertEqual(left, {stable, new}, 'the replaced test payload goes, stable stays')
+            self.assertNotIn(old, left)
+
     def test_repacker_keeps_cache_and_offsets(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

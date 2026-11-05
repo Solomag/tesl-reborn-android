@@ -35,7 +35,26 @@ def prepare(code, revision, version, base_url, channel, output):
     temp = manifest.with_suffix('.json.tmp')
     temp.write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
     temp.replace(manifest)
+    prune(output)
     return manifest
+
+
+def prune(output):
+    """Remove payloads no channel manifest points at. Devices only fetch the
+    current one (rollback uses the loader's local copy); Git history keeps
+    the rest."""
+    kept = set()
+    for path in output.glob('*/manifest.json'):
+        try:
+            kept.add(json.loads(path.read_text(encoding='utf-8'))['sha256'])
+        except (ValueError, KeyError):
+            return []  # A manifest that cannot be read: leave everything.
+    removed = []
+    for payload in (output / 'payloads').glob('*.js'):
+        if payload.stem not in kept:
+            payload.unlink()
+            removed.append(payload.name)
+    return removed
 
 
 def main():
