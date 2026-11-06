@@ -217,6 +217,14 @@ class BuilderServerTest(unittest.TestCase):
             self.request(self.path, self.auth(Range="bytes=-10"))[2], self.data[-10:]
         )
 
+    def test_data_download_is_logged(self):
+        self.assertEqual(self.request(self.path, self.auth())[0], 200)
+        name = self.path.rsplit("/", 1)[-1]
+        self.assertTrue(any(entry.startswith(f"{name} #") and "start" in entry for entry in self.logs), self.logs)
+        self.assertTrue(any(entry.startswith(f"{name} #") and "file sent" in entry for entry in self.logs), self.logs)
+        self.request("/catalog.json", self.auth())
+        self.assertFalse(any("catalog" in entry for entry in self.logs))
+
     def test_range_for_resume(self):
         status, headers, data = self.request(
             self.path, self.auth(Range="bytes=200-299")

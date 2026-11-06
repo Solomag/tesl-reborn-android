@@ -238,11 +238,14 @@ class ResourceServer:
                 head = getattr(self, "head_only", False)
                 sent, started, last_progress, failure = 0, time.monotonic(), time.monotonic(), None
                 transfer_id = None
-                if browser and not head:
+                # The APK and the game data (OBB, language packs) both report
+                # progress; the small catalog does not.
+                label = "APK" if browser else path.name
+                if not head and self.path != "/catalog.json":
                     with owner.lock:
                         owner.transfer_id += 1
                         transfer_id = owner.transfer_id
-                    owner.log(f"APK #{transfer_id}: start, bytes {start}-{end} of {total}" + (" (resume/range)" if partial else ""))
+                    owner.log(f"{label} #{transfer_id}: start, bytes {start}-{end} of {total}" + (" (resume/range)" if partial else ""))
                 try:
                     self.connection.settimeout(45)
                     self.send_response(206 if partial else 200)
@@ -298,14 +301,14 @@ class ResourceServer:
                             sent += len(chunk)
                             now = time.monotonic()
                             if transfer_id is not None and now - last_progress >= 3:
-                                owner.log(f"APK #{transfer_id}: sent {sent} bytes; file offset {start + sent}/{total}; {sent / max(.001, now-started) / 1048576:.2f} MiB/s")
+                                owner.log(f"{label} #{transfer_id}: {(start + sent) * 100 // max(1, total)}% ({(start + sent) // 1048576}/{total // 1048576} MiB), {sent / max(.001, now-started) / 1048576:.2f} MiB/s")
                                 last_progress = now
                 except OSError as error:
                     failure = type(error).__name__
                 finally:
                     if transfer_id is not None:
                         outcome = "interrupted (" + failure + ")" if failure else "range sent" if partial else "file sent"
-                        owner.log(f"APK #{transfer_id}: {outcome}, {sent}/{end-start+1} bytes in {time.monotonic()-started:.1f}s")
+                        owner.log(f"{label} #{transfer_id}: {outcome}, {sent}/{end-start+1} bytes in {time.monotonic()-started:.1f}s")
                     with owner.lock:
                         owner.active -= 1
                         owner.last_activity = time.monotonic()
