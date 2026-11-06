@@ -11985,21 +11985,19 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     };
   }
   section("match intro modal fits the screen", () => {
-    const rectType = ucls("UnityEngine.RectTransform"), utility = ucls("UnityEngine.RectTransformUtility").method("WorldToScreenPoint", 2);
+    const rectType = ucls("UnityEngine.RectTransform");
     const fit = (popup) => {
       const root = call(popup, "get_transform"), go = call(popup, "get_gameObject");
       if (!call(go, "get_activeInHierarchy")) return;
-      const screenH = chatScreen().height;
-      let canvas = null, camera = null;
-      try {
-        canvas = call(go, "GetComponentInParent", ucls("UnityEngine.Canvas").type.object);
-      } catch (_) {
-      }
-      try {
-        if (canvas && !isNull(canvas)) camera = call(call(canvas, "get_rootCanvas"), "get_worldCamera");
-      } catch (_) {
-      }
-      const toY = (rect, x, y) => Number(utility.invoke(camera, rect.method("TransformPoint").overload("UnityEngine.Vector3").invoke(unityStruct("UnityEngine.Vector3", { x, y, z: 0 }))).field("y").value);
+      const canvas = go.method("GetComponentInParent").overload("System.Type").invoke(ucls("UnityEngine.Canvas").type.object);
+      if (!canvas || isNull(canvas)) return;
+      const canvasRect = call(call(canvas, "get_rootCanvas"), "get_transform"), canvasArea = call(canvasRect, "get_rect");
+      const screenH = Number(canvasArea.field("m_Height").value), canvasLow = Number(canvasArea.field("m_YMin").value);
+      if (!(screenH > 0)) return;
+      const toY = (rect, x, y) => {
+        const world = rect.method("TransformPoint").overload("UnityEngine.Vector3").invoke(unityStruct("UnityEngine.Vector3", { x, y, z: 0 }));
+        return Number(canvasRect.method("InverseTransformPoint").overload("UnityEngine.Vector3").invoke(world).field("y").value) - canvasLow;
+      };
       const rects = go.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(rectType.type.object, false);
       const contents = [];
       try {
@@ -12029,7 +12027,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       const factor = Math.max(0.6, Math.min(1, screenH * 0.95 / height));
       const next = current * factor;
       call(root, "set_localScale", unityStruct("UnityEngine.Vector3", { x: next, y: next, z: Number(scale.field("z").value) || 1 }));
-      log(`popup fit: ${call(go, "get_name")} ${Math.round(height)} px on a ${screenH} px screen, scale ${current.toFixed(2)} -> ${next.toFixed(2)}`);
+      log(`popup fit: ${call(go, "get_name")} ${Math.round(height)} units on a ${Math.round(screenH)} unit screen, scale ${current.toFixed(2)} -> ${next.toFixed(2)}`);
     };
     const klass = cls(img, "MatchIntroModalController");
     let hooks = 0;
