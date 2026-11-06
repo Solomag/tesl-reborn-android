@@ -66,7 +66,7 @@ APK: the hook only, without the setup screens, Game data or the launcher.
 
 The interface and game languages are chosen separately. Supported game
 languages: en_us, de_de, es_es, es_mx, fr_fr, it_it, pl_pl, pt_br, ru_ru,
-tr_tr.
+tr_tr, and Simplified Chinese (zh_cn, text only: English voices and images).
 
 A running build can be cancelled; its partial output folder is removed.
 

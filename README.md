@@ -1,38 +1,50 @@
-# TESL Reborn — Android port
+# TESL Reborn for Android
 
-Android reimplementation of the Tesl Reborn client, built by injecting a Frida
-gadget-based hook (`hook.ts`) over the IL2CPP Unity player.
+Play [TESL Reborn](https://tesl-reborn.com), the community server for *The
+Elder Scrolls: Legends*, on an Android phone.
 
-The Android UI improvements, stable hook loader, update-channel configuration,
-emoji setup and OBB inspection tool are described in
-[Android features and updates](docs/android-updates.md).
+You build the Android game yourself with the **Builder** from copies of the game
+you already have: the PC game and the original Android XAPK. This repository
+contains no game files and none are distributed.
 
-The experimental portable Windows builder and separate language/resource transfer
-are described in [the Builder guide](docs/builder.md) ([на русском](docs/builder-ru.md)). Windows binaries are built
-by the `Build Windows Builder` Actions workflow; device validation is still required.
+**→ [Installation guide](docs/install.md)** · [Troubleshooting and bug reports](docs/troubleshooting.md) · [Downloads (Builder)](https://github.com/ssorgatem/tesl-reborn-android/releases)
 
-## What you get
+## Features
 
-The portable Windows builder defaults to two files: a compact APK named after the channel and Builder
-build (`TESL-Reborn-Test-build46.apk`) and one `tesl-reborn-data.zip` containing the original OBB, recovered PC bundles
-and selected languages. Install the APK and choose **Import data ZIP** on the
-phone, or transfer missing data through the temporary PC server and QR code.
-Game data is opened from **Settings**, and optional languages can be transferred
-later. The same QR opens an APK installation page in the phone browser or connects
-the installed app to the PC. Downloading the APK does not acknowledge resource
-installation. Verified existing data launches straight into Unity without showing
-setup; Game data remains available in Settings.
-See [the documentation index](docs/README.md).
+- The whole PC client on the phone: collection, deck builder, arena, ladder,
+  chat, store.
+- Touch controls for things that needed a mouse on PC: card tooltips, match
+  history, pinch-to-zoom chat.
+- 11 game languages, including a Simplified Chinese text translation.
+- Patches over the air on two channels, **Stable** and **Test**; switch in
+  *Settings → Game data*.
+- Frame-rate limits and adaptive frame rate in battle for phones that run hot.
+- A built-in diagnostic report for bug reports.
 
-**Offline XAPK** remains an alternative. The legacy command-line workflow below
-builds that layout: the OBB ships in the XAPK, while recovered cache entries ship
-inside its APK. The final size depends on the chosen languages.
+Requirements: Android 10 or newer (arm64), a Windows or Linux PC for the build,
+a TESL Reborn account.
 
-After that first run card art, voices and translations load from local files;
-playing still requires the Reborn server. Auto-login works once a
-`tesl-login.json` is pushed (see *Manual push* below), or after a successful login with username and password.
+## Documentation
 
-## Prerequisites
+- [Installation](docs/install.md) — building, putting the game on the phone,
+  updates, Stable and Test.
+- [Troubleshooting](docs/troubleshooting.md) — known issues, common problems,
+  how to report a bug.
+- [Builder](docs/builder.md) ([на русском](docs/builder-ru.md)) — everything
+  the Builder can do, including the command line and Linux.
+- [Update channels](docs/release-channels.md) ([на русском](docs/release-channels-ru.md))
+  — how patches are published and promoted (for maintainers).
+- [Android features and updates](docs/android-updates.md) — what the hook adds
+  and how the over-the-air loader works.
+- [All documents](docs/README.md).
+
+## For developers: the legacy command-line build
+
+The Builder is the supported way to build. The steps below are the original
+manual pipeline, kept for debugging the hook on a device. It builds an offline
+XAPK: the OBB ships in the XAPK, recovered cache entries inside its APK.
+
+### Prerequisites
 
 - Linux x86_64.
 - Python 3 (3.11+ recommended) with `lief` and `UnityPy`

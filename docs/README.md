@@ -2,6 +2,8 @@
 
 ## Start here
 
+- [install.md](install.md) — the player guide: building, installing, updates.
+- [troubleshooting.md](troubleshooting.md) — known issues and bug reports.
 - [builder.md](builder.md) — making the APK and game data with the Builder
   (Windows EXE, Linux, or the command line), and moving data to the phone.
   Russian: [builder-ru.md](builder-ru.md).
