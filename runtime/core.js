@@ -12023,11 +12023,29 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
       if (!Number.isFinite(low)) return;
       const scale = call(root, "get_localScale"), current = Number(scale.field("y").value) || 1;
       const over = Math.max(0, -low, high - screenH), height = high - low;
-      if (over < 2) return;
+      if (over < 2) return true;
       const factor = Math.max(0.6, Math.min(1, screenH * 0.95 / height));
       const next = current * factor;
       call(root, "set_localScale", unityStruct("UnityEngine.Vector3", { x: next, y: next, z: Number(scale.field("z").value) || 1 }));
       log(`popup fit: ${call(go, "get_name")} ${Math.round(height)} units on a ${Math.round(screenH)} unit screen, scale ${current.toFixed(2)} -> ${next.toFixed(2)}`);
+      return true;
+    };
+    const pending2 = /* @__PURE__ */ new Set();
+    const later = (popup) => {
+      const key = popup.handle.toString();
+      if (pending2.has(key)) return;
+      pending2.add(key);
+      const attempt = (step) => schedule([400, 1200, 2500][step], () => {
+        let done = false;
+        try {
+          done = !unityAlive(popup) || fit(popup) === true;
+        } catch (error) {
+          log(`popup fit failed: ${error}`);
+        }
+        if (!done && step < 2) attempt(step + 1);
+        else pending2.delete(key);
+      }, "popup fit");
+      attempt(0);
     };
     const klass = cls(img, "MatchIntroModalController");
     let hooks = 0;
@@ -12041,26 +12059,11 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
         onLeave() {
           const popup = new Il2Cpp.Object(this.popup);
           if (isNull(popup)) return;
-          for (const at of [150, 600, 1500]) schedule(at, () => {
-            try {
-              if (unityAlive(popup)) fit(popup);
-            } catch (error) {
-              log(`match intro modal: fit failed: ${error}`);
-            }
-          }, "match intro modal fit");
+          later(popup);
         }
       });
       hooks++;
     }
-    const later = (popup) => {
-      for (const at of [150, 600, 1500]) schedule(at, () => {
-        try {
-          if (unityAlive(popup)) fit(popup);
-        } catch (error) {
-          log(`popup fit failed: ${error}`);
-        }
-      }, "popup fit");
-    };
     const show = cls(img, "UIPopupWindow").tryMethod("Show", 6);
     if (show && !show.virtualAddress.isNull()) {
       hookAttach(show.virtualAddress, {
