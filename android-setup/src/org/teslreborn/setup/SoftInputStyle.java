@@ -68,7 +68,10 @@ final class SoftInputStyle {
         Window window = dialog.getWindow();
         if (window == null) continue;
         View root = window.getDecorView();
-        autofill(activity, root);
+        // The login fields keep Unity's light dialog: on a dark one SafeInCloud
+        // picks its dark suggestion rows, which fail to inflate
+        // (apps_account_item_dark), and offers only "Open SafeInCloud".
+        if (autofill(activity, root)) continue;
         if (STYLED.put(root, Boolean.TRUE) != null) continue;
         root.setBackgroundColor(UiStyle.BACKGROUND);
         paint(activity, root);
@@ -80,9 +83,10 @@ final class SoftInputStyle {
    * or a password. The hook writes which login field opened the keyboard
    * (tesl-reborn-autofill.json); that box is marked and autofill is offered.
    */
-  private static void autofill(Activity activity, View root) {
+  /** True when the dialog belongs to a login field. */
+  private static boolean autofill(Activity activity, View root) {
     EditText edit = firstEdit(root);
-    if (edit == null) return;
+    if (edit == null) return false;
     String hint = null;
     long at = 0;
     try {
@@ -101,10 +105,10 @@ final class SoftInputStyle {
       // No hint: the box stays as Unity made it.
     }
     // Once per keyboard opening: the dialog may be reused for another field.
-    if (Long.valueOf(at).equals(MARKED.put(edit, at))) return;
+    if (Long.valueOf(at).equals(MARKED.put(edit, at))) return hint != null;
     if (hint == null) {
       edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
-      return;
+      return false;
     }
     edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES);
     // Unity's box is single-line text; a password box must say so for the
@@ -117,6 +121,7 @@ final class SoftInputStyle {
     android.view.autofill.AutofillManager manager =
         activity.getSystemService(android.view.autofill.AutofillManager.class);
     if (manager != null && manager.isEnabled()) manager.requestAutofill(edit);
+    return true;
   }
 
   /**
