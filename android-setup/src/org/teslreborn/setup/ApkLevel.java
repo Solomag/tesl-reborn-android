@@ -6,7 +6,8 @@ package org.teslreborn.setup;
  * such change, and APK_LEVEL in hook.ts with it; patches then ask phones with
  * an older APK to install a new one. APKs before this field count as 1.
  *
- * 2: password managers fill the login form.
+ * 2: password managers fill the login form; the game can ask to be restarted
+ *    (teslreborn://language?apply=1&restart=1) to apply a downloaded patch.
  */
 final class ApkLevel {
   static final int LEVEL = 2;

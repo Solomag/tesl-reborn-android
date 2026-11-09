@@ -167,6 +167,12 @@ public class ResourceActivity extends Activity {
         && "1".equals(data.getQueryParameter("apply"));
   }
 
+  /** The game asks to be restarted, to apply a downloaded patch (restart=1). */
+  private boolean restartRequested() {
+    Uri data = getIntent().getData();
+    return applyRequested() && data != null && "1".equals(data.getQueryParameter("restart"));
+  }
+
   private void applyLink(Intent intent) {
     Uri data = intent.getData();
     if (data != null
@@ -963,7 +969,7 @@ public class ResourceActivity extends Activity {
             JSONObject previous = PackInstaller.json(new File(root, "tesl-reborn-language.json"));
             previousLanguage = previous.optString("language") + "+" + previous.optString("overlay");
           } catch (Exception ignored) {}
-          if (dataChanged || graphicsChanged || !(code + "+" + overlay).equals(previousLanguage)) stopGameProcess();
+          if (dataChanged || graphicsChanged || restartRequested() || !(code + "+" + overlay).equals(previousLanguage)) stopGameProcess();
           PackInstaller.writeJson(new File(root, "tesl-reborn-language.json"),
               new JSONObject().put("language", code).put("system", chosen.equals("system"))
                   .putOpt("overlay", overlay.isEmpty() ? null : overlay));
