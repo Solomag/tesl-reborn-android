@@ -36,6 +36,16 @@ python tools/publish_hook.py --revision N --version android-N-… --channel test
 Bump `revision` and `version` in `runtime/manifest.json` before `npm run build`.
 Commit and push to `android-ui-and-update-loader`.
 
+## When a patch needs a new APK
+
+Changes to the setup screens, the Java side of the game (`android-setup/`) or
+the loader reach phones only with a new APK. Raise `ApkLevel.LEVEL` in
+`android-setup/src/org/teslreborn/setup/ApkLevel.java` and `APK_LEVEL` in
+`hook.ts` together. A phone whose APK is older then shows a notice asking to
+build *APK only* in the Builder and install it over the old one. Publish the
+patch only after the Builder of that channel has been rebuilt by CI, so the
+new APK exists when the notice appears.
+
 ## Promoting to stable
 
 The stable manifest is committed on the test branch but points at `main`, so a
