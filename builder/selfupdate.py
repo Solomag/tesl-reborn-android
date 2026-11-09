@@ -47,7 +47,7 @@ def current(root):
         return {"channel": "test", "build": 0, "commit": ""}
 
 
-def _get(url, limit, timeout=15, accept=None):
+def _get(url, limit, timeout=15, accept=None, progress=None):
     headers = {"User-Agent": "TESL-Reborn-Builder"}
     if accept:
         headers["Accept"] = accept
@@ -55,7 +55,22 @@ def _get(url, limit, timeout=15, accept=None):
     with urllib.request.urlopen(request, timeout=timeout) as response:
         if response.status != 200:
             raise OSError(f"HTTP {response.status}")
-        data = response.read(limit + 1)
+        if progress is None:
+            data = response.read(limit + 1)
+        else:
+            # The Builder download is tens of MB: read it in pieces and report
+            # the share received, from the Content-Length GitHub sends.
+            total = int(response.headers.get("Content-Length") or 0)
+            parts, received = [], 0
+            while received <= limit:
+                chunk = response.read(256 * 1024)
+                if not chunk:
+                    break
+                parts.append(chunk)
+                received += len(chunk)
+                if total:
+                    progress(min(100, received * 100 // total))
+            data = b"".join(parts)
     if len(data) > limit:
         raise OSError("Update exceeds size limit")
     return data
@@ -99,13 +114,13 @@ def cleanup(executable=None):
             pass
 
 
-def install(offer, executable=None, fetch=_get):
+def install(offer, executable=None, fetch=_get, progress=None):
     """Swap this executable for the verified new build; returns its path.
     The new build takes the channel name (TESL-Reborn-Builder-Test.exe) when
     the offer has one, so an older TESL-Reborn-Builder.exe is renamed."""
     executable = Path(executable or sys.executable)
     target = executable.with_name(offer.get("name") or executable.name)
-    data = fetch(offer["url"], LIMIT, timeout=120)
+    data = fetch(offer["url"], LIMIT, timeout=120, **({"progress": progress} if progress else {}))
     if len(data) != offer["bytes"] or hashlib.sha256(data).hexdigest() != offer["sha256"]:
         raise ValueError("Downloaded Builder does not match its SHA-256")
     fresh = executable.with_name(executable.name + ".new")

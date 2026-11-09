@@ -426,7 +426,15 @@ class BuilderWindow:
 
         def work():
             try:
-                self.events.put(("update-installed", selfupdate.install(offer)))
+                shown = [0]
+
+                def progress(percent):
+                    # One line per 10 %, through the event queue (Tk is not thread-safe).
+                    if percent >= shown[0] + 10 or percent == 100 and shown[0] < 100:
+                        shown[0] = percent - percent % 10 if percent < 100 else 100
+                        self.events.put(("log", f"Downloading Builder build {offer['build']}… {shown[0]}%"))
+
+                self.events.put(("update-installed", selfupdate.install(offer, progress=progress)))
             except Exception as error:
                 self.events.put(("update-error", (str(error), True)))
 

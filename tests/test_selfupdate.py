@@ -83,6 +83,29 @@ class SelfUpdateTest(unittest.TestCase):
             self.assertEqual(exe.read_bytes(), b"old builder")
             self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), [exe.name])
 
+    def test_download_reports_its_progress(self):
+        import io
+        from unittest import mock
+
+        class Response(io.BytesIO):
+            status = 200
+            headers = {"Content-Length": str(600 * 1024)}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        body = b"x" * (600 * 1024)
+        seen = []
+        with mock.patch("urllib.request.urlopen", lambda request, timeout: Response(body)):
+            data = selfupdate._get("https://example.test/b", 1024 * 1024, progress=seen.append)
+        self.assertEqual(data, body)
+        self.assertEqual(seen[-1], 100)
+        self.assertEqual(seen, sorted(seen))
+        self.assertGreater(len(seen), 1)
+
     def test_version_defaults_and_ci_stamp(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(selfupdate.current(tmp), {"channel": "test", "build": 0, "commit": ""})
