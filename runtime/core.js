@@ -6644,6 +6644,27 @@ void onLeave (GumInvocationContext * ic) {
       }
     });
   });
+  section("log out forgets the password", () => {
+    const LOGOUT_OPTION = 19;
+    let chosenAt = 0;
+    hookAttach(cls(img, "OptionsController").method("HandleOnOption", 1).virtualAddress, {
+      onEnter(args) {
+        if (args[1].toInt32() === LOGOUT_OPTION) chosenAt = Date.now();
+      }
+    });
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("LogOutOfApplication", 0).virtualAddress, {
+      onEnter() {
+        if (!chosenAt || Date.now() - chosenAt > 12e4) {
+          log("logout: by the game; saved login kept");
+          return;
+        }
+        chosenAt = 0;
+        const saved = readSavedLogin();
+        if (saved?.password) writeSavedLogin(saved.username, "");
+        log("logout: chosen by the player; saved password forgotten");
+      }
+    });
+  });
   section("auto login", () => {
     const credentials = cls(img, "SparkleServices.UsernameAndPassword");
     const useRemembered = (callback, saved, failed) => {

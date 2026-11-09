@@ -3037,6 +3037,28 @@ void onLeave (GumInvocationContext * ic) {
     });
   });
 
+  // Log Out from the options menu went straight back in: the game showed the
+  // login form and auto login filled the remembered password. A logout the
+  // player chose (option 19, then the actual logout) forgets the password and
+  // keeps the username for the form; a logout the game makes on its own (an
+  // account signed in elsewhere) keeps both.
+  section("log out forgets the password", () => {
+    const LOGOUT_OPTION = 19;
+    let chosenAt = 0;
+    hookAttach(cls(img, "OptionsController").method("HandleOnOption", 1).virtualAddress, {
+      onEnter(args) { if (args[1].toInt32() === LOGOUT_OPTION) chosenAt = Date.now(); }
+    });
+    hookAttach(cls(img, "SparkleServices.ServicesManager").method("LogOutOfApplication", 0).virtualAddress, {
+      onEnter() {
+        if (!chosenAt || Date.now() - chosenAt > 120000) { log("logout: by the game; saved login kept"); return; }
+        chosenAt = 0;
+        const saved = readSavedLogin();
+        if (saved?.password) writeSavedLogin(saved.username, "");
+        log("logout: chosen by the player; saved password forgotten");
+      }
+    });
+  });
+
   section("auto login", () => {
     const credentials = cls(img, "SparkleServices.UsernameAndPassword");
 
