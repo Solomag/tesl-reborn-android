@@ -87,7 +87,7 @@ public class ResourceActivity extends Activity {
       }
       PackInstaller.writeJson(new File(root, "tesl-reborn-setup.json"), new JSONObject()
           .put("api", 1).put("debugInput", "android-key-events")
-          .put("androidBuild", setup.optInt("androidBuild", 50)).put("languageTransition", true)
+          .put("androidBuild", setup.optInt("androidBuild", 50)).put("apkLevel", ApkLevel.LEVEL).put("languageTransition", true)
               .putOpt("builder", setup.optJSONObject("builder")));
       UpdateConfig.ensure(root, setup.optString("hookFeed", ""));
       obbFile = new File(getObbDir(), "main.11009." + getPackageName() + ".obb");

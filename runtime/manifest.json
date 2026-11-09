@@ -6,8 +6,8 @@
   "abi": "arm64-v8a",
   "revision": 268,
   "version": "android-268-login-autofill",
-  "bytes": 524329,
-  "sha256": "099b75b66ecbbb43e08cb0368ae1eaa6a7113df0a41a95b86444015d20b15451",
+  "bytes": 526780,
+  "sha256": "41eac07f8e0b63c34945c7f117229950ca184913201e308783d50e5129c2da0f",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "9595fd149a0101298f25425ae06e67f70ed2387c10dd8bc5e6662543d4b12409"
+  "sourceSha256": "c7dd15f0e8af7fdda0be447252bda7aa5cf3e9b32d2e88848f4e3009f644b510"
 }

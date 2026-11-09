@@ -6793,6 +6793,8 @@ const chatWindows = new Map();
 
 
   // BEGIN android-ui: update-notices
+  // The APK level these patches expect (ApkLevel.LEVEL in the setup code).
+  const APK_LEVEL = 2;
   function createUpdateNotices(updater, io) {
     let downloadStarted = false, lastStatus = "";
     const saved = io.readNotice() || {}, current = updater.current();
@@ -6838,60 +6840,70 @@ const chatWindows = new Map();
   function updateNoticeText(kind, revision, language) {
     const messages = {
       en: {
+        apk: 'A new TESL Reborn APK is available. Build “APK only” in the Builder and install it over this one; your game data stays.',
         downloading: "Downloading a Reborn update. You can keep playing.",
         restart: "Reborn update downloaded and verified. Restart the game when convenient to apply it.",
         applied: `Reborn update ${revision} applied.`,
         error: "Reborn update could not be downloaded or verified. You can keep playing; it will retry on the next launch."
       },
       ru: {
+        apk: 'Вышел новый APK TESL Reborn. Соберите в Builder «Только APK» и установите поверх этого; игровые данные сохранятся.',
         downloading: "Скачивается обновление Reborn. Можно продолжать играть.",
         restart: "Обновление Reborn скачано и проверено. Перезапустите игру, когда будет удобно, чтобы применить его.",
         applied: `Обновление Reborn ${revision} применено.`,
         error: "Не удалось скачать или проверить обновление Reborn. Можно играть дальше; повторим при следующем запуске."
       },
       de: {
+        apk: 'Eine neue TESL-Reborn-APK ist verfügbar. Erstelle im Builder „Nur APK“ und installiere sie über diese; deine Spieldaten bleiben.',
         downloading: "Ein Reborn-Update wird heruntergeladen. Du kannst weiterspielen.",
         restart: "Reborn-Update heruntergeladen und geprüft. Starte das Spiel neu, wenn es dir passt, um es anzuwenden.",
         applied: `Reborn-Update ${revision} angewendet.`,
         error: "Reborn-Update konnte nicht geladen oder geprüft werden. Du kannst weiterspielen; neuer Versuch beim nächsten Start."
       },
       es: {
+        apk: 'Hay un APK nuevo de TESL Reborn. Crea «Solo APK» en el Builder e instálalo encima de este; tus datos del juego se conservan.',
         downloading: "Descargando una actualización de Reborn. Puedes seguir jugando.",
         restart: "Actualización de Reborn descargada y verificada. Reinicia el juego cuando quieras para aplicarla.",
         applied: `Actualización ${revision} de Reborn aplicada.`,
         error: "No se pudo descargar o verificar la actualización de Reborn. Puedes seguir jugando; se reintentará al iniciar."
       },
       fr: {
+        apk: 'Un nouvel APK TESL Reborn est disponible. Créez « APK seul » dans le Builder et installez-le par-dessus ; vos données de jeu restent.',
         downloading: "Téléchargement d’une mise à jour Reborn. Vous pouvez continuer à jouer.",
         restart: "Mise à jour Reborn téléchargée et vérifiée. Redémarrez le jeu quand vous le souhaitez pour l’appliquer.",
         applied: `Mise à jour Reborn ${revision} appliquée.`,
         error: "Impossible de télécharger ou vérifier la mise à jour Reborn. Vous pouvez jouer ; nouvel essai au prochain lancement."
       },
       it: {
+        apk: 'È disponibile un nuovo APK di TESL Reborn. Crea «Solo APK» nel Builder e installalo sopra questo; i dati di gioco restano.',
         downloading: "Download di un aggiornamento Reborn. Puoi continuare a giocare.",
         restart: "Aggiornamento Reborn scaricato e verificato. Riavvia il gioco quando vuoi per applicarlo.",
         applied: `Aggiornamento Reborn ${revision} applicato.`,
         error: "Impossibile scaricare o verificare l’aggiornamento Reborn. Puoi giocare; nuovo tentativo al prossimo avvio."
       },
       pl: {
+        apk: 'Dostępny jest nowy APK TESL Reborn. Zbuduj „Tylko APK” w Builderze i zainstaluj go na tym; dane gry zostaną.',
         downloading: "Pobieranie aktualizacji Reborn. Możesz grać dalej.",
         restart: "Aktualizacja Reborn pobrana i zweryfikowana. Uruchom grę ponownie w dogodnym momencie, aby ją zastosować.",
         applied: `Aktualizacja Reborn ${revision} zastosowana.`,
         error: "Nie udało się pobrać lub sprawdzić aktualizacji Reborn. Możesz grać dalej; ponowimy próbę przy następnym uruchomieniu."
       },
       pt: {
+        apk: 'Há um novo APK do TESL Reborn. Gere “Somente APK” no Builder e instale por cima deste; seus dados do jogo continuam.',
         downloading: "Baixando uma atualização do Reborn. Você pode continuar jogando.",
         restart: "Atualização do Reborn baixada e verificada. Reinicie o jogo quando quiser para aplicá-la.",
         applied: `Atualização ${revision} do Reborn aplicada.`,
         error: "Não foi possível baixar ou verificar a atualização do Reborn. Você pode jogar; nova tentativa na próxima inicialização."
       },
       tr: {
+        apk: "Yeni bir TESL Reborn APK'sı var. Builder'da “Yalnızca APK” oluşturup bunun üzerine kurun; oyun verileriniz korunur.",
         downloading: "Reborn güncellemesi indiriliyor. Oynamaya devam edebilirsiniz.",
         restart: "Reborn güncellemesi indirildi ve doğrulandı. Uygulamak için uygun olduğunuzda oyunu yeniden başlatın.",
         applied: `Reborn ${revision} güncellemesi uygulandı.`,
         error: "Reborn güncellemesi indirilemedi veya doğrulanamadı. Oynamaya devam edebilirsiniz; sonraki açılışta yeniden denenecek."
       }
     };
+    (messages as any).zh = { ...messages.en, apk: 'TESL Reborn 有新的 APK。请在构建器中构建“仅 APK”，并覆盖安装；游戏数据会保留。' };
     return (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
   }
 
@@ -7287,7 +7299,7 @@ const chatWindows = new Map();
     }
     return {
       show(kind, revision, onShown) {
-        message = { kind, revision, onShown, duration: kind === "restart" ? 10000 : 6000 };
+        message = { kind, revision, onShown, duration: kind === "restart" ? 10000 : kind === "apk" ? 15000 : 6000 };
         shownAt = 0;
       },
       tick() {
@@ -7417,6 +7429,15 @@ const chatWindows = new Map();
           try { notices.poll(); banner.tick(); } catch (error) { log(`update notice poll: ${error}`); }
         }, "banner tick");
       }
+    });
+    // A patch can need a newer APK (setup screens, the Java side of the game).
+    // The APK records its level at every start; an older one gets a notice.
+    schedule(8000, () => {
+      try {
+        const setup = read(`${persistentPath()}/tesl-reborn-setup.json`) || {};
+        const level = Number.isSafeInteger(setup.apkLevel) ? setup.apkLevel : 1;
+        if (level < APK_LEVEL) { log(`apk: level ${level}, patches expect ${APK_LEVEL}; asking for a new APK`); banner.show("apk", 0, null); }
+      } catch (error) { log(`apk level check: ${error}`); }
     });
     // Public HTTPS requests need no account token. Never wait for this check
     // before starting login, loading resources or entering a match.

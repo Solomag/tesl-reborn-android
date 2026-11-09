@@ -141,9 +141,20 @@ r.img={};r.cls=()=>({method:()=>({virtualAddress:'ServicesManager.Update'})});
 r.Interceptor={attach:()=>{}};r.schedule=(delay,fn)=>scheduled.push({delay,fn});
 r.httpGet=(url,auth,callback,update)=>transport.push({url,auth,update});
 f=fixture();r.installUpdateNotices(f.boot().updater);
-assert.equal(scheduled.length,1);assert.equal(scheduled[0].delay,1000);
-scheduled[0].fn();assert.equal(transport.length,1);
+assert.equal(scheduled.length,2);const check=scheduled.find(s=>s.delay===1000);assert(check,'the update check runs a second after start');
+check.fn();assert.equal(transport.length,1);
 assert.equal(transport[0].auth,false);assert.equal(transport[0].update,true);
+// An APK older than the patches expect (no apkLevel: an APK before it) is asked
+// to be replaced; a current one is not.
+{
+  const level=scheduled.find(s=>s.delay===8000);assert(level,'the APK level is checked after start');
+  const logs=[],oldLog=r.log,oldRead=r.readTextFile;r.log=m=>logs.push(m);
+  r.readTextFile=()=>'';level.fn();assert(logs.some(m=>/level 1, patches expect 2/.test(m)),'an old APK gets the notice');
+  logs.length=0;r.readTextFile=p=>p.endsWith('tesl-reborn-setup.json')?JSON.stringify({apkLevel:2}):'';level.fn();
+  assert(!logs.some(m=>/asking for a new APK/.test(m)),'a current APK does not');
+  r.log=oldLog;r.readTextFile=oldRead;
+  assert(/APK only/.test(r.updateNoticeText('apk',0,'en_us'))&&/Только APK/.test(r.updateNoticeText('apk',0,'ru_ru'))&&/仅 APK/.test(r.updateNoticeText('apk',0,'zh_cn')));
+}
 console.log('PASS: API 1 update notices, verified-only completion, once-only activation, offline silence, font retry, noninteractive scene-persistent UI and automatic expiry');
 
 // Replay the missing managed Canvas setter found in the phone report. The
