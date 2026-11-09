@@ -116,7 +116,15 @@ final class SoftInputStyle {
     companion(activity, edit, View.AUTOFILL_HINT_PASSWORD.equals(hint));
     android.view.autofill.AutofillManager manager =
         activity.getSystemService(android.view.autofill.AutofillManager.class);
-    if (manager != null && manager.isEnabled()) manager.requestAutofill(edit);
+    // A manual requestAutofill shows the drop-down list, which SafeInCloud
+    // cannot draw in night mode (its dark rows fail to inflate). Ending the
+    // session and focusing the box again makes an automatic request, whose
+    // suggestions appear in the keyboard as before - now with both fields.
+    if (manager != null && manager.isEnabled()) {
+      manager.cancel();
+      edit.clearFocus();
+      edit.requestFocus();
+    }
   }
 
   /**
