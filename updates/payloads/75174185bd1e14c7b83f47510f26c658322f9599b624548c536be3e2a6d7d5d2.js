@@ -11286,6 +11286,18 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     } });
   });
   const APK_LEVEL = 2;
+  const PATCH_NOTES = {
+    en: "New: password managers fill the login form, a Restart button after updates, sound settings are kept.",
+    ru: "\u041D\u043E\u0432\u043E\u0435: \u043C\u0435\u043D\u0435\u0434\u0436\u0435\u0440\u044B \u043F\u0430\u0440\u043E\u043B\u0435\u0439 \u0437\u0430\u043F\u043E\u043B\u043D\u044F\u044E\u0442 \u0432\u0445\u043E\u0434, \u043A\u043D\u043E\u043F\u043A\u0430 \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A\u0430 \u043F\u043E\u0441\u043B\u0435 \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u044F, \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u0437\u0432\u0443\u043A\u0430 \u0441\u043E\u0445\u0440\u0430\u043D\u044F\u044E\u0442\u0441\u044F.",
+    de: "Neu: Passwortmanager f\xFCllen die Anmeldung aus, Neustart-Knopf nach Updates, Toneinstellungen bleiben erhalten.",
+    es: "Novedades: los gestores de contrase\xF1as rellenan el inicio de sesi\xF3n, bot\xF3n Reiniciar tras actualizar, se guarda el sonido.",
+    fr: "Nouveau : les gestionnaires de mots de passe remplissent la connexion, bouton Red\xE9marrer apr\xE8s une mise \xE0 jour, le son est conserv\xE9.",
+    it: "Novit\xE0: i gestori di password compilano l\u2019accesso, pulsante Riavvia dopo gli aggiornamenti, l\u2019audio resta salvato.",
+    pl: "Nowe: mened\u017Cery hase\u0142 wype\u0142niaj\u0105 logowanie, przycisk restartu po aktualizacji, ustawienia d\u017Awi\u0119ku s\u0105 zapami\u0119tywane.",
+    pt: "Novo: gerenciadores de senha preenchem o login, bot\xE3o Reiniciar ap\xF3s atualizar, o som fica salvo.",
+    tr: "Yeni: \u015Fifre y\xF6neticileri giri\u015Fi doldurur, g\xFCncellemeden sonra Yeniden ba\u015Flat d\xFC\u011Fmesi, ses ayarlar\u0131 korunur.",
+    zh: "\u65B0\u5185\u5BB9\uFF1A\u5BC6\u7801\u7BA1\u7406\u5668\u53EF\u81EA\u52A8\u586B\u5199\u767B\u5F55\uFF0C\u66F4\u65B0\u540E\u53EF\u4E00\u952E\u91CD\u542F\uFF0C\u58F0\u97F3\u8BBE\u7F6E\u4F1A\u88AB\u4FDD\u5B58\u3002"
+  };
   function createUpdateNotices(updater, io) {
     let downloadStarted = false, lastStatus = "";
     const saved = io.readNotice() || {}, current = updater.current();
@@ -11440,7 +11452,10 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       }
     };
     messages.zh = { ...messages.en, restartTitle: "Reborn \u66F4\u65B0\u5DF2\u4E0B\u8F7D", restartBody: "\u66F4\u65B0\u5DF2\u9A8C\u8BC1\u3002\u73B0\u5728\u91CD\u542F\u6E38\u620F\u4EE5\u5E94\u7528\u66F4\u65B0\u5417\uFF1F", restartNow: "\u91CD\u542F", restartLater: "\u7A0D\u540E", restartAsk: "Reborn \u66F4\u65B0\u5DF2\u4E0B\u8F7D\u5E76\u9A8C\u8BC1\u3002\u73B0\u5728\u91CD\u542F\u6E38\u620F\u4EE5\u5E94\u7528\u66F4\u65B0\u5417\uFF1F", apk: "TESL Reborn \u6709\u65B0\u7684 APK\u3002\u8BF7\u5728\u6784\u5EFA\u5668\u4E2D\u6784\u5EFA\u201C\u4EC5 APK\u201D\uFF0C\u5E76\u8986\u76D6\u5B89\u88C5\uFF1B\u6E38\u620F\u6570\u636E\u4F1A\u4FDD\u7559\u3002" };
-    return (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
+    const text = (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
+    if (kind !== "applied") return text;
+    const notes = PATCH_NOTES[String(language).slice(0, 2)] || PATCH_NOTES.en;
+    return notes ? `${text} ${notes}` : text;
   }
   let cachedPortCaption = "";
   let splashVersionAnchor = { x: 0.5, y: 0.34 }, splashAnchorReady = false;
@@ -11856,7 +11871,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
     }
     return {
       show(kind, revision, onShown) {
-        message = { kind, revision, onShown, duration: kind === "restart" ? 1e4 : kind === "apk" ? 15e3 : 6e3 };
+        message = { kind, revision, onShown, duration: kind === "restart" ? 1e4 : kind === "apk" || kind === "applied" ? 15e3 : 6e3 };
         shownAt = 0;
       },
       tick() {
