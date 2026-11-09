@@ -26,16 +26,39 @@ final class SoftInputStyle {
   private SoftInputStyle() {}
 
   static void afterTap(Activity activity) {
+    watchFocus(activity);
     for (long delay : CHECKS)
       MAIN.postDelayed(() -> {
-        try { style(activity); } catch (Throwable ignored) { /* The game keeps Unity's look. */ }
+        try { style(activity); } catch (Throwable error) {
+          // The game keeps Unity's look.
+          android.util.Log.w("tesl-setup", "soft input: " + error);
+        }
       }, delay);
   }
+
+  /**
+   * The text dialog can open later than the checks after a tap (the login
+   * fields on a Pixel 6 Pro). The game's window loses focus to the dialog
+   * the moment it opens; that runs the same look-up.
+   */
+  private static void watchFocus(Activity activity) {
+    View decor = activity.getWindow().getDecorView();
+    if (WATCHED.put(decor, Boolean.TRUE) != null) return;
+    decor.getViewTreeObserver().addOnWindowFocusChangeListener(hasFocus -> {
+      if (hasFocus) return;
+      for (long delay : new long[] {30, 200, 600})
+        MAIN.postDelayed(() -> {
+          try { style(activity); } catch (Throwable error) { android.util.Log.w("tesl-setup", "soft input: " + error); }
+        }, delay);
+    });
+  }
+
+  private static final java.util.Map<View, Object> WATCHED = new java.util.WeakHashMap<>();
 
   private static void style(Activity activity) throws Exception {
     if (activity.isFinishing() || activity.isDestroyed()) return;
     Object player = field(activity, "mUnityPlayer");
-    if (player == null) return;
+    if (player == null) { android.util.Log.i("tesl-setup", "soft input: no mUnityPlayer in " + activity.getClass().getName()); return; }
     for (Class<?> type = player.getClass(); type != null && type != Object.class; type = type.getSuperclass())
       for (Field field : type.getDeclaredFields()) {
         if (!Dialog.class.isAssignableFrom(field.getType())) continue;
@@ -46,8 +69,7 @@ final class SoftInputStyle {
         if (window == null) continue;
         View root = window.getDecorView();
         autofill(activity, root);
-        if (Boolean.TRUE.equals(root.getTag(R_TAG))) continue;
-        root.setTag(R_TAG, Boolean.TRUE);
+        if (STYLED.put(root, Boolean.TRUE) != null) continue;
         root.setBackgroundColor(UiStyle.BACKGROUND);
         paint(activity, root);
       }
@@ -79,8 +101,7 @@ final class SoftInputStyle {
       // No hint: the box stays as Unity made it.
     }
     // Once per keyboard opening: the dialog may be reused for another field.
-    if (Long.valueOf(at).equals(edit.getTag(R_AUTOFILL))) return;
-    edit.setTag(R_AUTOFILL, at);
+    if (Long.valueOf(at).equals(MARKED.put(edit, at))) return;
     if (hint == null) {
       edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
       return;
@@ -91,6 +112,7 @@ final class SoftInputStyle {
     if (View.AUTOFILL_HINT_PASSWORD.equals(hint))
       edit.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
     edit.setAutofillHints(hint);
+    android.util.Log.i("tesl-setup", "autofill: visible box marked " + hint);
     companion(activity, edit, View.AUTOFILL_HINT_PASSWORD.equals(hint));
     android.view.autofill.AutofillManager manager =
         activity.getSystemService(android.view.autofill.AutofillManager.class);
@@ -142,6 +164,7 @@ final class SoftInputStyle {
       }
     });
     parent.addView(other, parent.indexOfChild(edit) + 1, new ViewGroup.LayoutParams(1, 1));
+    android.util.Log.i("tesl-setup", "autofill: " + field + " companion added to " + parent.getClass().getSimpleName());
   }
 
   private static final String COMPANION = "tesl-reborn-autofill-companion";
@@ -157,10 +180,11 @@ final class SoftInputStyle {
     return null;
   }
 
-  private static final int R_AUTOFILL = android.R.id.edit;
+  private static final java.util.Map<View, Object> MARKED = new java.util.WeakHashMap<>();
 
-  // Any id from the framework works as a tag key for a view we do not own.
-  private static final int R_TAG = android.R.id.custom;
+  // View.setTag(int, Object) takes only an id of the app itself: a framework
+  // id threw IllegalArgumentException on every touch, so nothing here ran.
+  private static final java.util.Map<View, Object> STYLED = new java.util.WeakHashMap<>();
 
   private static void paint(Activity activity, View view) {
     if (view instanceof EditText) {
