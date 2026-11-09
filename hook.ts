@@ -3022,6 +3022,37 @@ void onLeave (GumInvocationContext * ic) {
     if (!method || method.virtualAddress.isNull()) throw Error("InputField.ActivateInputFieldInternal not found");
     const file = `${persistentPath()}/tesl-reborn-autofill.json`;
     let logged = false;
+    // Unity's text dialog shows one field at a time; the setup code adds a
+    // hidden box of the other kind so a password manager fills both. What it
+    // filled there (tesl-reborn-autofill-fill.json) goes into the other field
+    // of the login form, and the file is cleared at once.
+    const fillFile = `${persistentPath()}/tesl-reborn-autofill-fill.json`;
+    let watchUntil = 0;
+    const watchCompanion = () => {
+      const running = Date.now() < watchUntil;
+      watchUntil = Date.now() + 60000;
+      if (running) return;
+      const tick = () => {
+        if (Date.now() > watchUntil) return;
+        try {
+          const text = readTextFile(fillFile);
+          const fill = text ? JSON.parse(text) : null;
+          if (fill && fill.value && Math.abs(Date.now() - Number(fill.at)) < 60000) {
+            writeTextFile(fillFile, "{}");
+            const forms = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(cls(img, "LoginWin").type.object);
+            for (let i = 0; i < forms.length; i++) {
+              const form = forms.get(i);
+              if (!unityAlive(form) || !call(call(form, "get_gameObject"), "get_activeInHierarchy")) continue;
+              const input = form.field(fill.field === "password" ? "_pwdInput" : "_unameInput").value;
+              if (unityAlive(input)) { call(input, "set_text", Il2Cpp.string(String(fill.value))); log(`login autofill: filled the ${fill.field === "password" ? "password" : "username"} field too`); }
+              break;
+            }
+          }
+        } catch (error) { log(`login autofill: companion fill failed: ${error}`); }
+        schedule(300, tick, "login autofill fill");
+      };
+      schedule(300, tick, "login autofill fill");
+    };
     hookAttach(method.virtualAddress, {
       onEnter(args) {
         try {
@@ -3032,6 +3063,7 @@ void onLeave (GumInvocationContext * ic) {
           else if (/user[_ ]?name|account[_ ]?name|email|login/i.test(name)) kind = "username";
           writeTextFile(file, JSON.stringify({ field: kind, at: Date.now() }));
           if (kind && !logged) { logged = true; log(`login autofill: ${kind} field ${name} opened the keyboard`); }
+          if (kind) watchCompanion();
         } catch (error) { log(`login autofill: ${error}`); }
       }
     });
@@ -6885,6 +6917,10 @@ const chatWindows = new Map();
   function updateNoticeText(kind, revision, language) {
     const messages = {
       en: {
+        restartTitle: 'Reborn update downloaded',
+        restartBody: 'The update is verified. Restart the game now to apply it?',
+        restartNow: 'Restart',
+        restartLater: 'Later',
         restartAsk: 'A Reborn update is downloaded and verified. Restart the game now to apply it?',
         apk: 'A new TESL Reborn APK is available. Build “APK only” in the Builder and install it over this one; your game data stays.',
         downloading: "Downloading a Reborn update. You can keep playing.",
@@ -6893,6 +6929,10 @@ const chatWindows = new Map();
         error: "Reborn update could not be downloaded or verified. You can keep playing; it will retry on the next launch."
       },
       ru: {
+        restartTitle: 'Обновление Reborn скачано',
+        restartBody: 'Обновление проверено. Перезапустить игру сейчас, чтобы применить его?',
+        restartNow: 'Перезапустить',
+        restartLater: 'Позже',
         restartAsk: 'Обновление Reborn скачано и проверено. Перезапустить игру сейчас, чтобы применить его?',
         apk: 'Вышел новый APK TESL Reborn. Соберите в Builder «Только APK» и установите поверх этого; игровые данные сохранятся.',
         downloading: "Скачивается обновление Reborn. Можно продолжать играть.",
@@ -6901,6 +6941,10 @@ const chatWindows = new Map();
         error: "Не удалось скачать или проверить обновление Reborn. Можно играть дальше; повторим при следующем запуске."
       },
       de: {
+        restartTitle: 'Reborn-Update heruntergeladen',
+        restartBody: 'Das Update ist geprüft. Spiel jetzt neu starten, um es anzuwenden?',
+        restartNow: 'Neu starten',
+        restartLater: 'Später',
         restartAsk: 'Ein Reborn-Update ist heruntergeladen und geprüft. Spiel jetzt neu starten, um es anzuwenden?',
         apk: 'Eine neue TESL-Reborn-APK ist verfügbar. Erstelle im Builder „Nur APK“ und installiere sie über diese; deine Spieldaten bleiben.',
         downloading: "Ein Reborn-Update wird heruntergeladen. Du kannst weiterspielen.",
@@ -6909,6 +6953,10 @@ const chatWindows = new Map();
         error: "Reborn-Update konnte nicht geladen oder geprüft werden. Du kannst weiterspielen; neuer Versuch beim nächsten Start."
       },
       es: {
+        restartTitle: 'Actualización de Reborn descargada',
+        restartBody: 'La actualización está verificada. ¿Reiniciar el juego ahora para aplicarla?',
+        restartNow: 'Reiniciar',
+        restartLater: 'Más tarde',
         restartAsk: 'Una actualización de Reborn está descargada y verificada. ¿Reiniciar el juego ahora para aplicarla?',
         apk: 'Hay un APK nuevo de TESL Reborn. Crea «Solo APK» en el Builder e instálalo encima de este; tus datos del juego se conservan.',
         downloading: "Descargando una actualización de Reborn. Puedes seguir jugando.",
@@ -6917,6 +6965,10 @@ const chatWindows = new Map();
         error: "No se pudo descargar o verificar la actualización de Reborn. Puedes seguir jugando; se reintentará al iniciar."
       },
       fr: {
+        restartTitle: 'Mise à jour Reborn téléchargée',
+        restartBody: 'La mise à jour est vérifiée. Redémarrer le jeu maintenant pour l’appliquer ?',
+        restartNow: 'Redémarrer',
+        restartLater: 'Plus tard',
         restartAsk: 'Une mise à jour Reborn est téléchargée et vérifiée. Redémarrer le jeu maintenant pour l’appliquer ?',
         apk: 'Un nouvel APK TESL Reborn est disponible. Créez « APK seul » dans le Builder et installez-le par-dessus ; vos données de jeu restent.',
         downloading: "Téléchargement d’une mise à jour Reborn. Vous pouvez continuer à jouer.",
@@ -6925,6 +6977,10 @@ const chatWindows = new Map();
         error: "Impossible de télécharger ou vérifier la mise à jour Reborn. Vous pouvez jouer ; nouvel essai au prochain lancement."
       },
       it: {
+        restartTitle: 'Aggiornamento Reborn scaricato',
+        restartBody: 'L’aggiornamento è verificato. Riavviare il gioco ora per applicarlo?',
+        restartNow: 'Riavvia',
+        restartLater: 'Più tardi',
         restartAsk: 'Un aggiornamento Reborn è scaricato e verificato. Riavviare il gioco ora per applicarlo?',
         apk: 'È disponibile un nuovo APK di TESL Reborn. Crea «Solo APK» nel Builder e installalo sopra questo; i dati di gioco restano.',
         downloading: "Download di un aggiornamento Reborn. Puoi continuare a giocare.",
@@ -6933,6 +6989,10 @@ const chatWindows = new Map();
         error: "Impossibile scaricare o verificare l’aggiornamento Reborn. Puoi giocare; nuovo tentativo al prossimo avvio."
       },
       pl: {
+        restartTitle: 'Pobrano aktualizację Reborn',
+        restartBody: 'Aktualizacja jest zweryfikowana. Uruchomić grę ponownie teraz, aby ją zastosować?',
+        restartNow: 'Uruchom ponownie',
+        restartLater: 'Później',
         restartAsk: 'Aktualizacja Reborn jest pobrana i zweryfikowana. Uruchomić grę ponownie teraz, aby ją zastosować?',
         apk: 'Dostępny jest nowy APK TESL Reborn. Zbuduj „Tylko APK” w Builderze i zainstaluj go na tym; dane gry zostaną.',
         downloading: "Pobieranie aktualizacji Reborn. Możesz grać dalej.",
@@ -6941,6 +7001,10 @@ const chatWindows = new Map();
         error: "Nie udało się pobrać lub sprawdzić aktualizacji Reborn. Możesz grać dalej; ponowimy próbę przy następnym uruchomieniu."
       },
       pt: {
+        restartTitle: 'Atualização do Reborn baixada',
+        restartBody: 'A atualização foi verificada. Reiniciar o jogo agora para aplicá-la?',
+        restartNow: 'Reiniciar',
+        restartLater: 'Depois',
         restartAsk: 'Uma atualização do Reborn foi baixada e verificada. Reiniciar o jogo agora para aplicá-la?',
         apk: 'Há um novo APK do TESL Reborn. Gere “Somente APK” no Builder e instale por cima deste; seus dados do jogo continuam.',
         downloading: "Baixando uma atualização do Reborn. Você pode continuar jogando.",
@@ -6949,6 +7013,10 @@ const chatWindows = new Map();
         error: "Não foi possível baixar ou verificar a atualização do Reborn. Você pode jogar; nova tentativa na próxima inicialização."
       },
       tr: {
+        restartTitle: 'Reborn güncellemesi indirildi',
+        restartBody: 'Güncelleme doğrulandı. Uygulamak için oyun şimdi yeniden başlatılsın mı?',
+        restartNow: 'Yeniden başlat',
+        restartLater: 'Sonra',
         restartAsk: 'Reborn güncellemesi indirildi ve doğrulandı. Uygulamak için oyun şimdi yeniden başlatılsın mı?',
         apk: "Yeni bir TESL Reborn APK'sı var. Builder'da “Yalnızca APK” oluşturup bunun üzerine kurun; oyun verileriniz korunur.",
         downloading: "Reborn güncellemesi indiriliyor. Oynamaya devam edebilirsiniz.",
@@ -6957,7 +7025,7 @@ const chatWindows = new Map();
         error: "Reborn güncellemesi indirilemedi veya doğrulanamadı. Oynamaya devam edebilirsiniz; sonraki açılışta yeniden denenecek."
       }
     };
-    (messages as any).zh = { ...messages.en, restartAsk: 'Reborn 更新已下载并验证。现在重启游戏以应用更新吗？', apk: 'TESL Reborn 有新的 APK。请在构建器中构建“仅 APK”，并覆盖安装；游戏数据会保留。' };
+    (messages as any).zh = { ...messages.en, restartTitle: 'Reborn 更新已下载', restartBody: '更新已验证。现在重启游戏以应用更新吗？', restartNow: '重启', restartLater: '稍后', restartAsk: 'Reborn 更新已下载并验证。现在重启游戏以应用更新吗？', apk: 'TESL Reborn 有新的 APK。请在构建器中构建“仅 APK”，并覆盖安装；游戏数据会保留。' };
     return (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
   }
 
@@ -7477,6 +7545,19 @@ const chatWindows = new Map();
     // restart, which the setup code of an APK of level 2 or newer performs
     // (teslreborn://language?apply=1&restart=1). Never in a battle: the
     // dialog waits for its end. Older APKs, or a failure, keep the banner.
+    let restartDialogText = null;
+    try {
+      const common = cls(img, "UIPopupWindow").tryMethod("ShowGenericCommon", 12);
+      if (common && !common.virtualAddress.isNull()) hookAttach(common.virtualAddress, {
+        onEnter(args) {
+          if (!restartDialogText) return;
+          const [title, body, now, later] = restartDialogText;
+          args[1] = title.handle; args[2] = ptr(0); args[3] = body.handle;
+          args[4] = ptr(0); args[5] = ptr(0); args[6] = now.handle; args[7] = later.handle;
+        }
+      });
+      else log("updater: UIPopupWindow.ShowGenericCommon not found; plain restart dialog");
+    } catch (error) { log(`updater: restart dialog styling unavailable: ${error}`); }
     function offerRestart() {
       const setup = read(`${persistentPath()}/tesl-reborn-setup.json`) || {};
       if (!(Number(setup.apkLevel) >= 2)) return false;
@@ -7489,8 +7570,16 @@ const chatWindows = new Map();
             catch (error) { log(`updater: restart failed: ${error}`); banner.show("restart", 0, null); }
           });
           const later = Il2Cpp.delegate(ucls("UnityEngine.Events.UnityAction"), () => log("updater: restart postponed"));
-          cls(img, "WindowUtils").method("OpenConfirmationDialog", 3)
-            .invoke(Il2Cpp.string(updateNoticeText("restartAsk", 0, resourceLanguage())), accept, later);
+          // The confirmation dialog puts its text in the title bar and shows a
+          // random picture; while it is built, its common Show gets a title,
+          // the text, no picture and Restart / Later.
+          const language = resourceLanguage();
+          restartDialogText = [updateNoticeText("restartTitle", 0, language), updateNoticeText("restartBody", 0, language),
+            updateNoticeText("restartNow", 0, language), updateNoticeText("restartLater", 0, language)].map(text => Il2Cpp.string(text));
+          try {
+            cls(img, "WindowUtils").method("OpenConfirmationDialog", 3)
+              .invoke(Il2Cpp.string(updateNoticeText("restartAsk", 0, language)), accept, later);
+          } finally { restartDialogText = null; }
           globalThis.__teslRestartActions = [accept, later];
           log("updater: restart offered");
         } catch (error) { log(`updater: restart dialog failed: ${error}`); banner.show("restart", 0, null); }

@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 270,
-  "version": "android-270-sound-save",
-  "bytes": 531826,
-  "sha256": "5910355499173f72717b656fc885d82bdfb42d42f603a9e1f27c06d5e9950bed",
+  "revision": 272,
+  "version": "android-272-autofill-pair",
+  "bytes": 537438,
+  "sha256": "fd7bcc7ef1c89558ee6ff64885d5093ee8b974e32711241e3e7fdbc34ffa12ee",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "b68f88d726c5b1c21c040e4d2ae0a55f9958ec86b45fce07254a8a8c5e20c519"
+  "sourceSha256": "341665524e64d0c06a295eed57d76a745177d12e5ee4b8e19ee3cc5818e43fd1"
 }

@@ -91,10 +91,60 @@ final class SoftInputStyle {
     if (View.AUTOFILL_HINT_PASSWORD.equals(hint))
       edit.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
     edit.setAutofillHints(hint);
+    companion(activity, edit, View.AUTOFILL_HINT_PASSWORD.equals(hint));
     android.view.autofill.AutofillManager manager =
         activity.getSystemService(android.view.autofill.AutofillManager.class);
     if (manager != null && manager.isEnabled()) manager.requestAutofill(edit);
   }
+
+  /**
+   * Unity opens a separate text dialog for each field, so a password manager
+   * never sees the username and the password together: it fills the password
+   * and has nowhere to put the username (or offers nothing for the username
+   * alone). A 1-pixel box of the other kind sits next to the visible one; what
+   * the manager fills into it is handed to the hook, which puts it into the
+   * other field of the login form (tesl-reborn-autofill-fill.json).
+   */
+  private static void companion(Activity activity, EditText edit, boolean visibleIsPassword) {
+    if (!(edit.getParent() instanceof ViewGroup)) return;
+    ViewGroup parent = (ViewGroup) edit.getParent();
+    View old = parent.findViewWithTag(COMPANION);
+    if (old != null) parent.removeView(old);
+    EditText other = new EditText(activity);
+    other.setTag(COMPANION);
+    other.setSingleLine(true);
+    other.setTextColor(android.graphics.Color.TRANSPARENT);
+    other.setBackground(null);
+    other.setPadding(0, 0, 0, 0);
+    other.setFocusable(false);
+    other.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES);
+    String field = visibleIsPassword ? "username" : "password";
+    if (visibleIsPassword) {
+      other.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+      other.setAutofillHints(View.AUTOFILL_HINT_USERNAME);
+    } else {
+      other.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+      other.setAutofillHints(View.AUTOFILL_HINT_PASSWORD);
+    }
+    other.addTextChangedListener(new android.text.TextWatcher() {
+      @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+      @Override public void onTextChanged(CharSequence text, int start, int before, int count) {}
+      @Override public void afterTextChanged(android.text.Editable text) {
+        if (text.length() == 0) return;
+        try {
+          java.io.File file = new java.io.File(activity.getExternalFilesDir(null), "tesl-reborn-autofill-fill.json");
+          java.nio.file.Files.write(file.toPath(), new org.json.JSONObject().put("field", field)
+              .put("value", text.toString()).put("at", System.currentTimeMillis()).toString()
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
+          // The player types that field by hand.
+        }
+      }
+    });
+    parent.addView(other, parent.indexOfChild(edit) + 1, new ViewGroup.LayoutParams(1, 1));
+  }
+
+  private static final String COMPANION = "tesl-reborn-autofill-companion";
 
   private static EditText firstEdit(View view) {
     if (view instanceof EditText) return (EditText) view;
