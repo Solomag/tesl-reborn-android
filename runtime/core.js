@@ -9651,6 +9651,40 @@ void render_leave (GumInvocationContext * ic) { Slot * s = slot (render_camera);
   section("sound settings saved", () => {
     const manager = cls(img, "SettingsManager"), prefs = ucls("UnityEngine.PlayerPrefs");
     let pending2 = 0;
+    const saveSoon = (name) => {
+      const ticket = ++pending2;
+      schedule(1e3, () => {
+        if (ticket !== pending2) return;
+        try {
+          const live = manager.method("get_Instance", 0).invoke();
+          if (!live || live.isNull()) return;
+          live.method("SaveSettings").invoke();
+          prefs.method("Save").invoke();
+          log(`sound settings: saved after ${name}`);
+        } catch (error) {
+          log(`sound settings: save failed: ${error}`);
+        }
+      }, "sound settings save");
+    };
+    const window = cls(img, "SettingsWin");
+    for (const name of [
+      "HandleMasterVolumeOnValueChanged",
+      "HandleMuteMasterVolumeOnValueChanged",
+      "HandleMusicOnValueChanged",
+      "HandleMuteMusicOnValueChanged",
+      "HandlePlaySoundOnValueChanged",
+      "HandleAutoMuteOpponentEmotesOnValueChanged",
+      "HandleShowSubtitlesOnValueChanged"
+    ]) {
+      const method = window.tryMethod(name, 1);
+      if (!method || method.virtualAddress.isNull()) {
+        log(`sound settings: ${name} not found`);
+        continue;
+      }
+      hookAttach(method.virtualAddress, { onEnter() {
+        saveSoon(name);
+      } });
+    }
     for (const name of ["SetMasterVolume", "SetIsMasterVolumeMuted", "SetMusicVolume", "SetIsMusicMuted", "SetIsPlaySoundInBackground", "SetAutoMuteOpponentEmotes", "SetShowSubtitles"]) {
       const method = manager.tryMethod(name, 1);
       if (!method) {
