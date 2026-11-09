@@ -4,8 +4,8 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 272,
-  "version": "android-272-autofill-pair",
+  "revision": 276,
+  "version": "android-276-autofill-restart",
   "bytes": 537438,
   "sha256": "fd7bcc7ef1c89558ee6ff64885d5093ee8b974e32711241e3e7fdbc34ffa12ee",
   "resources": [
