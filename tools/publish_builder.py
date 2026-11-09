@@ -37,7 +37,9 @@ def main():
     tag = "builder-" + version["channel"]
     channel = version["channel"].capitalize()
     notes = ("Updated by CI; the Builder updates itself from here. "
-             f"Download TESL-Reborn-Builder-{channel}.exe (Windows) or TESL-Reborn-Builder-{channel} (Linux).")
+             f"Download TESL-Reborn-Builder-{channel}.exe (Windows) or TESL-Reborn-Builder-{channel} (Linux).\n\n"
+             "What's new: https://github.com/ssorgatem/tesl-reborn-android/blob/"
+             + ("main" if version["channel"] == "stable" else "android-ui-and-update-loader") + "/CHANGELOG.md")
     if subprocess.run(["gh", "release", "view", tag], capture_output=True).returncode != 0:
         title = "Builder (" + version["channel"] + ")"
         flags = ["--prerelease"] if version["channel"] == "test" else []

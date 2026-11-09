@@ -36,6 +36,12 @@ python tools/publish_hook.py --revision N --version android-N-… --channel test
 Bump `revision` and `version` in `runtime/manifest.json` before `npm run build`.
 Commit and push to `android-ui-and-update-loader`.
 
+## What's new
+
+Every patch updates `CHANGELOG.md` (what players notice, newest first) and
+`PATCH_NOTES` in `hook.ts`: one line per language that the game shows with
+"Reborn update N applied". Mark changes that need a new APK.
+
 ## When a patch needs a new APK
 
 Changes to the setup screens, the Java side of the game (`android-setup/`) or

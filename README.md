@@ -7,7 +7,7 @@ You build the Android game yourself with the **Builder** from copies of the game
 you already have: the PC game and the original Android XAPK. This repository
 contains no game files and none are distributed.
 
-**→ [Installation guide](docs/install.md)** · [Troubleshooting and bug reports](docs/troubleshooting.md) · [Downloads (Builder)](https://github.com/ssorgatem/tesl-reborn-android/releases)
+**→ [Installation guide](docs/install.md)** · [What's new](CHANGELOG.md) · [Troubleshooting and bug reports](docs/troubleshooting.md) · [Downloads (Builder)](https://github.com/ssorgatem/tesl-reborn-android/releases)
 
 ## Features
 

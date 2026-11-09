@@ -6872,6 +6872,20 @@ const chatWindows = new Map();
   // BEGIN android-ui: update-notices
   // The APK level these patches expect (ApkLevel.LEVEL in the setup code).
   const APK_LEVEL = 2;
+  // What this patch brings, one line per language, shown with "update
+  // applied". Rewrite it with every patch (CHANGELOG.md has the full list).
+  const PATCH_NOTES = {
+    en: "New: password managers fill the login form, a Restart button after updates, sound settings are kept.",
+    ru: "Новое: менеджеры паролей заполняют вход, кнопка перезапуска после обновления, настройки звука сохраняются.",
+    de: "Neu: Passwortmanager füllen die Anmeldung aus, Neustart-Knopf nach Updates, Toneinstellungen bleiben erhalten.",
+    es: "Novedades: los gestores de contraseñas rellenan el inicio de sesión, botón Reiniciar tras actualizar, se guarda el sonido.",
+    fr: "Nouveau : les gestionnaires de mots de passe remplissent la connexion, bouton Redémarrer après une mise à jour, le son est conservé.",
+    it: "Novità: i gestori di password compilano l’accesso, pulsante Riavvia dopo gli aggiornamenti, l’audio resta salvato.",
+    pl: "Nowe: menedżery haseł wypełniają logowanie, przycisk restartu po aktualizacji, ustawienia dźwięku są zapamiętywane.",
+    pt: "Novo: gerenciadores de senha preenchem o login, botão Reiniciar após atualizar, o som fica salvo.",
+    tr: "Yeni: şifre yöneticileri girişi doldurur, güncellemeden sonra Yeniden başlat düğmesi, ses ayarları korunur.",
+    zh: "新内容：密码管理器可自动填写登录，更新后可一键重启，声音设置会被保存。"
+  };
   function createUpdateNotices(updater, io) {
     let downloadStarted = false, lastStatus = "";
     const saved = io.readNotice() || {}, current = updater.current();
@@ -7026,7 +7040,10 @@ const chatWindows = new Map();
       }
     };
     (messages as any).zh = { ...messages.en, restartTitle: 'Reborn 更新已下载', restartBody: '更新已验证。现在重启游戏以应用更新吗？', restartNow: '重启', restartLater: '稍后', restartAsk: 'Reborn 更新已下载并验证。现在重启游戏以应用更新吗？', apk: 'TESL Reborn 有新的 APK。请在构建器中构建“仅 APK”，并覆盖安装；游戏数据会保留。' };
-    return (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
+    const text = (messages[String(language).slice(0, 2)] || messages.en)[kind] || "";
+    if (kind !== "applied") return text;
+    const notes = PATCH_NOTES[String(language).slice(0, 2)] || PATCH_NOTES.en;
+    return notes ? `${text} ${notes}` : text;
   }
 
   let cachedPortCaption = "";
@@ -7421,7 +7438,7 @@ const chatWindows = new Map();
     }
     return {
       show(kind, revision, onShown) {
-        message = { kind, revision, onShown, duration: kind === "restart" ? 10000 : kind === "apk" ? 15000 : 6000 };
+        message = { kind, revision, onShown, duration: kind === "restart" ? 10000 : kind === "apk" || kind === "applied" ? 15000 : 6000 };
         shownAt = 0;
       },
       tick() {
