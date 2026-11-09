@@ -5,7 +5,12 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 277 — Test
+## Patch 278 — Test
+
+- After **Log Out**, the username is filled in again even when the login form
+  appears late.
+
+## Patch 277 — Stable
 
 - **Password managers** fill the login form: username and password together,
   from the suggestions in the keyboard. *(new APK)*
@@ -24,7 +29,7 @@ first; Stable gets it after testing.
 - After an update the game says in one line what is new; this list is
   [CHANGELOG.md](CHANGELOG.md).
 
-## Patch 266 — Stable
+## Patch 266
 
 - **Popups fit the screen:** a popup taller than the screen (the arena rules
   before a match in Russian, on 20:9 phones) is scaled down so its buttons
@@ -32,7 +37,7 @@ first; Stable gets it after testing.
 - **Frame rate after the background:** coming back to the game no longer
   drops a battle to 30 FPS.
 
-## Patch 262 — Stable
+## Patch 262
 
 - **Simplified Chinese** as a full game language: menus, cards, store and
   server texts, its own entry in the language list.

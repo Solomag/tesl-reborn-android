@@ -6605,7 +6605,9 @@ void onLeave (GumInvocationContext * ic) {
   }
   function prefillLoginUsername(username) {
     if (!username) return;
-    for (const delay of [0, 300, 1200]) schedule(delay, () => {
+    const until = Date.now() + 1e4;
+    const attempt = () => {
+      let found = false;
       for (const typeName of ["UnityEngine.UI.InputField", "TMPro.TMP_InputField"]) try {
         const fields = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(ucls(typeName).type.object);
         for (let i = 0; i < fields.length; i++) {
@@ -6613,11 +6615,17 @@ void onLeave (GumInvocationContext * ic) {
           if (!Boolean(call(go, "get_activeInHierarchy"))) continue;
           const name = String(call(go, "get_name")?.content || "");
           if (!/user[_ ]?name|account[_ ]?name|email/i.test(name)) continue;
-          if (!String(call(field, "get_text")?.content || "")) call(field, "set_text", Il2Cpp.string(username));
+          found = true;
+          if (!String(call(field, "get_text")?.content || "")) {
+            call(field, "set_text", Il2Cpp.string(username));
+            log("login: username filled in from the saved login");
+          }
         }
       } catch (_) {
       }
-    });
+      if (!found && Date.now() < until) schedule(400, attempt, "login username prefill");
+    };
+    schedule(0, attempt, "login username prefill");
   }
   section("login autofill hint", () => {
     const klass = ucls("UnityEngine.UI.InputField");

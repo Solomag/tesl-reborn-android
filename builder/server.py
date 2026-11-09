@@ -325,10 +325,9 @@ class ResourceServer:
                     self.error(403)
                     return
                 try:
-                    size = int(self.headers.get("Content-Length", "0"))
-                    if not 1 <= size <= 1024:
+                    if not 1 <= len(self.body) <= 1024:
                         raise ValueError("Invalid report")
-                    if json.loads(self.rfile.read(size)).get("sha256") != owner.apk_hash:
+                    if json.loads(self.body).get("sha256") != owner.apk_hash:
                         raise ValueError("Wrong APK")
                 except (ValueError, AttributeError):
                     self.error(400)
@@ -347,6 +346,18 @@ class ResourceServer:
                 self.close_connection = True
 
             def do_POST(self):
+                # The body is read before any answer: closing a socket with
+                # unread data makes Windows reset the connection, and the
+                # client got ConnectionResetError instead of 403/401/404.
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    size = -1
+                if not 0 <= size <= 8192:
+                    self.close_connection = True
+                    self.error(413 if size > 8192 else 400)
+                    return
+                self.body = self.rfile.read(size)
                 if owner.apk and self.path == owner.connect_path + "/apk-verified":
                     self.apk_verified()
                     return
@@ -356,10 +367,9 @@ class ResourceServer:
                     self.error(404)
                     return
                 try:
-                    size = int(self.headers.get("Content-Length", "0"))
-                    if not 1 <= size <= 8192:
+                    if not self.body:
                         raise ValueError("Invalid acknowledgement")
-                    payload = json.loads(self.rfile.read(size))
+                    payload = json.loads(self.body)
                     packs = payload["installed"]
                     if (
                         not isinstance(packs, dict)
