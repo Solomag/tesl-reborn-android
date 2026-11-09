@@ -3012,6 +3012,31 @@ void onLeave (GumInvocationContext * ic) {
     });
   }
 
+  // Password managers fill only fields that Android knows are a username or a
+  // password. The game types into Unity's own text dialog, which says
+  // neither; when the login form opens its keyboard, the field kind is
+  // written here for the setup code, which marks that dialog's text box.
+  section("login autofill hint", () => {
+    const klass = ucls("UnityEngine.UI.InputField");
+    const method = klass.tryMethod("ActivateInputFieldInternal", 0);
+    if (!method || method.virtualAddress.isNull()) throw Error("InputField.ActivateInputFieldInternal not found");
+    const file = `${persistentPath()}/tesl-reborn-autofill.json`;
+    let logged = false;
+    hookAttach(method.virtualAddress, {
+      onEnter(args) {
+        try {
+          const field = new Il2Cpp.Object(args[0]);
+          const name = String(call(call(field, "get_gameObject"), "get_name")?.content || "");
+          let kind = "";
+          if (/pass(word)?|pwd/i.test(name) || enumVal(call(field, "get_inputType")) === 2) kind = "password";
+          else if (/user[_ ]?name|account[_ ]?name|email|login/i.test(name)) kind = "username";
+          writeTextFile(file, JSON.stringify({ field: kind, at: Date.now() }));
+          if (kind && !logged) { logged = true; log(`login autofill: ${kind} field ${name} opened the keyboard`); }
+        } catch (error) { log(`login autofill: ${error}`); }
+      }
+    });
+  });
+
   section("auto login", () => {
     const credentials = cls(img, "SparkleServices.UsernameAndPassword");
 
