@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const {transformSync}=require('esbuild');const src=fs.readFileSync('hook.ts','utf8');
-const extract=(a,b)=>transformSync(src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a))),{loader:'ts'}).code;
+const extract=(a,b)=>{const i=src.indexOf(a),j=src.indexOf(b,i);if(i<0||j<0)throw new Error(`hook.ts marker not found: ${i<0?a:b}`);return transformSync(src.slice(i,j),{loader:'ts'}).code;};
 const c={saved:[],pendingLogin:null,log:()=>{},isNull:x=>x==null,
  call:(o,n)=>({get_Uri:o.uri,get_State:o.state,get_Response:o.response,get_StatusCode:o?.status,get_DataAsText:{content:o?.body}}[n]),
  readSavedLogin:()=>c.saved.at(-1),writeSavedLogin:(u,p)=>c.saved.push({username:u,password:p})};
@@ -43,7 +43,7 @@ vm.createContext(store);vm.runInContext('const LOGIN_FILE="tesl-login.json";\n'+
 fail=true;store.writeSavedLogin('Alice','new');assert.equal(disk.get('/files/tesl-login.json'),'previous');
 fail=false;store.writeSavedLogin('Alice','');assert.deepEqual(JSON.parse(disk.get('/files/tesl-login.json')),{username:'Alice',password:''});
 const delegate={Il2Cpp:{String:function(p){this.handle=p},Object:function(p){this.handle=p}}};vm.createContext(delegate);
-vm.runInContext(extract('function invokeDelegateInt(', '\nfunction nested(')+extract('function invokeDelegatePtr(', '\nconst CREATE_ACCOUNT'),delegate);
+vm.runInContext(extract('function invokeDelegateInt(', '\nfunction nested(')+extract('function invokeDelegatePtr(', '\nIl2Cpp.perform('),delegate);
 let args=[];let boxedValue;
 const enumType={isEnum:true,alloc:()=>({field:()=>({set value(v){boxedValue=v}}),unbox:()=>({enumValue:boxedValue})})};
 delegate.invokeDelegateInt({method:()=>({parameters:[{type:{class:enumType}}],invoke:v=>args.push(v)})},8);assert.equal(args[0].enumValue,8);

@@ -14,3 +14,15 @@ u.check((url,cb)=>{requests.push(url);cb(200,url===embedded.feedUrl?JSON.stringi
 assert.equal(requests.length,2);assert.equal(requests[1],manifest.url);assert.equal(disk.state.pending.revision,manifest.revision);assert.equal(loaded,embeddedCode,'running hook stays unchanged until restart');
 u=boot();assert.equal(loaded,payload);u.ready();assert.equal(disk.state.active.revision,manifest.revision);assert.equal(disk.state.pending,null);
 console.log('PASS: actual prepared GitHub payload and manifest download, verify, stage and boot on an older APK loader');
+// Every published channel, stable included: its payload is committed, matches
+// the manifest byte for byte, and is served from the branch that channel lives on.
+const branches={stable:'main',test:'android-ui-and-update-loader'};
+for(const channel of fs.readdirSync('updates',{withFileTypes:true}).filter(e=>e.isDirectory()&&e.name!=='payloads').map(e=>e.name)){
+ const raw=fs.readFileSync(`updates/${channel}/manifest.json`);
+ assert(!raw.includes(13),`${channel} manifest has CRLF`);
+ const m=JSON.parse(raw);const body=fs.readFileSync(`updates/payloads/${m.sha256}.js`);
+ assert.equal(sha(body),m.sha256,channel);assert.equal(body.length,m.bytes,channel);
+ assert(branches[channel],`unknown channel ${channel}`);
+ assert.equal(m.url,`https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/${branches[channel]}/updates/payloads/${m.sha256}.js`,channel);
+}
+console.log('PASS: every channel manifest points at its committed payload on its own branch');

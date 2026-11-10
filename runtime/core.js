@@ -3522,7 +3522,6 @@ const CONFIG_LOCAL = "http://localhost:3000/config.json";
 const CONFIG_URL = "https://tesl-reborn.com/config.json";
 const PLUGIN_VERSION = "1.3.1-beta";
 const COMPONENT_TYPE = "win";
-const LOGIN_PLATFORM = "Steam";
 const MAJOR_VERSION = "db-630167952";
 const CHANGELIST = "317259";
 const TAG = "[tesl-hook]";
@@ -3945,7 +3944,6 @@ function invokeDelegatePtr(del, value) {
   const argument = method.parameters[0].type.name === "System.String" ? new Il2Cpp.String(handle) : new Il2Cpp.Object(handle);
   method.invoke(argument);
 }
-const CREATE_ACCOUNT = false;
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
   const resourceTrace = [], resourceTraceStarted = Date.now();
@@ -5013,6 +5011,7 @@ void onLeave (GumInvocationContext * ic) {
     }
     frameBus.setDue(nextDue);
     if (!due.length) return;
+    due.reverse();
     try {
       Il2Cpp.mainThread.schedule(() => {
         for (const task of due) {
@@ -5103,9 +5102,9 @@ void onLeave (GumInvocationContext * ic) {
           const since = Date.now() - started, gap = Date.now() - (globalThis.__teslLastFrameAt || started);
           if (gap > 1e3 || since % 1e4 < 2e3) {
             const parts = [];
-            for (const thread of Process.enumerateThreads()) {
-              const name = read(`/proc/self/task/${thread.id}/comm`);
-              if (/^(UnityMain|UnityGfxDeviceW|UnityChoreograp|Thread-|AudioTrack|FMOD)/.test(name) || thread.id === Process.id) parts.push(`${name || thread.id} ${describe(thread.id)}`);
+            for (const id of listThreadIds()) {
+              const name = read(`/proc/self/task/${id}/comm`);
+              if (/^(UnityMain|UnityGfxDeviceW|UnityChoreograp|Thread-|AudioTrack|FMOD)/.test(name) || id === Process.id) parts.push(`${name || id} ${describe(id)}`);
             }
             log(`resume +${Math.round(since / 1e3)} s: last frame ${gap} ms ago; ${parts.slice(0, 12).join("; ")}`);
           }
@@ -5145,7 +5144,7 @@ void onLeave (GumInvocationContext * ic) {
         } else if (adj === "0" && gap > 2e4) {
           if (!hung) {
             hung = true;
-            const parts = Process.enumerateThreads().map((thread) => `${read(`/proc/self/task/${thread.id}/comm`) || thread.id} ${describe(thread.id)}`);
+            const parts = listThreadIds().map((id) => `${read(`/proc/self/task/${id}/comm`) || id} ${describe(id)}`);
             log(`hang watch: on screen, no frame for ${Math.round(gap / 1e3)} s; restart armed; ${parts.join("; ")}`);
           }
           mark(false);

@@ -5,7 +5,12 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 278 — Test
+## Patch 279 — Test
+
+- The freeze watch no longer risks a long stall of its own after returning
+  to the game (the same thread query that froze a Samsung for minutes).
+
+## Patch 278
 
 - After **Log Out**, the username is filled in again even when the login form
   appears late.

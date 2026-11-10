@@ -43,7 +43,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / 'hook.js').write_bytes(code.encode())
     # Publish the payload before the manifest, including in local inboxes.
-    (args.out / 'manifest.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
+    (args.out / 'manifest.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8', newline='\n')
     print(f'RELEASE_READY: {args.out.resolve()} ({meta["bytes"]} bytes, revision {args.revision})')
 
 

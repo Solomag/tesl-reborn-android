@@ -4,3 +4,6 @@ hook.js -text
 *.sh text eol=lf
 *.py text eol=lf
 *.smali text eol=lf
+# Served byte-exact: their SHA-256 is published in the manifests.
+runtime/core.js -text
+updates/payloads/*.js -text

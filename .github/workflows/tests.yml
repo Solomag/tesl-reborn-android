@@ -1,9 +1,12 @@
 name: Hook Tests
 on:
   push:
-    branches: [android-ui-and-update-loader, portable-builder-and-resources, "sync-upstream-*"]
+    branches: [main, android-ui-and-update-loader, portable-builder-and-resources, "sync-upstream-*"]
     paths:
       - 'hook.ts'
+      - 'hook.js'
+      - 'updates/**'
+      - 'android-setup/**'
       - 'tests/**'
       - 'runtime/**'
       - 'tools/**'
@@ -16,6 +19,9 @@ on:
   pull_request:
     paths:
       - 'hook.ts'
+      - 'hook.js'
+      - 'updates/**'
+      - 'android-setup/**'
       - 'tests/**'
       - 'runtime/**'
       - 'tools/**'
@@ -55,3 +61,9 @@ jobs:
           python -m pip install -r builder/requirements.txt
       - name: Run tests
         run: npm test
+      # The committed loader and core must be what hook.ts builds to: a stale
+      # one would publish a different SHA than the APK embeds.
+      - name: Generated files are current
+        run: |
+          npm run build
+          git diff --exit-code -- hook.js runtime/

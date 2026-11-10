@@ -33,7 +33,8 @@ def prepare(code, revision, version, base_url, channel, output):
     payload.write_bytes(code.encode('utf-8'))
     manifest.parent.mkdir(parents=True, exist_ok=True)
     temp = manifest.with_suffix('.json.tmp')
-    temp.write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
+    # LF on every system: the manifest is served as it is committed.
+    temp.write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8', newline='\n')
     temp.replace(manifest)
     prune(output)
     return manifest
@@ -66,6 +67,14 @@ def main():
     parser.add_argument('--channel', default='test')
     parser.add_argument('--out', type=Path, default=ROOT / 'updates')
     args = parser.parse_args()
+    if args.hook.resolve() == (ROOT / 'runtime/core.js').resolve():
+        # The built core carries its own revision and version (npm run build);
+        # publishing it under other ones would leave the APK's embedded copy
+        # and the feed disagreeing about what is installed.
+        built = json.loads((ROOT / 'runtime/manifest.json').read_text(encoding='utf-8'))
+        if (args.revision, args.version) != (built['revision'], built['version']):
+            raise SystemExit(f"runtime/manifest.json is revision {built['revision']} {built['version']}: "
+                             'bump it and run npm run build, or pass the same values')
     manifest = prepare(args.hook.read_bytes().decode('utf-8'), args.revision, args.version,
                        args.base_url, args.channel, args.out)
     print(f'CHANNEL_READY: {manifest}')

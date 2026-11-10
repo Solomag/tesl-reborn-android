@@ -13,7 +13,6 @@ const CONFIG_URL = "https://tesl-reborn.com/config.json";
 const PLUGIN_VERSION = "1.3.1-beta";     // sent as X-TeslRebornPlugin-Version (= Plugin.GetVersionString(): version + "-beta"); bump when the plugin updates
 // The server expects a Windows/Steam client, so we present as one:
 const COMPONENT_TYPE = "win";
-const LOGIN_PLATFORM = "Steam";          // value of BNETAuthUtilities.GetLoginPlatform() on Windows
 const MAJOR_VERSION = "db-630167952";    // hardcoded by the plugin
 const CHANGELIST = "317259";             // SourceControlVersion.GetChangelist() on the Windows build
 const TAG = "[tesl-hook]";
@@ -410,7 +409,6 @@ function invokeDelegatePtr(del: Il2Cpp.Object, value: NativePointer) {
   method.invoke(argument);
 }
 
-const CREATE_ACCOUNT = false;            // the plugin sends false; flip to true if the server says "account not found"
 
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
@@ -1445,6 +1443,9 @@ void onLeave (GumInvocationContext * ic) {
     }
     frameBus.setDue(nextDue);
     if (!due.length) return;
+    // Collected from the end so splice keeps the indices; run in the order
+    // they were scheduled.
+    due.reverse();
     // One dispatch for all due tasks: each Il2Cpp.mainThread.schedule is a
     // managed call of its own.
     try {
@@ -1545,9 +1546,9 @@ void onLeave (GumInvocationContext * ic) {
           const since = Date.now() - started, gap = Date.now() - (globalThis.__teslLastFrameAt || started);
           if (gap > 1000 || since % 10000 < 2000) {
             const parts = [];
-            for (const thread of Process.enumerateThreads()) {
-              const name = read(`/proc/self/task/${thread.id}/comm`);
-              if (/^(UnityMain|UnityGfxDeviceW|UnityChoreograp|Thread-|AudioTrack|FMOD)/.test(name) || thread.id === Process.id) parts.push(`${name || thread.id} ${describe(thread.id)}`);
+            for (const id of listThreadIds()) {
+              const name = read(`/proc/self/task/${id}/comm`);
+              if (/^(UnityMain|UnityGfxDeviceW|UnityChoreograp|Thread-|AudioTrack|FMOD)/.test(name) || id === Process.id) parts.push(`${name || id} ${describe(id)}`);
             }
             log(`resume +${Math.round(since / 1000)} s: last frame ${gap} ms ago; ${parts.slice(0, 12).join("; ")}`);
           }
@@ -1585,7 +1586,8 @@ void onLeave (GumInvocationContext * ic) {
         } else if (adj === "0" && gap > 20000) {
           if (!hung) {
             hung = true;
-            const parts = Process.enumerateThreads().map((thread) => `${read(`/proc/self/task/${thread.id}/comm`) || thread.id} ${describe(thread.id)}`);
+            // listThreadIds, not Process.enumerateThreads: see report 116 above.
+            const parts = listThreadIds().map((id) => `${read(`/proc/self/task/${id}/comm`) || id} ${describe(id)}`);
             log(`hang watch: on screen, no frame for ${Math.round(gap / 1000)} s; restart armed; ${parts.join("; ")}`);
           }
           mark(false);
