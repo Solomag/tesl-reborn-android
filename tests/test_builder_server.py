@@ -304,3 +304,30 @@ class BuilderServerTest(unittest.TestCase):
         self.assertFalse(self.server.should_stop(self.server.last_activity + 299))
         self.assertTrue(self.server.should_stop(self.server.last_activity + 301))
         self.assertNotIn(self.server.token, "\n".join(self.logs))
+
+
+@unittest.skipUnless(shutil.which("openssl"), "openssl is needed to make a test certificate")
+class TlsServerTest(unittest.TestCase):
+    def test_a_silent_client_does_not_block_others(self):
+        import socket
+        import ssl
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "catalog.json").write_text(json.dumps(dict(packs=[])))
+            cert, key = root / "cert.pem", root / "key.pem"
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                            "-subj", "/CN=localhost", "-keyout", str(key), "-out", str(cert)],
+                           check=True, capture_output=True)
+            server = ResourceServer(root, host="127.0.0.1", log=lambda *_: None, cert=cert, key=key).start()
+            try:
+                silent = socket.create_connection(("127.0.0.1", server.port))
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                connection = http.client.HTTPSConnection("127.0.0.1", server.port, timeout=5, context=context)
+                connection.request("GET", "/connect/wrong")
+                self.assertEqual(connection.getresponse().status, 401)
+                connection.close()
+                silent.close()
+            finally:
+                server.stop()

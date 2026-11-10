@@ -21,6 +21,7 @@ from .resources import LANGUAGES, NAMES, TEXT_LANGUAGES, TEXT_NAMES, find_assets
 
 ALL_NAMES = {**NAMES, **TEXT_NAMES}
 from .server import ResourceServer
+from .discovery import find_games as steam_games
 
 
 def configure_ui_font(window):
@@ -123,54 +124,6 @@ def configure_dark_theme(window):
     style.configure("TLabelframe", background=bg, bordercolor="#414c5d")
     style.configure("TLabelframe.Label", background=bg, foreground=text)
     style.configure("TScrollbar", background=panel, troughcolor=bg, arrowcolor=text)
-
-
-def steam_games():
-    libraries = []
-    if sys.platform == "win32":
-        import winreg
-
-        for hive, name, key in [
-            (winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
-            (
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\WOW6432Node\Valve\Steam",
-                "InstallPath",
-            ),
-        ]:
-            try:
-                with winreg.OpenKey(hive, name) as entry:
-                    libraries.append(Path(winreg.QueryValueEx(entry, key)[0]))
-            except OSError:
-                pass
-    for candidate in [
-        Path.home() / ".steam/steam",
-        Path("C:/Program Files (x86)/Steam"),
-    ]:
-        if candidate.is_dir():
-            libraries.append(candidate)
-    for library in list(libraries):
-        vdf = library / "steamapps/libraryfolders.vdf"
-        if vdf.is_file():
-            for value in re.findall(
-                r'"path"\s+"([^"]+)"', vdf.read_text(encoding="utf-8", errors="replace")
-            ):
-                libraries.append(Path(value.replace("\\\\", "\\")))
-    found = []
-    for library in libraries:
-        common = library / "steamapps/common"
-        if not common.is_dir():
-            continue
-        for directory in common.iterdir():
-            if "legend" not in directory.name.lower():
-                continue
-            try:
-                find_assets(directory)
-                if directory.resolve() not in found:
-                    found.append(directory.resolve())
-            except (ValueError, OSError):
-                pass
-    return found
 
 
 def local_ips():
@@ -727,14 +680,30 @@ class BuilderWindow:
             except OSError:
                 pass
 
+        # Listen on the chosen address only, not on every network of the PC.
+        # A public HTTPS address goes through a proxy on this PC (Tailscale
+        # Serve, a web server), which may connect from anywhere: all then.
+        host = "0.0.0.0" if public else (self.ip.get().strip() or "0.0.0.0")
+
         def start():
+            nonlocal host
             try:
+                try:
+                    probe = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET)
+                    try:
+                        probe.bind((host, 0))
+                    finally:
+                        probe.close()
+                except OSError:
+                    transfer_log(f"{host} is not an address of this PC; listening on all networks.")
+                    host = "0.0.0.0"
                 self.events.put(
                     (
                         "server",
                         (
                             ResourceServer(
                                 root,
+                                host=host,
                                 log=transfer_log,
                                 port=port,
                                 cert=cert,
@@ -889,9 +858,14 @@ class BuilderWindow:
                 elif kind == "update-installed":
                     self.log("Builder updated. Restarting…")
                     self.stop_server()
-                    selfupdate.restart(value)
-                    self.window.destroy()
-                    return
+                    try:
+                        selfupdate.restart(value)
+                    except OSError as error:
+                        self.installing = False
+                        messagebox.showerror("Builder", f"The new Builder is installed but could not start: {error}\nStart it yourself: {value}")
+                    else:
+                        self.window.destroy()
+                        return
                 elif kind == "server-error":
                     self.server_starting = False
                     self.start_button.state(["!disabled"])
@@ -899,6 +873,10 @@ class BuilderWindow:
                     messagebox.showerror("Transfer", value)
         except queue.Empty:
             pass
+        except Exception as error:
+            # One failing event must not stop the window from handling the
+            # rest: the log, the build result and the transfer state.
+            self.log(f"ERROR: {type(error).__name__}: {error}")
         if self.server and not self.server_starting and self.server.stopped.is_set():
             self.connection.set(self.tr("Transfer stopped."))
             self.stop_button.pack_forget()
@@ -913,6 +891,12 @@ class BuilderWindow:
         self.window.after(100, self.poll)
 
     def close(self):
+        if self.installing:
+            messagebox.showinfo(
+                "Builder",
+                "Wait for the Builder update to finish. Closing now could leave no Builder in its folder.",
+            )
+            return
         if self.running:
             messagebox.showinfo(
                 "Build",

@@ -795,7 +795,7 @@ def _build(
     scratch.mkdir(parents=True, exist_ok=True)
     if shutil.disk_usage(output).free < 2 * xapk.stat().st_size + 1024**3:
         raise ValueError("Not enough space for temporary input files and the result")
-    with tempfile.TemporaryDirectory(prefix="run-", dir=scratch) as temp:
+    with tempfile.TemporaryDirectory(prefix="run-", dir=scratch, ignore_cleanup_errors=True) as temp:
         work = Path(temp)
         meta, icon, versions = unpack_xapk(xapk, work / "inputs")
         # New builds never overwrite a previous successful output or active server catalog.
@@ -963,5 +963,10 @@ def _build(
                 encoding="utf-8",
             )
             raise
-    log("Output ready: " + str(result))
+    # Finished: a cancel pressed now must not delete the complete build, so
+    # this last line skips the cancel check of log().
+    _current_result = None
+    with (result / "build.log").open("a", encoding="utf-8") as stream:
+        stream.write("Output ready: " + str(result) + "\n")
+    emit("Output ready: " + str(result))
     return result

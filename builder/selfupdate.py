@@ -125,18 +125,26 @@ def install(offer, executable=None, fetch=_get, progress=None):
         raise ValueError("Downloaded Builder does not match its SHA-256")
     fresh = executable.with_name(executable.name + ".new")
     old = executable.with_name(executable.name + ".old")
-    fresh.write_bytes(data)
-    if sys.platform != "win32":
-        fresh.chmod(executable.stat().st_mode | 0o500)
     try:
-        old.unlink()
-    except OSError:
-        pass
-    os.replace(executable, old)
-    try:
-        os.replace(fresh, target)
-    except OSError:
-        os.replace(old, executable)
+        fresh.write_bytes(data)
+        if sys.platform != "win32":
+            fresh.chmod(executable.stat().st_mode | 0o500)
+        try:
+            old.unlink()
+        except OSError:
+            pass
+        os.replace(executable, old)
+        try:
+            os.replace(fresh, target)
+        except OSError:
+            os.replace(old, executable)
+            raise
+    except BaseException:
+        # Nothing half-installed is left next to the Builder.
+        try:
+            fresh.unlink()
+        except OSError:
+            pass
         raise
     return target
 
@@ -150,7 +158,17 @@ def restart_environment(environment=None, bundle=None):
     environment = dict(os.environ if environment is None else environment)
     bundle = getattr(sys, "_MEIPASS", None) if bundle is None else bundle
     if bundle:
-        environment = {k: v for k, v in environment.items() if str(bundle) not in v}
+        # Only the entries inside the old folder go: a PATH that also lists
+        # it keeps the user's other directories.
+        cleaned = {}
+        for key, value in environment.items():
+            if str(bundle) not in value:
+                cleaned[key] = value
+                continue
+            kept = [part for part in value.split(os.pathsep) if str(bundle) not in part]
+            if kept and any(kept):
+                cleaned[key] = os.pathsep.join(kept)
+        environment = cleaned
     environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     return environment
 

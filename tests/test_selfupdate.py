@@ -1,6 +1,8 @@
 import hashlib
 import importlib.util
 import json
+import os
+from unittest import mock
 from pathlib import Path
 import tempfile
 import unittest
@@ -137,3 +139,29 @@ class RestartEnvironmentTest(unittest.TestCase):
         self.assertNotIn("TCL_LIBRARY", env, "nothing may point into the old build's folder")
         self.assertNotIn("_MEIPASS2", env)
         self.assertEqual(env["PATH"], r"C:\Windows")
+
+    def test_a_path_that_lists_the_old_folder_keeps_the_rest(self):
+        old = r"C:\Users\x\AppData\Local\Temp\_MEI1234"
+        joined = os.pathsep.join([old, r"C:\Windows", old + r"\bin", r"C:\Tools"])
+        env = selfupdate.restart_environment({"PATH": joined}, old)
+        self.assertEqual(env["PATH"], os.pathsep.join([r"C:\Windows", r"C:\Tools"]))
+
+
+class FailedInstallTest(unittest.TestCase):
+    def test_a_failed_swap_leaves_no_new_copy(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            exe = Path(folder) / "TESL-Reborn-Builder.exe"
+            exe.write_bytes(b"old")
+            data = b"new build"
+            offer = dict(url="https://example.test/b", bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+            real = os.replace
+            def failing(source, target):
+                if str(source).endswith(".new"):
+                    raise OSError("locked")
+                return real(source, target)
+            with mock.patch.object(selfupdate.os, "replace", failing):
+                with self.assertRaises(OSError):
+                    selfupdate.install(offer, exe, fetch=lambda *a, **k: data)
+            self.assertEqual(exe.read_bytes(), b"old")
+            self.assertFalse(exe.with_name(exe.name + ".new").exists())

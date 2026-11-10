@@ -399,6 +399,11 @@ class ResourceServer:
             def setup(self):
                 super().setup()
                 self.connection.settimeout(120)
+                # TLS: the handshake runs here, in the request's own thread
+                # and under its timeout, not in accept(): a client that
+                # connects and stays silent would stop every other one.
+                if hasattr(self.connection, "do_handshake"):
+                    self.connection.do_handshake()
 
         self.http = ThreadingHTTPServer((host, port), Handler)
         self.http.daemon_threads = True
@@ -411,7 +416,7 @@ class ResourceServer:
             try:
                 context.load_cert_chain(certfile=cert, keyfile=key, password=lambda: "")
                 self.http.socket = context.wrap_socket(
-                    self.http.socket, server_side=True
+                    self.http.socket, server_side=True, do_handshake_on_connect=False
                 )
             except BaseException:
                 self.http.server_close()
@@ -484,9 +489,11 @@ document.getElementById('open').href='teslreborn://resources?url='+encodeURIComp
             ) or now - self.last_activity >= idle
 
     def stop(self):
-        if self.stopped.is_set():
-            return
-        self.stopped.set()
+        # The GUI and the idle watcher may both stop it.
+        with self.lock:
+            if self.stopped.is_set():
+                return
+            self.stopped.set()
         self.http.shutdown()
         self.http.server_close()
         self.log("Transfer stopped.")

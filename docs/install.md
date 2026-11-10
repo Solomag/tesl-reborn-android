@@ -6,7 +6,7 @@ game you already have; the project does not distribute game files.
 ## What you need
 
 - A Windows PC (Linux works from a source checkout, see [builder.md](builder.md)).
-- **The PC game**: *The Elder Scrolls: Legends* installed on that PC (Steam).
+- **The PC game**: *The Elder Scrolls: Legends* installed on that PC (Steam or the Bethesda.net launcher; the Builder finds both).
 - **The original Android XAPK**: `com.bethsoft.theelderscrollslegends`,
   version code 11009 (arm64).
 - A phone with **Android 10 or newer** (arm64), about 3 GB free.

@@ -5,7 +5,7 @@
                           [--languages en_us,ru_ru] [--default-language system]
                           [--output DIR]
 
-Without --game, the Steam libraries are searched as the window does. The
+Without --game, Steam and the Bethesda.net launcher are searched as the window does. The
 output is a build-... folder in DIR (default: output next to the Builder).
 """
 
@@ -18,11 +18,8 @@ from .resources import LANGUAGES, TEXT_LANGUAGES
 
 
 def find_game():
-    try:
-        from .gui import steam_games
-    except ImportError:  # No tkinter: the folder has to be given.
-        return None
-    found = steam_games()
+    from .discovery import find_games
+    found = find_games()
     return found[0] if len(found) == 1 else None
 
 
@@ -40,7 +37,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     game = args.game or find_game()
     if not game:
-        parser.error("--game is needed: the PC game was not found in exactly one Steam library")
+        parser.error("--game is needed: the PC game was not found in exactly one place (Steam, Bethesda.net launcher)")
     languages = [code for code in args.languages.split(",") if code] if args.format != "apk" else []
     unknown = [code for code in languages if code not in LANGUAGES and code not in TEXT_LANGUAGES]
     if unknown:
