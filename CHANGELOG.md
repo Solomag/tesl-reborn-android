@@ -5,7 +5,16 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 279 — Test
+## Patch 280 — Test
+
+- The **saved login** moved from the shared game folder to the game's
+  private storage, which other apps and USB cannot read. Moved by itself.
+- A new patch is kept only after the game has run for 15 seconds; one that
+  breaks the start goes back to the previous patch by itself.
+- Password managers: what they fill is handed over through private storage
+  too. *(new APK)*
+
+## Patch 279
 
 - The freeze watch no longer risks a long stall of its own after returning
   to the game (the same thread query that froze a Samsung for minutes).

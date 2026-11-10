@@ -162,10 +162,14 @@ final class SoftInputStyle {
       @Override public void afterTextChanged(android.text.Editable text) {
         if (text.length() == 0) return;
         try {
-          java.io.File file = new java.io.File(activity.getExternalFilesDir(null), "tesl-reborn-autofill-fill.json");
+          // Private storage: it may hold the password. The hook takes it
+          // within a third of a second and deletes it; if the game never
+          // reads it (closed, an old patch), it is deleted here.
+          java.io.File file = new java.io.File(activity.getFilesDir(), "tesl-reborn-autofill-fill.json");
           java.nio.file.Files.write(file.toPath(), new org.json.JSONObject().put("field", field)
               .put("value", text.toString()).put("at", System.currentTimeMillis()).toString()
               .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+          new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(file::delete, 10000);
         } catch (Exception ignored) {
           // The player types that field by hand.
         }

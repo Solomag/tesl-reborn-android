@@ -3566,6 +3566,18 @@ const verboseLogs = (() => {
   if (forced && typeof forced.enabled === "boolean") return forced.enabled;
   return String(read("tesl-reborn-updater.json")?.feedUrl ?? "/updates/test/").includes("/updates/test/");
 })();
+let privateDirCache = "";
+function privateDir() {
+  if (!privateDirCache) {
+    try {
+      const uid = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("getuid"), "uint", [])();
+      privateDirCache = `/data/user/${Math.floor(uid / 1e5)}/com.bethsoft.theelderscrollslegends/files`;
+    } catch (_) {
+      privateDirCache = "/data/data/com.bethsoft.theelderscrollslegends/files";
+    }
+  }
+  return privateDirCache;
+}
 let nativeRename = null;
 function atomicRename(from, to) {
   try {
@@ -4598,6 +4610,14 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
       return String(file.method("ReadAllText").invoke(Il2Cpp.string(path))?.content ?? "");
     } catch (e) {
       return "";
+    }
+  }
+  function deleteFile(path) {
+    try {
+      Il2Cpp.corlib.class("System.IO.File").method("Delete").invoke(Il2Cpp.string(path));
+      return true;
+    } catch (e) {
+      return false;
     }
   }
   function writeTextFile(path, text) {
@@ -6582,25 +6602,33 @@ void onLeave (GumInvocationContext * ic) {
   let autoLoginAt = 0;
   const autoLoginRecent = () => Date.now() - autoLoginAt < 6e4;
   function readSavedLogin() {
-    try {
-      const text = readTextFile(`${persistentPath()}/${LOGIN_FILE}`);
-      if (!text) return null;
-      const json = JSON.parse(text);
-      if (!json || !json.username) return null;
-      return { username: String(json.username), password: String(json.password ?? "") };
-    } catch (e) {
-      return null;
-    }
+    const parse = (text) => {
+      try {
+        const json = text ? JSON.parse(text) : null;
+        return json && json.username ? { username: String(json.username), password: String(json.password ?? "") } : null;
+      } catch (e) {
+        return null;
+      }
+    };
+    const saved = parse(readTextFile(`${privateDir()}/${LOGIN_FILE}`));
+    if (saved) return saved;
+    const legacy = `${persistentPath()}/${LOGIN_FILE}`, old = parse(readTextFile(legacy));
+    if (old && writeSavedLogin(old.username, old.password) && deleteFile(legacy)) log("login: saved login moved to private storage");
+    return old;
   }
   function writeSavedLogin(username, password) {
-    if (!username) return;
-    const path = `${persistentPath()}/${LOGIN_FILE}`;
+    if (!username) return false;
+    const path = `${privateDir()}/${LOGIN_FILE}`;
     if (!writeTextFile(path + ".part", JSON.stringify({ username, password }))) {
       log("login: credential write failed");
-      return;
+      return false;
     }
-    if (atomicRename(path + ".part", path)) log("login: saved username and credential state");
-    else log("login: could not commit saved credentials; previous file retained");
+    if (atomicRename(path + ".part", path)) {
+      log("login: saved username and credential state");
+      return true;
+    }
+    log("login: could not commit saved credentials; previous file retained");
+    return false;
   }
   function prefillLoginUsername(username) {
     if (!username) return;
@@ -6632,7 +6660,7 @@ void onLeave (GumInvocationContext * ic) {
     if (!method || method.virtualAddress.isNull()) throw Error("InputField.ActivateInputFieldInternal not found");
     const file = `${persistentPath()}/tesl-reborn-autofill.json`;
     let logged = false;
-    const fillFile = `${persistentPath()}/tesl-reborn-autofill-fill.json`;
+    const fillFiles = [`${privateDir()}/tesl-reborn-autofill-fill.json`, `${persistentPath()}/tesl-reborn-autofill-fill.json`];
     let watchUntil = 0;
     const watchCompanion = () => {
       const running = Date.now() < watchUntil;
@@ -6641,10 +6669,18 @@ void onLeave (GumInvocationContext * ic) {
       const tick = () => {
         if (Date.now() > watchUntil) return;
         try {
-          const text = readTextFile(fillFile);
-          const fill = text ? JSON.parse(text) : null;
+          let fill = null;
+          for (const fillFile of fillFiles) {
+            const text = readTextFile(fillFile);
+            if (!text || text === "{}") continue;
+            deleteFile(fillFile);
+            try {
+              fill = JSON.parse(text);
+            } catch (_) {
+            }
+            if (fill) break;
+          }
           if (fill && fill.value && Math.abs(Date.now() - Number(fill.at)) < 6e4) {
-            writeTextFile(fillFile, "{}");
             const forms = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(cls(img, "LoginWin").type.object);
             for (let i = 0; i < forms.length; i++) {
               const form = forms.get(i);
@@ -12513,7 +12549,33 @@ ${stack}`);
     log("Android feature hooks are active; server data and UI results are checked separately");
     const updater = globalThis.TeslRebornUpdater;
     if (updater) {
-      updater.ready();
+      let healthySince = 0;
+      const watchStarted = Date.now();
+      const healthWatch = setInterval(() => {
+        const lastFrame = Number(globalThis.__teslLastFrameAt || 0), now = Date.now();
+        if (!lastFrame && now - watchStarted > 6e4) {
+          clearInterval(healthWatch);
+          log("updater: no frame reports; patch accepted without the frame check");
+          try {
+            updater.ready();
+          } catch (error) {
+            log(`updater: ready failed: ${error}`);
+          }
+          return;
+        }
+        if (!lastFrame || now - lastFrame > 3e3) {
+          healthySince = 0;
+          return;
+        }
+        if (!healthySince) healthySince = now;
+        if (now - healthySince < 15e3) return;
+        clearInterval(healthWatch);
+        try {
+          updater.ready();
+        } catch (error) {
+          log(`updater: ready failed: ${error}`);
+        }
+      }, 1e3);
       try {
         installUpdateNotices(updater);
       } catch (error) {

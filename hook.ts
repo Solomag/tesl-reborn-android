@@ -53,6 +53,19 @@ const verboseLogs = (() => {
   if (forced && typeof forced.enabled === "boolean") return forced.enabled;
   return String(read("tesl-reborn-updater.json")?.feedUrl ?? "/updates/test/").includes("/updates/test/");
 })();
+// The app's private directory (/data/user/<user>/<package>/files), which
+// adb, backups and other apps cannot read, unlike persistentPath() on
+// /sdcard. Secrets (the saved login) live here.
+let privateDirCache = "";
+function privateDir(): string {
+  if (!privateDirCache) {
+    try {
+      const uid = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("getuid"), "uint", [])() as number;
+      privateDirCache = `/data/user/${Math.floor(uid / 100000)}/com.bethsoft.theelderscrollslegends/files`;
+    } catch (_) { privateDirCache = "/data/data/com.bethsoft.theelderscrollslegends/files"; }
+  }
+  return privateDirCache;
+}
 let nativeRename = null;
 function atomicRename(from: string, to: string): boolean {
   try {
@@ -1044,6 +1057,13 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
       if (!Boolean((file.method("Exists") as any).invoke(Il2Cpp.string(path)))) return "";
       return String((file.method("ReadAllText") as any).invoke(Il2Cpp.string(path))?.content ?? "");
     } catch (e) { return ""; }
+  }
+
+  function deleteFile(path: string): boolean {
+    try {
+      (Il2Cpp.corlib.class("System.IO.File").method("Delete") as any).invoke(Il2Cpp.string(path));
+      return true;
+    } catch (e) { return false; }
   }
 
   function writeTextFile(path: string, text: string): boolean {
@@ -2978,23 +2998,30 @@ void onLeave (GumInvocationContext * ic) {
   const autoLoginRecent = () => Date.now() - autoLoginAt < 60000;
 
   function readSavedLogin(): { username: string; password: string } | null {
-    try {
-      const text = readTextFile(`${persistentPath()}/${LOGIN_FILE}`);
-      if (!text) return null;
-      const json = JSON.parse(text);
-      if (!json || !json.username) return null;
-      return { username: String(json.username), password: String(json.password ?? "") };
-    } catch (e) { return null; }
+    const parse = (text: string) => {
+      try {
+        const json = text ? JSON.parse(text) : null;
+        return json && json.username ? { username: String(json.username), password: String(json.password ?? "") } : null;
+      } catch (e) { return null; }
+    };
+    const saved = parse(readTextFile(`${privateDir()}/${LOGIN_FILE}`));
+    if (saved) return saved;
+    // Patches before 280 kept it on /sdcard, readable over USB: moved once,
+    // and the old file is removed only after the new one is written.
+    const legacy = `${persistentPath()}/${LOGIN_FILE}`, old = parse(readTextFile(legacy));
+    if (old && writeSavedLogin(old.username, old.password) && deleteFile(legacy)) log("login: saved login moved to private storage");
+    return old;
   }
 
-  function writeSavedLogin(username: string, password: string) {
-    if (!username) return;
-    const path = `${persistentPath()}/${LOGIN_FILE}`;
+  function writeSavedLogin(username: string, password: string): boolean {
+    if (!username) return false;
+    const path = `${privateDir()}/${LOGIN_FILE}`;
     if (!writeTextFile(path + ".part", JSON.stringify({ username, password }))) {
-      log("login: credential write failed"); return;
+      log("login: credential write failed"); return false;
     }
-    if (atomicRename(path + ".part", path)) log("login: saved username and credential state");
-    else log("login: could not commit saved credentials; previous file retained");
+    if (atomicRename(path + ".part", path)) { log("login: saved username and credential state"); return true; }
+    log("login: could not commit saved credentials; previous file retained");
+    return false;
   }
 
   // The form can appear later than the login callback (after Log Out it
@@ -3036,7 +3063,8 @@ void onLeave (GumInvocationContext * ic) {
     // hidden box of the other kind so a password manager fills both. What it
     // filled there (tesl-reborn-autofill-fill.json) goes into the other field
     // of the login form, and the file is cleared at once.
-    const fillFile = `${persistentPath()}/tesl-reborn-autofill-fill.json`;
+    // New APKs write it to private storage; older ones next to the game data.
+    const fillFiles = [`${privateDir()}/tesl-reborn-autofill-fill.json`, `${persistentPath()}/tesl-reborn-autofill-fill.json`];
     let watchUntil = 0;
     const watchCompanion = () => {
       const running = Date.now() < watchUntil;
@@ -3045,10 +3073,15 @@ void onLeave (GumInvocationContext * ic) {
       const tick = () => {
         if (Date.now() > watchUntil) return;
         try {
-          const text = readTextFile(fillFile);
-          const fill = text ? JSON.parse(text) : null;
+          let fill = null;
+          for (const fillFile of fillFiles) {
+            const text = readTextFile(fillFile);
+            if (!text || text === "{}") continue;
+            deleteFile(fillFile);
+            try { fill = JSON.parse(text); } catch (_) {}
+            if (fill) break;
+          }
           if (fill && fill.value && Math.abs(Date.now() - Number(fill.at)) < 60000) {
-            writeTextFile(fillFile, "{}");
             const forms = ucls("UnityEngine.Resources").method("FindObjectsOfTypeAll").overload("System.Type").invoke(cls(img, "LoginWin").type.object);
             for (let i = 0; i < forms.length; i++) {
               const form = forms.get(i);
@@ -7996,7 +8029,29 @@ const chatWindows = new Map();
     log("Android feature hooks are active; server data and UI results are checked separately");
     const updater = globalThis.TeslRebornUpdater;
     if (updater) {
-      updater.ready();
+      // A new patch is kept only after the game has drawn frames for 15 s
+      // without a gap: one that sets up but then stops the game (login, the
+      // first scene) never reaches ready(), and the loader goes back to the
+      // previous one after three such starts. A pause (the phone locked)
+      // starts the count again.
+      // Without any frame report at all after a minute the frame hook itself
+      // is what failed, not the game: the patch is accepted then.
+      let healthySince = 0;
+      const watchStarted = Date.now();
+      const healthWatch = setInterval(() => {
+        const lastFrame = Number(globalThis.__teslLastFrameAt || 0), now = Date.now();
+        if (!lastFrame && now - watchStarted > 60000) {
+          clearInterval(healthWatch);
+          log("updater: no frame reports; patch accepted without the frame check");
+          try { updater.ready(); } catch (error) { log(`updater: ready failed: ${error}`); }
+          return;
+        }
+        if (!lastFrame || now - lastFrame > 3000) { healthySince = 0; return; }
+        if (!healthySince) healthySince = now;
+        if (now - healthySince < 15000) return;
+        clearInterval(healthWatch);
+        try { updater.ready(); } catch (error) { log(`updater: ready failed: ${error}`); }
+      }, 1000);
       try { installUpdateNotices(updater); }
       catch (error) {
         log(`update notices unavailable: ${error}`);

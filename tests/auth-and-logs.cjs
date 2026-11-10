@@ -37,11 +37,20 @@ for(const wrapped of [false,true]) {
 }
 console.log('PASS: escaped/truncated log secrets, explicit auth outcomes, username retention and raw/managed callback invocation');
 // Credential commits must replace the file only after a complete successful write.
-const disk=new Map([['/files/tesl-login.json','previous']]);let fail=false;
-const store={persistentPath:()=>'/files',log:()=>{},atomicRename:(a,b)=>{if(fail)return false;disk.set(b,disk.get(a));disk.delete(a);return true;},writeTextFile:(p,s)=>{disk.set(p,s);return true;}};
-vm.createContext(store);vm.runInContext('const LOGIN_FILE="tesl-login.json";\n'+extract('  function writeSavedLogin(', '  function prefillLoginUsername('),store);
-fail=true;store.writeSavedLogin('Alice','new');assert.equal(disk.get('/files/tesl-login.json'),'previous');
-fail=false;store.writeSavedLogin('Alice','');assert.deepEqual(JSON.parse(disk.get('/files/tesl-login.json')),{username:'Alice',password:''});
+const disk=new Map([['/private/tesl-login.json','previous']]);let fail=false;
+const store={persistentPath:()=>'/sdcard',privateDir:()=>'/private',log:()=>{},atomicRename:(a,b)=>{if(fail)return false;disk.set(b,disk.get(a));disk.delete(a);return true;},writeTextFile:(p,s)=>{disk.set(p,s);return true;},
+ readTextFile:p=>disk.get(p)||'',deleteFile:p=>disk.delete(p)};
+vm.createContext(store);vm.runInContext('const LOGIN_FILE="tesl-login.json";\n'+extract('  function readSavedLogin(', '  function prefillLoginUsername('),store);
+fail=true;store.writeSavedLogin('Alice','new');assert.equal(disk.get('/private/tesl-login.json'),'previous');
+fail=false;store.writeSavedLogin('Alice','');assert.deepEqual(JSON.parse(disk.get('/private/tesl-login.json')),{username:'Alice',password:''});
+// A login saved on /sdcard by an older patch moves to private storage once.
+disk.clear();disk.set('/sdcard/tesl-login.json',JSON.stringify({username:'Bob',password:'pw'}));
+assert.deepEqual(JSON.parse(JSON.stringify(store.readSavedLogin())),{username:'Bob',password:'pw'});
+assert(!disk.has('/sdcard/tesl-login.json'),'old /sdcard copy removed');
+assert.deepEqual(JSON.parse(disk.get('/private/tesl-login.json')),{username:'Bob',password:'pw'});
+// If the private copy cannot be written, the old one is kept.
+disk.clear();disk.set('/sdcard/tesl-login.json',JSON.stringify({username:'Bob',password:'pw'}));fail=true;
+assert.equal(store.readSavedLogin().username,'Bob');assert(disk.has('/sdcard/tesl-login.json'));fail=false;
 const delegate={Il2Cpp:{String:function(p){this.handle=p},Object:function(p){this.handle=p}}};vm.createContext(delegate);
 vm.runInContext(extract('function invokeDelegateInt(', '\nfunction nested(')+extract('function invokeDelegatePtr(', '\nIl2Cpp.perform('),delegate);
 let args=[];let boxedValue;
