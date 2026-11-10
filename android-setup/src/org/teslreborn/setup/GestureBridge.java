@@ -103,7 +103,14 @@ public final class GestureBridge {
   }
 
   /** Temporary diagnostic overlay. Drawable overlays never receive/consume touch. */
+  private static boolean apkLevelChecked;
+
   public static void onResume(Activity activity) {
+    if (!apkLevelChecked) {
+      apkLevelChecked = true;
+      android.content.Context context = activity.getApplicationContext();
+      new Thread(() -> ApkLevel.refresh(context), "tesl-apk-level").start();
+    }
     if (leftWhileLoading) {
       leftWhileLoading = false;
       if (restart(activity)) return;

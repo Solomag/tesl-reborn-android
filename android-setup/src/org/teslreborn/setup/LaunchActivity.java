@@ -91,8 +91,15 @@ public final class LaunchActivity extends Activity {
 
   private void record(String status) {
     if(external == null)return;
-    try {PackInstaller.writeJson(new File(external,"tesl-reborn-prelaunch-status.json"),
-      new JSONObject().put("status",status).put("checkedAt",System.currentTimeMillis()));}catch(Exception ignored){}
+    File file = new File(external,"tesl-reborn-prelaunch-status.json");
+    // "skipped" and "running" asked no feed: they keep the time of the last
+    // real check, or tapping the icon every few minutes would postpone the
+    // next check (here and in the game) for ever.
+    long checkedAt = System.currentTimeMillis();
+    if (status.equals("skipped") || status.equals("running")) {
+      try { checkedAt = PackInstaller.json(file).optLong("checkedAt", 0); } catch (Exception none) { checkedAt = 0; }
+    }
+    try {PackInstaller.writeJson(file, new JSONObject().put("status",status).put("checkedAt",checkedAt));}catch(Exception ignored){}
   }
 
   private void screen(String message) {

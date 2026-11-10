@@ -1068,10 +1068,18 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     } catch (e) { return false; }
   }
 
+  // Written beside and renamed over: the setup code (Java) reads several of
+  // these files while the game writes them, and a half-written one read as
+  // broken JSON silently switched its logic off. A ".part" path is the
+  // caller's own staging file and is written directly.
   function writeTextFile(path: string, text: string): boolean {
+    const write = (target: string) => (Il2Cpp.corlib.class("System.IO.File").method("WriteAllText") as any)
+      .invoke(Il2Cpp.string(target), Il2Cpp.string(text));
     try {
-      (Il2Cpp.corlib.class("System.IO.File").method("WriteAllText") as any)
-        .invoke(Il2Cpp.string(path), Il2Cpp.string(text));
+      if (path.endsWith(".part")) { write(path); return true; }
+      write(path + ".tmp");
+      if (atomicRename(path + ".tmp", path)) return true;
+      write(path);
       return true;
     } catch (e) { return false; }
   }
@@ -1601,7 +1609,9 @@ void onLeave (GumInvocationContext * ic) {
         const gap = Date.now() - lastFrame;
         if (lastFrame !== framesWritten && gap < 3000) {
           framesWritten = lastFrame;
-          (File as any).writeAllText(framesFile, JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
+          // Read by the setup code on return: renamed over, never half-written.
+          (File as any).writeAllText(framesFile + ".tmp", JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
+          if (!atomicRename(framesFile + ".tmp", framesFile)) (File as any).writeAllText(framesFile, JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
         }
         if (hung && gap < 5000) {
           hung = false; log("hang watch: frames are back"); mark(true);

@@ -5,7 +5,19 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 281 — Test
+## Patch 282 — Test
+
+- Files the game shares with the setup screens are never read half-written
+  (could switch off the restart after leaving the game while loading).
+- After installing a new APK, the "new APK needed" notice goes away even
+  when the game is opened from recent apps. *(new APK)*
+- The update check is no longer postponed by tapping the icon often. *(new APK)*
+- A text box used for the password no longer shows dots in the chat
+  afterwards. *(new APK)*
+- **Builder:** finds games installed with the Bethesda.net launcher; the
+  transfer listens only on the chosen address.
+
+## Patch 281
 
 - The **saved login** moved from the shared game folder to the game's
   private storage, which other apps and USB cannot read. Moved by itself.

@@ -4617,8 +4617,15 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     }
   }
   function writeTextFile(path, text) {
+    const write = (target) => Il2Cpp.corlib.class("System.IO.File").method("WriteAllText").invoke(Il2Cpp.string(target), Il2Cpp.string(text));
     try {
-      Il2Cpp.corlib.class("System.IO.File").method("WriteAllText").invoke(Il2Cpp.string(path), Il2Cpp.string(text));
+      if (path.endsWith(".part")) {
+        write(path);
+        return true;
+      }
+      write(path + ".tmp");
+      if (atomicRename(path + ".tmp", path)) return true;
+      write(path);
       return true;
     } catch (e) {
       return false;
@@ -5151,7 +5158,8 @@ void onLeave (GumInvocationContext * ic) {
         const gap = Date.now() - lastFrame;
         if (lastFrame !== framesWritten && gap < 3e3) {
           framesWritten = lastFrame;
-          File.writeAllText(framesFile, JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
+          File.writeAllText(framesFile + ".tmp", JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
+          if (!atomicRename(framesFile + ".tmp", framesFile)) File.writeAllText(framesFile, JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
         }
         if (hung && gap < 5e3) {
           hung = false;

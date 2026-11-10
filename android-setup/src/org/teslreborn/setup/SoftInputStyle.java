@@ -102,8 +102,18 @@ final class SoftInputStyle {
     }
     // Once per keyboard opening: the dialog may be reused for another field.
     if (Long.valueOf(at).equals(MARKED.put(edit, at))) return;
+    // The type Unity gave the box, kept the first time it is changed: the
+    // same dialog may next serve the chat, which must not show dots.
+    if (!INPUT_TYPE.containsKey(edit)) INPUT_TYPE.put(edit, edit.getInputType());
+    int unityType = (Integer) INPUT_TYPE.get(edit);
     if (hint == null) {
       edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+      if (edit.getInputType() != unityType) edit.setInputType(unityType);
+      edit.setAutofillHints((String[]) null);
+      if (edit.getParent() instanceof ViewGroup) {
+        View old = ((ViewGroup) edit.getParent()).findViewWithTag(COMPANION);
+        if (old != null) ((ViewGroup) edit.getParent()).removeView(old);
+      }
       return;
     }
     edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES);
@@ -111,6 +121,8 @@ final class SoftInputStyle {
     // managers that match on the input type.
     if (View.AUTOFILL_HINT_PASSWORD.equals(hint))
       edit.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+    else if (edit.getInputType() != unityType)
+      edit.setInputType(unityType);
     edit.setAutofillHints(hint);
     android.util.Log.i("tesl-setup", "autofill: visible box marked " + hint);
     companion(activity, edit, View.AUTOFILL_HINT_PASSWORD.equals(hint));
@@ -193,6 +205,7 @@ final class SoftInputStyle {
   }
 
   private static final java.util.Map<View, Object> MARKED = new java.util.WeakHashMap<>();
+  private static final java.util.Map<View, Object> INPUT_TYPE = new java.util.WeakHashMap<>();
 
   // View.setTag(int, Object) takes only an id of the app itself: a framework
   // id threw IllegalArgumentException on every touch, so nothing here ran.
