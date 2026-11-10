@@ -874,10 +874,12 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     });
     // The game removes the cached versions that are not in its version info.
     let cleared = 0;
-    hookAttach(caching.method("ClearCachedVersion", 2).virtualAddress, {
-      onEnter() { if (cleared++ < 5) log("Caching.ClearCachedVersion -> ignored"); },
-      onLeave(ret) { ret.replace(ptr(1)); },
-    });
+    // Replaced, not attached: an attached hook only changed the result while
+    // Unity still removed the bundle. (No 2026 log shows the game calling it.)
+    caching.method("ClearCachedVersion", 2).implementation = function () {
+      if (cleared++ < 5) log("Caching.ClearCachedVersion -> ignored");
+      return true;
+    };
   });
 
   // =======================================================================

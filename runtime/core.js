@@ -4433,14 +4433,10 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
       }
     });
     let cleared = 0;
-    hookAttach(caching.method("ClearCachedVersion", 2).virtualAddress, {
-      onEnter() {
-        if (cleared++ < 5) log("Caching.ClearCachedVersion -> ignored");
-      },
-      onLeave(ret) {
-        ret.replace(ptr(1));
-      }
-    });
+    caching.method("ClearCachedVersion", 2).implementation = function() {
+      if (cleared++ < 5) log("Caching.ClearCachedVersion -> ignored");
+      return true;
+    };
   });
   const NEWS_URL = "https://tesl-reborn.com/news.json";
   const ENDPOINT_INVENTORY = 6;
