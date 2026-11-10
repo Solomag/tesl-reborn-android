@@ -149,6 +149,9 @@ def install(offer, executable=None, fetch=_get, progress=None):
     return target
 
 
+LIST_VARIABLES = {"PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PYTHONPATH", "XDG_DATA_DIRS"}
+
+
 def restart_environment(environment=None, bundle=None):
     """A one-file Builder passes its unpacked folder to child processes. The
     restarted Builder then ran its new code on the old build's data (it still
@@ -158,15 +161,19 @@ def restart_environment(environment=None, bundle=None):
     environment = dict(os.environ if environment is None else environment)
     bundle = getattr(sys, "_MEIPASS", None) if bundle is None else bundle
     if bundle:
-        # Only the entries inside the old folder go: a PATH that also lists
-        # it keeps the user's other directories.
+        # A list of folders (PATH and the like) loses only the entries inside
+        # the old folder and keeps the user's others; any other variable that
+        # points into it goes. Only list variables are split: ":" separates
+        # them on Linux but is also part of other values.
         cleaned = {}
         for key, value in environment.items():
             if str(bundle) not in value:
                 cleaned[key] = value
                 continue
-            kept = [part for part in value.split(os.pathsep) if str(bundle) not in part]
-            if kept and any(kept):
+            if key.upper() not in LIST_VARIABLES:
+                continue
+            kept = [part for part in value.split(os.pathsep) if part and str(bundle) not in part]
+            if kept:
                 cleaned[key] = os.pathsep.join(kept)
         environment = cleaned
     environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"

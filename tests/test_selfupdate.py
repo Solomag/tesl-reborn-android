@@ -141,10 +141,15 @@ class RestartEnvironmentTest(unittest.TestCase):
         self.assertEqual(env["PATH"], r"C:\Windows")
 
     def test_a_path_that_lists_the_old_folder_keeps_the_rest(self):
-        old = r"C:\Users\x\AppData\Local\Temp\_MEI1234"
-        joined = os.pathsep.join([old, r"C:\Windows", old + r"\bin", r"C:\Tools"])
-        env = selfupdate.restart_environment({"PATH": joined}, old)
-        self.assertEqual(env["PATH"], os.pathsep.join([r"C:\Windows", r"C:\Tools"]))
+        # Folders as this system writes them: ":" separates PATH on Linux.
+        if os.pathsep == ";":
+            old, others = r"C:\Users\x\AppData\Local\Temp\_MEI1234", [r"C:\Windows", r"C:\Tools"]
+        else:
+            old, others = "/tmp/_MEI1234", ["/usr/bin", "/opt/tools"]
+        joined = os.pathsep.join([old, others[0], old + "/bin", others[1]])
+        env = selfupdate.restart_environment({"PATH": joined, "TCL_LIBRARY": old + "/tcl"}, old)
+        self.assertEqual(env["PATH"], os.pathsep.join(others))
+        self.assertNotIn("TCL_LIBRARY", env)
 
 
 class FailedInstallTest(unittest.TestCase):
