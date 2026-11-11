@@ -121,8 +121,14 @@ jobs:
           restore-keys: tools-${{ runner.os }}-
       - name: Install desktop dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-tk tk8.6 xvfb xauth libgl1
+          # Ubuntu's mirrors fail now and then (exit 100): a broken extra
+          # source must not stop the update, and the install is retried.
+          for attempt in 1 2 3; do
+            sudo apt-get update -o Acquire::Retries=3 || echo "apt-get update reported errors"
+            if sudo apt-get install -y -o Acquire::Retries=3 --fix-missing python3-tk tk8.6 xvfb xauth libgl1; then break; fi
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            sleep 20
+          done
           python -m pip install -r builder/requirements.txt
           npm ci
       - name: Select update channel

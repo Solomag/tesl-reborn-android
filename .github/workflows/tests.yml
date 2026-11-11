@@ -67,8 +67,14 @@ jobs:
           restore-keys: tools-${{ runner.os }}-
       - name: Install Tk
         run: |
-          sudo apt-get update
-          sudo apt-get install -y tk-dev
+          # Ubuntu's mirrors fail now and then (exit 100): a broken extra
+          # source must not stop the update, and the install is retried.
+          for attempt in 1 2 3; do
+            sudo apt-get update -o Acquire::Retries=3 || echo "apt-get update reported errors"
+            if sudo apt-get install -y -o Acquire::Retries=3 --fix-missing tk-dev; then break; fi
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            sleep 20
+          done
       - name: Install dependencies
         run: |
           npm ci
