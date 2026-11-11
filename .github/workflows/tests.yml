@@ -67,11 +67,15 @@ jobs:
           restore-keys: tools-${{ runner.os }}-
       - name: Install Tk
         run: |
-          # Ubuntu's mirrors fail now and then (exit 100): a broken extra
-          # source must not stop the update, and the install is retried.
+          # Ubuntu's mirrors fail now and then (exit 100). On 11.11.2026 the
+          # runners could not resolve azure.archive.ubuntu.com for hours, so
+          # apt uses archive.ubuntu.com itself.
           for attempt in 1 2 3; do
-            sudo apt-get update -o Acquire::Retries=3 || echo "apt-get update reported errors"
-            if sudo apt-get install -y -o Acquire::Retries=3 --fix-missing tk-dev; then break; fi
+            if [ "$attempt" = 1 ]; then
+              sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g; s|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g'                 /etc/apt/sources.list $(ls /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null) || true
+            fi
+            sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=20 || echo "apt-get update reported errors"
+            if sudo apt-get install -y -o Acquire::Retries=2 -o Acquire::http::Timeout=20 --fix-missing tk-dev; then break; fi
             if [ "$attempt" = 3 ]; then exit 1; fi
             sleep 20
           done
