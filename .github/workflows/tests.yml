@@ -71,12 +71,15 @@ jobs:
           # runners could not resolve azure.archive.ubuntu.com for hours, so
           # apt uses archive.ubuntu.com itself.
           for attempt in 1 2 3; do
+            # Each try is time-limited: a mirror that cannot be resolved
+            # otherwise holds the job for many minutes.
             if [ "$attempt" = 1 ]; then
               sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g; s|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g'                 /etc/apt/sources.list $(ls /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null) || true
             fi
-            sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=20 || echo "apt-get update reported errors"
-            if sudo apt-get install -y -o Acquire::Retries=2 -o Acquire::http::Timeout=20 --fix-missing tk-dev; then break; fi
-            if [ "$attempt" = 3 ]; then exit 1; fi
+            sudo timeout 180 apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=20 || echo "apt-get update reported errors"
+            if sudo timeout 300 apt-get install -y -o Acquire::Retries=2 -o Acquire::http::Timeout=20 --fix-missing tk-dev; then break; fi
+            # Without Tk only the Builder window tests are skipped.
+            if [ "$attempt" = 3 ]; then echo "::warning::Tk not installed; Builder GUI tests will be skipped"; break; fi
             sleep 20
           done
       - name: Install dependencies

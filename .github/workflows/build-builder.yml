@@ -125,11 +125,13 @@ jobs:
           # runners could not resolve azure.archive.ubuntu.com for hours, so
           # apt uses archive.ubuntu.com itself.
           for attempt in 1 2 3; do
+            # Each try is time-limited: a mirror that cannot be resolved
+            # otherwise holds the job for many minutes.
             if [ "$attempt" = 1 ]; then
               sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g; s|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g'                 /etc/apt/sources.list $(ls /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null) || true
             fi
-            sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=20 || echo "apt-get update reported errors"
-            if sudo apt-get install -y -o Acquire::Retries=2 -o Acquire::http::Timeout=20 --fix-missing python3-tk tk8.6 xvfb xauth libgl1; then break; fi
+            sudo timeout 180 apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=20 || echo "apt-get update reported errors"
+            if sudo timeout 300 apt-get install -y -o Acquire::Retries=2 -o Acquire::http::Timeout=20 --fix-missing python3-tk tk8.6 xvfb xauth libgl1; then break; fi
             if [ "$attempt" = 3 ]; then exit 1; fi
             sleep 20
           done
@@ -170,7 +172,9 @@ jobs:
   # build jobs run npm ci, pip and the tool downloads with a read-only one.
   publish:
     needs: [windows, linux]
-    if: github.repository == 'ssorgatem/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
+    # The Windows Builder is published even when the Linux job failed (its
+    # Ubuntu packages could not be installed), and the other way round.
+    if: always() && (needs.windows.result == 'success' || needs.linux.result == 'success') && github.repository == 'ssorgatem/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -187,10 +191,14 @@ jobs:
       - name: Select update channel
         run: python tools/select_channel.py
       - uses: actions/download-artifact@v4
+        # Missing when that build failed; the other is still published.
+        continue-on-error: true
         with:
           name: publish-windows
           path: publish/windows
       - uses: actions/download-artifact@v4
+        # Missing when that build failed; the other is still published.
+        continue-on-error: true
         with:
           name: publish-linux
           path: publish/linux
@@ -199,5 +207,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python tools/publish_builder.py --platform windows --dist publish/windows
-          python tools/publish_builder.py --platform linux --dist publish/linux
+          if [ -f publish/windows/TESL-Reborn-Builder.exe ]; then python tools/publish_builder.py --platform windows --dist publish/windows; fi
+          if [ -f publish/linux/TESL-Reborn-Builder ]; then python tools/publish_builder.py --platform linux --dist publish/linux; fi

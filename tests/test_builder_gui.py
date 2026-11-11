@@ -6,7 +6,11 @@ from types import SimpleNamespace
 import threading
 import unittest
 from unittest.mock import patch
-from builder import gui
+
+try:
+    from builder import gui
+except ImportError as error:  # No Tk libraries on this machine (CI without apt).
+    raise unittest.SkipTest(f"tkinter unavailable: {error}")
 
 
 class Variable:
