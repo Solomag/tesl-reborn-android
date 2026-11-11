@@ -12,6 +12,7 @@ import threading
 import xml.etree.ElementTree as ET
 import zipfile
 
+from . import resources as _resources
 from .resources import (
     PACKAGE,
     OBB,
@@ -749,6 +750,7 @@ def build(*args, **kwargs):
     global _current_result
     _cancel.clear()
     _current_result = None
+    _resources.checkpoint = check_cancelled
     try:
         return _build(*args, **kwargs)
     except BuildCancelled:
@@ -757,6 +759,7 @@ def build(*args, **kwargs):
         raise
     finally:
         _current_result = None
+        _resources.checkpoint = lambda: None
 
 
 def _build(

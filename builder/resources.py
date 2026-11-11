@@ -40,9 +40,27 @@ PACKAGE = "com.bethsoft.theelderscrollslegends"
 OBB = f"main.11009.{PACKAGE}.obb"
 
 
+def checkpoint():
+    """Called between chunks of long copies and hashes; a build replaces it
+    with its cancel check, so Cancel does not wait for a 4 GB OBB."""
+
+
+def copy_stream(source, target, size=4 * 1024 * 1024):
+    while True:
+        chunk = source.read(size)
+        if not chunk:
+            return
+        target.write(chunk)
+        checkpoint()
+
+
 def sha256(path):
+    digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        while chunk := stream.read(4 * 1024 * 1024):
+            digest.update(chunk)
+            checkpoint()
+    return digest.hexdigest()
 
 
 def safe_relative(value):
@@ -138,9 +156,7 @@ def unpack_xapk(source, work):
             (obb_name, work / OBB),
         ]:
             with archive.open(entry) as src, output.open("wb") as dst:
-                import shutil
-
-                shutil.copyfileobj(src, dst, 1024 * 1024)
+                copy_stream(src, dst)
         icon = archive.read("icon.png")
     with zipfile.ZipFile(work / "base.apk") as base:
         base.getinfo("lib/arm64-v8a/libmain.so")

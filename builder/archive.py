@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import zipfile
 
+from . import resources as _resources
+
 
 def write_data_archive(resources, output, log=print):
     resources, output = Path(resources), Path(output)
@@ -22,20 +24,26 @@ def write_data_archive(resources, output, log=print):
         ) as archive:
             for name, source in items:
                 log("Compressing " + name)
-                archive.write(
-                    source,
-                    name,
-                    compress_type=(
-                        zipfile.ZIP_STORED
-                        if name.startswith("packs/")
-                        else zipfile.ZIP_DEFLATED
-                    ),
+                info = zipfile.ZipInfo.from_file(source, name)
+                info.compress_type = (
+                    zipfile.ZIP_STORED if name.startswith("packs/") else zipfile.ZIP_DEFLATED
                 )
+                # Streamed in chunks (not archive.write) so a cancel stops
+                # the multi-gigabyte OBB between them. ZIP64 headers only where
+                # archive.write would have used them, so the phone reads the
+                # same layout.
+                with Path(source).open("rb") as src, archive.open(info, "w", force_zip64=info.file_size * 1.05 > zipfile.ZIP64_LIMIT) as dst:
+                    _resources.copy_stream(src, dst)
         log("Checking data ZIP integrity…")
         with zipfile.ZipFile(partial) as archive:
-            bad = archive.testzip()
-            if bad:
-                raise ValueError("Data archive verification failed: " + bad)
+            for info in archive.infolist():
+                try:
+                    # Reading to the end checks the entry's CRC.
+                    with archive.open(info) as entry:
+                        while entry.read(4 * 1024 * 1024):
+                            _resources.checkpoint()
+                except zipfile.BadZipFile as error:
+                    raise ValueError("Data archive verification failed: " + info.filename) from error
         os.replace(partial, output)
     except BaseException:
         partial.unlink(missing_ok=True)
