@@ -55,24 +55,37 @@ final class SoftInputStyle {
 
   private static final java.util.Map<View, Object> WATCHED = new java.util.WeakHashMap<>();
 
+  // Every tap looks for the text dialog: the fields that can hold one are
+  // found by reflection once, not on each tap.
+  private static Class<?> dialogFieldsOf;
+  private static java.util.List<Field> dialogFields;
+
+  private static java.util.List<Field> dialogFields(Class<?> playerClass) {
+    if (playerClass == dialogFieldsOf) return dialogFields;
+    java.util.List<Field> found = new java.util.ArrayList<>();
+    for (Class<?> type = playerClass; type != null && type != Object.class; type = type.getSuperclass())
+      for (Field field : type.getDeclaredFields())
+        if (Dialog.class.isAssignableFrom(field.getType())) { field.setAccessible(true); found.add(field); }
+    dialogFields = found;
+    dialogFieldsOf = playerClass;
+    return found;
+  }
+
   private static void style(Activity activity) throws Exception {
     if (activity.isFinishing() || activity.isDestroyed()) return;
     Object player = field(activity, "mUnityPlayer");
     if (player == null) { android.util.Log.i("tesl-setup", "soft input: no mUnityPlayer in " + activity.getClass().getName()); return; }
-    for (Class<?> type = player.getClass(); type != null && type != Object.class; type = type.getSuperclass())
-      for (Field field : type.getDeclaredFields()) {
-        if (!Dialog.class.isAssignableFrom(field.getType())) continue;
-        field.setAccessible(true);
-        Dialog dialog = (Dialog) field.get(player);
-        if (dialog == null || !dialog.isShowing()) continue;
-        Window window = dialog.getWindow();
-        if (window == null) continue;
-        View root = window.getDecorView();
-        autofill(activity, root);
-        if (STYLED.put(root, Boolean.TRUE) != null) continue;
-        root.setBackgroundColor(UiStyle.BACKGROUND);
-        paint(activity, root);
-      }
+    for (Field field : dialogFields(player.getClass())) {
+      Dialog dialog = (Dialog) field.get(player);
+      if (dialog == null || !dialog.isShowing()) continue;
+      Window window = dialog.getWindow();
+      if (window == null) continue;
+      View root = window.getDecorView();
+      autofill(activity, root);
+      if (STYLED.put(root, Boolean.TRUE) != null) continue;
+      root.setBackgroundColor(UiStyle.BACKGROUND);
+      paint(activity, root);
+    }
   }
 
   /**

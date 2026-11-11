@@ -186,6 +186,10 @@ const listThreadIds = (() => {
   } catch (_) { return (): number[] => []; }
 })();
 const threadTicks = new Map<number, number>();
+// The core of the game's main thread, read there; the rest of the report
+// (some 130 sysfs files) is read on Frida's own thread.
+let cpuReportMainCpu = -1;
+let schedGetCpu: any = null;
 let gpuModel = "";
 let waitThreads: any[] | null = null;
 let threadTicksAt = 0;
@@ -208,7 +212,7 @@ const cpuReport = (() => {
         if (temp > 1000) heat.push({ name: read(`/sys/class/thermal/thermal_zone${zone}/type`) || `zone${zone}`, c: temp / 1000 });
       }
       heat.sort((a, b) => b.c - a.c);
-      log(`cpu: allowed ${allowed}, this thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; ` +
+      log(`cpu: allowed ${allowed}, main thread on ${cpuReportMainCpu}, report thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; ` +
         `heat ${heat.slice(0, 3).map(h => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
       // Reports 106-110: on the Pixel 8 Pro the main thread waits in battle
       // (40% busy at 20-30 FPS); is the GPU the limit? The kernel's GPU
@@ -314,7 +318,10 @@ const hookTimer = (() => {
       let total = 0; spent.forEach(value => { total += value.us; });
       log(`hook cost: ${(total / seconds / 1000).toFixed(1)} ms/s; ${top.join("; ")}`);
       try { const tasks = (globalThis as any).__teslTaskTime?.(); if (tasks) log(`task time (15 s): ${tasks}`); } catch (_) {}
-      try { cpuReport?.(); } catch (_) {}
+      if (cpuReport) {
+        try { cpuReportMainCpu = (schedGetCpu ??= new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", []))() as number; } catch (_) {}
+        setTimeout(() => { try { cpuReport(); } catch (_) {} }, 0);
+      }
       spent.clear(); since = Date.now(); reportAt = since + 15000;
     };
     micros();
@@ -324,6 +331,20 @@ const hookTimer = (() => {
     };
   } catch (_) { return null; }
 })();
+// Shared listeners keep calling the other sections when one throws, as
+// separate listeners would; the first error of each section is logged so a
+// broken section does not fail unseen (later ones are only counted).
+const hookFailures = new Map<string, number>();
+function reportingFailures(name: string, fn: Function): Function {
+  return function (this: any, ...args: any[]) {
+    try { return fn.apply(this, args); }
+    catch (error) {
+      const count = (hookFailures.get(name) || 0) + 1;
+      hookFailures.set(name, count);
+      if (count === 1 || count === 100 || count === 10000) log(`hook failed in ${name} (${count}x): ${error}`);
+    }
+  };
+}
 // Each Interceptor listener is its own native -> JS crossing; a dozen
 // sections ran an onLeave on ServicesManager.Update every frame. Leave-only
 // hooks on one function now share a single listener that calls them in turn.
@@ -339,8 +360,9 @@ function sharedLeave(target: NativePointerValue, onLeave: Function): InvocationL
       for (let i = 0; i < calls.length; i++) { try { calls[i].call(this, retval); } catch (_) { /* as a separate listener would: the others still run */ } }
     } });
   }
-  list.push(onLeave);
-  return { detach() { const i = list!.indexOf(onLeave); if (i >= 0) list!.splice(i, 1); } } as any;
+  const call = reportingFailures(currentSection, onLeave);
+  list.push(call);
+  return { detach() { const i = list!.indexOf(call); if (i >= 0) list!.splice(i, 1); } } as any;
 }
 
 function hookAttach(target: NativePointerValue, callbacks: any): InvocationListener {
@@ -365,7 +387,7 @@ function gatedHook(target: NativePointerValue, side: "enter" | "leave", fn: () =
   // int armed @0, int every_ms @4, int64 last_ms @8
   const flag = Memory.alloc(16);
   flag.add(4).writeS32(everyMs);
-  const timed = hookTimer ? hookTimer(currentSection, fn) : fn;
+  const timed = reportingFailures(currentSection, hookTimer ? hookTimer(currentSection, fn) : fn);
   const work = new NativeCallback(() => { try { timed(); } catch (_) { /* as a listener would */ } }, "void", []);
   try {
     const cm = new CModule(`
@@ -574,7 +596,9 @@ Il2Cpp.perform(() => {
   }
 
   // The credentials of the login that is being sent; they are stored once the service accepted them.
-  let pendingLogin: { username: string; password: string } | null = null;
+  // The request is kept with them: an auto login and a retry by hand may
+  // overlap, and each answer must save its own request's credentials.
+  let pendingLogin: { username: string; password: string; request: string } | null = null;
   function captureLogin(req: Il2Cpp.Object, uri: string): void {
     try {
       if (uri.indexOf("bnetUsernameAndPasswordLogin") < 0) return;
@@ -585,7 +609,7 @@ Il2Cpp.perform(() => {
       let text = "";
       for (let i = 0; i < length; i++) text += "%" + Number(raw.get(i)).toString(16).padStart(2, "0");
       const body = JSON.parse(decodeURIComponent(text));
-      if (body && body.username) pendingLogin = { username: String(body.username), password: String(body.password ?? "") };
+      if (body && body.username) pendingLogin = { username: String(body.username), password: String(body.password ?? ""), request: String(req?.handle ?? "") };
     } catch (e) { log("could not read login credentials from request body"); }
   }
 
@@ -668,7 +692,7 @@ function diagnosticUri(uri) { return String(uri).replace(/[?#].*$/, ""); }
       } catch (error) { log(`account error body unreadable: ${error}`); }
     }
     if (typeof recordResourceEvent === "function") recordResourceEvent("http-" + state, diagnosticUri(uri), status);
-    if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
+    if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0 && pendingLogin.request === String(req?.handle ?? "")) {
       let body = ""; try { body = String(call(response, "get_DataAsText")?.content ?? ""); } catch (_) {}
       const outcome = loginOutcome(status, body);
       if (outcome === "success") writeSavedLogin(pendingLogin.username, pendingLogin.password);
@@ -1431,8 +1455,8 @@ void onLeave (GumInvocationContext * ic) {
       update,
       onDue(fn) { due.push(timed(fn)); },
       setDue(at: number) { state.writeDouble(at); },
-      onTouch(fn) { touch.push(timed(fn)); state.add(56).writeS32(touch.length); return { detach() {} }; },
-      onLeave(fn) { const call = timed(fn); leave.push(call); return { detach() { const i = leave.indexOf(call); if (i >= 0) leave.splice(i, 1); } }; },
+      onTouch(fn) { touch.push(reportingFailures(currentSection, timed(fn))); state.add(56).writeS32(touch.length); return { detach() {} }; },
+      onLeave(fn) { const call = reportingFailures(currentSection, timed(fn)); leave.push(call); return { detach() { const i = leave.indexOf(call); if (i >= 0) leave.splice(i, 1); } }; },
       frames: () => state.add(24).readU32(),
       takeMaxGap() { const gap = state.add(28).readU32(); state.add(28).writeU32(0); return gap; },
       setFrameUs(us: number) {

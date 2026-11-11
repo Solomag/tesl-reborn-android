@@ -5,7 +5,16 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 282 — Test
+## Patch 283 — Test
+
+- Starting the game from its icon no longer opens the multi-gigabyte game
+  data each time (a shorter pause). *(new APK)*
+- Test channel: the CPU and temperature report no longer runs on the
+  game's main thread.
+- **Builder:** Cancel stops at once also while copying, checking or
+  packing the game data.
+
+## Patch 282
 
 - Files the game shares with the setup screens are never read half-written
   (could switch off the restart after leaving the game while loading).

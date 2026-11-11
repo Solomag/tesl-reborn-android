@@ -13,11 +13,13 @@ for(const secret of ['before"SECRET_SUFFIX','back\\slash"SECRET_SUFFIX','new\nli
 assert(!c.redactLog('{"encryptedAppTicket":"TRUNCATED_SECRET').includes('TRUNCATED_SECRET'));
 assert(!c.redactLog('{"password":"TRUNCATED_SECRET' + String.fromCharCode(92)).includes('TRUNCATED_SECRET'));
 assert(!c.redactLog('Authorization: Basic SECRET\nX-Session-Token: SECRET').includes('SECRET'));
-function response(status,body){c.pendingLogin={username:'Alice',password:'correct'};c.reportHttpResult({uri:'https://example.test/api/account/bnetUsernameAndPasswordLogin',state:'Finished',response:status?{status,body}:null},false);}
+function response(status,body,request='r1'){c.pendingLogin={username:'Alice',password:'correct',request:'r1'};c.reportHttpResult({handle:request,uri:'https://example.test/api/account/bnetUsernameAndPasswordLogin',state:'Finished',response:status?{status,body}:null},false);}
 response(200,JSON.stringify({resultCode:0,data:{token:'synthetic-token'}}));assert.equal(c.saved.at(-1).password,'correct');
 const before=c.saved.length;
 for(const [status,body] of [[0,''],[503,''],[200,'invalid json'],[200,'{"resultCode":50}'],[200,'{"resultCode":0}']])response(status,body);
 assert.equal(c.saved.length,before,'network or unknown result must preserve saved credentials');
+// The answer to another login request does not save this one's credentials.
+response(200,JSON.stringify({resultCode:0,data:{token:'t'}}),'r2');assert.equal(c.saved.length,before,'answer of another request');
 response(200,'{"resultCode":15}');assert.equal(c.saved.at(-1).username,'Alice');assert.equal(c.saved.at(-1).password,'correct');
 response(200,'{"resultCode":17}');assert.equal(c.saved.at(-1).password,'correct');
 // Execute actual auto-login wrapper with both raw and managed callback representations.

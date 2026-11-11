@@ -631,13 +631,20 @@ public class ResourceActivity extends Activity {
       if (obbFile == null || !obbFile.isFile()) return false;
       JSONObject expected = setup.optJSONObject("obb");
       if (expected != null && obbFile.length() != expected.getLong("bytes")) return false;
+      boolean hashed = expected == null
+          || prefs.getLong("obbSize", -1) == obbFile.length()
+              && prefs.getLong("obbModified", -1) == obbFile.lastModified()
+              && expected.getString("sha256").equals(prefs.getString("obbHash", ""));
+      if (!hashed) return false;
+      // Opening the multi-gigabyte OBB reads its whole directory; it runs on
+      // every tap of the icon, on the main thread. Done once per file.
+      if (prefs.getLong("obbZipSize", -1) == obbFile.length()
+          && prefs.getLong("obbZipModified", -1) == obbFile.lastModified()) return true;
       try (ZipFile zip = new ZipFile(obbFile)) {
-        return zip.getEntry("assets/versions.json") != null
-            && (expected == null
-                || prefs.getLong("obbSize", -1) == obbFile.length()
-                    && prefs.getLong("obbModified", -1) == obbFile.lastModified()
-                    && expected.getString("sha256").equals(prefs.getString("obbHash", "")));
+        if (zip.getEntry("assets/versions.json") == null) return false;
       }
+      prefs.edit().putLong("obbZipSize", obbFile.length()).putLong("obbZipModified", obbFile.lastModified()).apply();
+      return true;
     } catch (Exception e) {
       return false;
     }

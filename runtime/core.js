@@ -3688,6 +3688,8 @@ const listThreadIds = (() => {
   }
 })();
 const threadTicks = /* @__PURE__ */ new Map();
+let cpuReportMainCpu = -1;
+let schedGetCpu = null;
 let gpuModel = "";
 let waitThreads = null;
 let threadTicksAt = 0;
@@ -3716,7 +3718,7 @@ const cpuReport = (() => {
         if (temp > 1e3) heat.push({ name: read(`/sys/class/thermal/thermal_zone${zone}/type`) || `zone${zone}`, c: temp / 1e3 });
       }
       heat.sort((a, b) => b.c - a.c);
-      log(`cpu: allowed ${allowed}, this thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; heat ${heat.slice(0, 3).map((h) => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
+      log(`cpu: allowed ${allowed}, main thread on ${cpuReportMainCpu}, report thread on ${getCpu()}; GHz ${clocks.join(" ") || "unreadable"}; heat ${heat.slice(0, 3).map((h) => `${h.name} ${h.c.toFixed(0)}C`).join(", ") || "unreadable"}`);
       try {
         const parts = [];
         const mali = "/sys/class/misc/mali0/device/";
@@ -3821,9 +3823,17 @@ const hookTimer = (() => {
         if (tasks) log(`task time (15 s): ${tasks}`);
       } catch (_) {
       }
-      try {
-        cpuReport?.();
-      } catch (_) {
+      if (cpuReport) {
+        try {
+          cpuReportMainCpu = (schedGetCpu ?? (schedGetCpu = new NativeFunction(Process.getModuleByName("libc.so").getExportByName("sched_getcpu"), "int", [])))();
+        } catch (_) {
+        }
+        setTimeout(() => {
+          try {
+            cpuReport();
+          } catch (_) {
+          }
+        }, 0);
       }
       spent.clear();
       since = Date.now();
@@ -3845,6 +3855,18 @@ const hookTimer = (() => {
     return null;
   }
 })();
+const hookFailures = /* @__PURE__ */ new Map();
+function reportingFailures(name, fn) {
+  return function(...args) {
+    try {
+      return fn.apply(this, args);
+    } catch (error) {
+      const count = (hookFailures.get(name) || 0) + 1;
+      hookFailures.set(name, count);
+      if (count === 1 || count === 100 || count === 1e4) log(`hook failed in ${name} (${count}x): ${error}`);
+    }
+  };
+}
 const sharedLeaves = /* @__PURE__ */ new Map();
 let frameLeaves = null;
 function sharedLeave(target, onLeave) {
@@ -3862,9 +3884,10 @@ function sharedLeave(target, onLeave) {
       }
     } });
   }
-  list.push(onLeave);
+  const call2 = reportingFailures(currentSection, onLeave);
+  list.push(call2);
   return { detach() {
-    const i = list.indexOf(onLeave);
+    const i = list.indexOf(call2);
     if (i >= 0) list.splice(i, 1);
   } };
 }
@@ -3885,7 +3908,7 @@ const gatedKeep = [];
 function gatedHook(target, side, fn, everyMs = 0) {
   const flag = Memory.alloc(16);
   flag.add(4).writeS32(everyMs);
-  const timed = hookTimer ? hookTimer(currentSection, fn) : fn;
+  const timed = reportingFailures(currentSection, hookTimer ? hookTimer(currentSection, fn) : fn);
   const work = new NativeCallback(() => {
     try {
       timed();
@@ -4117,7 +4140,7 @@ Il2Cpp.perform(() => {
       let text = "";
       for (let i = 0; i < length; i++) text += "%" + Number(raw.get(i)).toString(16).padStart(2, "0");
       const body = JSON.parse(decodeURIComponent(text));
-      if (body && body.username) pendingLogin = { username: String(body.username), password: String(body.password ?? "") };
+      if (body && body.username) pendingLogin = { username: String(body.username), password: String(body.password ?? ""), request: String(req?.handle ?? "") };
     } catch (e) {
       log("could not read login credentials from request body");
     }
@@ -4202,7 +4225,7 @@ Il2Cpp.perform(() => {
       }
     }
     if (typeof recordResourceEvent === "function") recordResourceEvent("http-" + state, diagnosticUri(uri), status);
-    if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0) {
+    if (pendingLogin && uri.indexOf("bnetUsernameAndPasswordLogin") >= 0 && pendingLogin.request === String(req?.handle ?? "")) {
       let body = "";
       try {
         body = String(call(response, "get_DataAsText")?.content ?? "");
@@ -4977,13 +5000,13 @@ void onLeave (GumInvocationContext * ic) {
         state.writeDouble(at);
       },
       onTouch(fn) {
-        touch.push(timed(fn));
+        touch.push(reportingFailures(currentSection, timed(fn)));
         state.add(56).writeS32(touch.length);
         return { detach() {
         } };
       },
       onLeave(fn) {
-        const call2 = timed(fn);
+        const call2 = reportingFailures(currentSection, timed(fn));
         leave.push(call2);
         return { detach() {
           const i = leave.indexOf(call2);

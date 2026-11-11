@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 282,
-  "version": "android-282-atomic-files",
-  "bytes": 542167,
-  "sha256": "becc83cc2894f015421ed3a518de54811482eb4ab5a8c77db9f7e2c692c2c53f",
+  "revision": 283,
+  "version": "android-283-review-tail",
+  "bytes": 543201,
+  "sha256": "d7b7bf4ed1384fb2c81ccc480fe2af772ea272bd377588d83e746888fa6e86d4",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "c2e1fdb1a8b4af4f396c44778d22da722a64cfd1beb5aad553489f1973c2bd65"
+  "sourceSha256": "92bab6c5ba5f30ea6b914bb3c4740a85bf762a9840b06f8c6e61dead0102b8e7"
 }
