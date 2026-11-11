@@ -3537,7 +3537,7 @@ try {
 }
 const tagPtr = Memory.allocUtf8String("tesl-hook");
 function redactLog(message) {
-  return String(message).replace(/("(?:password|encryptedAppTicket|token|sessionToken|access_token|refresh_token|authorization|x-session-token)"\s*:\s*")(?:[^"\\]|\\[\s\S])*(?:"|\\?$)/gi, '$1[REDACTED]"').replace(/\b(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]").replace(/((?:authorization|x-session-token)\s*:\s*)[^\r\n]*/gi, "$1[REDACTED]").replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, "[REDACTED-JWT]");
+  return String(message).replace(/("(?:password|encryptedAppTicket|token|sessionToken|access_token|refresh_token|authorization|x-session-token)"\s*:\s*")(?:[^"\\]|\\[\s\S])*(?:"|\\?$)/gi, '$1[REDACTED]"').replace(/\b(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]").replace(/((?:authorization|x-session-token)\s*:\s*)[^\r\n]*/gi, "$1[REDACTED]").replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, "[REDACTED-JWT]").replace(/(auto login as )[^\r\n]*/i, "$1[omitted]");
 }
 let portLog = null;
 try {
@@ -4981,7 +4981,17 @@ void onLeave (GumInvocationContext * ic) {
             }
             log(`frame bus: ${changed} job workers at nice 10 (${when})`);
           }
-          const wanted = game.filter((t) => /^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(t.name)).map((t) => t.id);
+          const cpuTicks = (id) => {
+            try {
+              const stat = String(File.readAllText(`/proc/self/task/${id}/stat`));
+              const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+              return Number(fields[11]) + Number(fields[12]);
+            } catch (_) {
+              return 0;
+            }
+          };
+          const busiest = (pattern) => game.filter((t) => pattern.test(t.name)).map((t) => ({ id: t.id, ticks: cpuTicks(t.id) })).sort((x, y) => y.ticks - x.ticks)[0];
+          const wanted = [busiest(/^UnityMain/), busiest(/^UnityGfxDeviceW/)].filter((t) => t && t.ticks > 0).map((t) => t.id).concat(game.filter((t) => /^Worker Thread/.test(t.name)).map((t) => t.id));
           if (hints && wanted.some((id) => !hinted.has(id))) {
             if (hints(wanted)) {
               wanted.forEach((id) => hinted.add(id));
@@ -6815,7 +6825,7 @@ void onLeave (GumInvocationContext * ic) {
     const useRemembered = (callback, saved, failed) => {
       const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
       autoLoginAt = Date.now();
-      log(`auto login as ${saved.username}`);
+      log("auto login as [omitted]");
       schedule(0, () => {
         try {
           const value = credentials.alloc();

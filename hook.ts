@@ -30,7 +30,9 @@ function redactLog(message) {
     .replace(/("(?:password|encryptedAppTicket|token|sessionToken|access_token|refresh_token|authorization|x-session-token)"\s*:\s*")(?:[^"\\]|\\[\s\S])*(?:"|\\?$)/gi, '$1[REDACTED]"')
     .replace(/\b(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
     .replace(/((?:authorization|x-session-token)\s*:\s*)[^\r\n]*/gi, '$1[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, '[REDACTED-JWT]');
+    .replace(/\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g, '[REDACTED-JWT]')
+    // Also for logcat, which anyone with adb reads: the account name.
+    .replace(/(auto login as )[^\r\n]*/i, '$1[omitted]');
 }
 
 let portLog = null;
@@ -1444,7 +1446,20 @@ void onLeave (GumInvocationContext * ic) {
             for (const t of workers) { niced.add(t.id); if (niceWorkers(t.id)) changed++; }
             log(`frame bus: ${changed} job workers at nice 10 (${when})`);
           }
-          const wanted = game.filter(t => /^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(t.name)).map(t => t.id);
+          // Nine threads are named UnityMain and two UnityGfxDeviceW, but one
+          // of each runs the game: the one with the most CPU time. Idle
+          // namesakes in the session only blur what it measures.
+          const cpuTicks = (id: number) => {
+            try {
+              const stat = String((File as any).readAllText(`/proc/self/task/${id}/stat`));
+              const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+              return Number(fields[11]) + Number(fields[12]);
+            } catch (_) { return 0; }
+          };
+          const busiest = (pattern: RegExp) => game.filter(t => pattern.test(t.name))
+            .map(t => ({ id: t.id, ticks: cpuTicks(t.id) })).sort((x, y) => y.ticks - x.ticks)[0];
+          const wanted = [busiest(/^UnityMain/), busiest(/^UnityGfxDeviceW/)].filter(t => t && t.ticks > 0).map(t => t!.id)
+            .concat(game.filter(t => /^Worker Thread/.test(t.name)).map(t => t.id));
           if (hints && wanted.some(id => !hinted.has(id))) {
             if (hints(wanted)) { wanted.forEach(id => hinted.add(id)); log(`frame bus: performance hints for ${wanted.length} game threads (${when})`); }
             else log(`frame bus: performance hints refused (${when})`);
@@ -3215,7 +3230,7 @@ void onLeave (GumInvocationContext * ic) {
     const useRemembered = (callback: any, saved: { username: string; password: string }, failed: () => void) => {
       const retained = new Il2Cpp.Object(callback?.handle ?? callback).ref(false);
       autoLoginAt = Date.now();
-      log(`auto login as ${saved.username}`);
+      log("auto login as [omitted]");
       schedule(0, () => {
         try {
           const value = credentials.alloc();

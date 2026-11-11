@@ -13,6 +13,7 @@ for(const secret of ['before"SECRET_SUFFIX','back\\slash"SECRET_SUFFIX','new\nli
 assert(!c.redactLog('{"encryptedAppTicket":"TRUNCATED_SECRET').includes('TRUNCATED_SECRET'));
 assert(!c.redactLog('{"password":"TRUNCATED_SECRET' + String.fromCharCode(92)).includes('TRUNCATED_SECRET'));
 assert(!c.redactLog('Authorization: Basic SECRET\nX-Session-Token: SECRET').includes('SECRET'));
+assert.equal(c.redactLog('auto login as Someone'),'auto login as [omitted]');
 function response(status,body,request='r1'){c.pendingLogin={username:'Alice',password:'correct',request:'r1'};c.reportHttpResult({handle:request,uri:'https://example.test/api/account/bnetUsernameAndPasswordLogin',state:'Finished',response:status?{status,body}:null},false);}
 response(200,JSON.stringify({resultCode:0,data:{token:'synthetic-token'}}));assert.equal(c.saved.at(-1).password,'correct');
 const before=c.saved.length;

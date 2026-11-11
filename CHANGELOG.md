@@ -5,7 +5,13 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 285 — Test
+## Patch 286 — Test
+
+- Performance hints cover only the threads that run the game (9 instead
+  of 18 on a Pixel 6 Pro).
+- The account name is no longer written to the phone's system log.
+
+## Patch 285
 
 - Phones that raise clocks for games (Pixels): the game's job workers,
   created after the start, now get the performance hints too, and on a
