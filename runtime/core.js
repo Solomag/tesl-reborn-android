@@ -5240,7 +5240,7 @@ void onLeave (GumInvocationContext * ic) {
           hung = false;
           log("hang watch: frames are back");
           mark(true);
-        } else if (adj === "0" && gap > 2e4) {
+        } else if (adj === "0" && gap > 12e3) {
           if (!hung) {
             hung = true;
             const parts = listThreadIds().map((id) => `${read(`/proc/self/task/${id}/comm`) || id} ${describe(id)}`);

@@ -77,9 +77,11 @@ public final class GestureBridge {
    * Reports 128 and 130: back after a long time in the background the game
    * sometimes draws no frame again and stays frozen. The hook writes
    * tesl-reborn-frames.json (pid, lastFrameAt) while frames come. Back after
-   * more than 30 s away, the file is read 20 s later: no frame of this
-   * process since the return restarts the game. Without the file (an older
-   * patch) or with another process in it nothing happens.
+   * more than 30 s away, the file is read 15 s later: no frame of this
+   * process in the last 6 s restarts the game. Report 138: one frame came
+   * right after the return and then none, which "a frame since the return"
+   * took for a game that runs. Without the file (an older patch), with
+   * another process in it, or when the game was left again, nothing happens.
    */
   private static void watchReturn(Activity activity) {
     long now = System.currentTimeMillis();
@@ -88,18 +90,19 @@ public final class GestureBridge {
     final long resumedAt = now;
     MAIN.postDelayed(
         () -> {
-          if (check != returnCheck || activity.isFinishing()) return;
+          if (check != returnCheck || activity.isFinishing() || pausedAt > resumedAt) return;
           try {
             JSONObject frames =
                 PackInstaller.json(new File(activity.getExternalFilesDir(null), "tesl-reborn-frames.json"));
             if (frames.optInt("pid", -1) != android.os.Process.myPid()) return;
-            if (frames.optLong("lastFrameAt", Long.MAX_VALUE) > resumedAt) return;
+            long last = frames.optLong("lastFrameAt", Long.MAX_VALUE);
+            if (last > resumedAt && System.currentTimeMillis() - last < 6_000) return;
             status(activity, "frozen-after-return-restart");
             restart(activity);
           } catch (Exception missing) {
           }
         },
-        20_000);
+        15_000);
   }
 
   /** Temporary diagnostic overlay. Drawable overlays never receive/consume touch. */

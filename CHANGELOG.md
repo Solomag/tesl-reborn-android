@@ -5,7 +5,14 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 286 — Test
+## Patch 287 — Test
+
+- A game that freezes after coming back is recognised after 12 s instead
+  of 20; leaving it and opening it again restarts it.
+- Back after a while, the game is restarted by itself when it froze after
+  drawing a single frame (before, one frame counted as running). *(new APK)*
+
+## Patch 286
 
 - Performance hints cover only the threads that run the game (9 instead
   of 18 on a Pixel 6 Pro).

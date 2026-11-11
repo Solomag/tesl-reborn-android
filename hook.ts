@@ -1661,7 +1661,8 @@ void onLeave (GumInvocationContext * ic) {
     // Report 130: back after 23 minutes the game ran one tick and drew no
     // frame again, so the watch above never started. Android keeps
     // oom_score_adj at 0 for the app on screen: on screen with no frame for
-    // 20 s is a hang. The log gets every thread once, and the loading file
+    // 12 s is a hang (report 138: one frame after the return, then none;
+    // the player gave up after 16 s). The log gets every thread once, and the loading file
     // says "not loaded" for this process, so GestureBridge restarts the game
     // when it is left and opened again. A frame clears the mark. The timer
     // thread writes with Frida's File, not through Unity.
@@ -1691,7 +1692,7 @@ void onLeave (GumInvocationContext * ic) {
         }
         if (hung && gap < 5000) {
           hung = false; log("hang watch: frames are back"); mark(true);
-        } else if (adj === "0" && gap > 20000) {
+        } else if (adj === "0" && gap > 12000) {
           if (!hung) {
             hung = true;
             // listThreadIds, not Process.enumerateThreads: see report 116 above.
