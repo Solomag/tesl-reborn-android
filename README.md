@@ -21,8 +21,8 @@ contains no game files and none are distributed.
 - Frame-rate limits and adaptive frame rate in battle for phones that run hot.
 - A built-in diagnostic report for bug reports.
 
-Requirements: Android 10 or newer (arm64), a Windows or Linux PC for the build,
-a TESL Reborn account.
+Requirements: Android 10 or newer (arm64; it installs on 8 and 9 too, untested
+there), a Windows or Linux PC for the build, a TESL Reborn account.
 
 ## Documentation
 
@@ -54,7 +54,8 @@ XAPK: the OBB ships in the XAPK, recovered cache entries inside its APK.
 - Node.js and npm (`npm ci` installs the pinned build tool).
 - A Frida gadget for Android arm64 v8a (the builder pins 17.23.3, written as
   `gadget.so`).
-- Minimum Android: 10 (Android 14 was the development target).
+- Minimum Android: 10 is supported; the APK declares 8 (API 26) and is untested
+  on 8 and 9 (Android 14 was the development target).
 - Base artefacts:
   - `base.apk`: a working arm64 / IL2CPP Android base APK of the
     game (renamed to `base.apk`).

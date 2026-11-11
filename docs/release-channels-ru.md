@@ -8,7 +8,8 @@
 | stable | `main` | `updates/stable/manifest.json` |
 
 Адреса — в `runtime/channel.json` (`channels`). Payload'ы адресуются по SHA-256
-и лежат в `updates/payloads/` обеих веток.
+и лежат в `updates/payloads/`; остаются только те, на которые ссылается манифест
+канала, остальные `publish_hook.py` удаляет (они есть в истории Git).
 
 ## Какой канал получает APK
 
@@ -42,7 +43,8 @@ python tools/publish_hook.py --revision N --version android-N-… --channel test
 python tools/publish_hook.py --hook updates/payloads/<sha256>.js --revision N \
   --version android-N-… --channel stable \
   --base-url https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/main/updates
-git commit -m "Promote patch N to stable" updates/stable/manifest.json
+git add updates/   # манифест и payload'ы, удалённые publish_hook.py
+git commit -m "Promote patch N to stable"
 git push upstream HEAD:android-ui-and-update-loader
 git push upstream HEAD:main
 ```

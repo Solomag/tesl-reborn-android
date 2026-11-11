@@ -16,9 +16,8 @@ before rendering, avoiding the extra 200x50 container expansion seen on mobile.
 Emoji artwork and markup are shared between chat and message previews. Preview
 labels keep the native name, time, colour and fade.
 
-These v21 UI behaviors were confirmed on a user's phone. The source rebuild,
-APK resource extraction and revised loader in this branch have local model
-tests, but this exact branch has not yet been installed on a device.
+These behaviors are in the published patches; what changed when is in
+[CHANGELOG.md](../CHANGELOG.md).
 
 ## Build and verify
 
@@ -43,31 +42,20 @@ changes. Increment the manifest revision for each public core release.
 
 ## Publish hook updates
 
-The release owner first sets `runtime/channel.json` to an HTTPS manifest URL
-and builds the loader APK once. A local `tesl-reborn-updater.json` in the game's
-external files directory can override `enabled`, `feedUrl`, `safeMode`, and
-`allowLocalUpdates`; no override is needed when the embedded feed is configured.
-
-Example preparation of a later core update:
-
-```sh
-python3 tools/make_release.py --revision 24 --version android-24 \
-  --url https://OWNER.github.io/REPOSITORY/releases/24/hook.js \
-  --out release/24
-```
-
-Use your actual Pages URL. Publish `hook.js` first and the generated manifest
-last; copy the manifest to the channel URL. The loader accepts HTTPS only,
-requires hook and manifest on the same origin, and rejects redirects. GitHub
-Pages can serve this layout; GitHub Release download URLs redirect and therefore
-are not supported by this transport as-is. No channel is published by this PR.
+Patches are published to the test and stable channels in this repository with
+`tools/publish_hook.py`; the steps are in [release-channels.md](release-channels.md).
+A local `tesl-reborn-updater.json` in the game's external files directory can
+override `enabled`, `feedUrl`, `safeMode` and `allowLocalUpdates`. With
+`allowLocalUpdates`, a `manifest.json` and `hook.js` in `tesl-reborn-inbox/`
+next to it are installed on the next start (for testing on a device).
 
 After core initialization the client checks once per launch. A compatible
 newer core is verified by byte count and SHA-256 and stored in private app
 storage. It takes effect on the next launch. A trial that exits before calling
 `ready()` falls back on a subsequent launch; no second hook is installed into
-an already partially patched process. `ready()` means setup reached the marker,
-not that every UI interaction has been exercised. Safe mode uses the embedded
+an already partially patched process. `ready()` is called after the game has drawn
+frames for 15 s without a gap (or after a minute with no frame reports at
+all); a patch that breaks the start is rolled back after three tries. Safe mode uses the embedded
 core. A newer APK will not select a cached core older than its bundled version.
 
 The update channel is trusted to publish executable hooks. SHA-256 detects
@@ -110,13 +98,7 @@ resources and produces an unsigned ZIP32 APK for subsequent signing with the
 existing certificate. This is a test/migration shortcut; it does not exercise
 all of `build_apk.py` from a clean base APK.
 
-## Follow-up scope
-
-This PR provides the tested UI changes and JS update foundation. It does not
-implement language-pack downloads, an in-game download manager, streaming large
-archives, automatic APK installation, or PC-DLL conversion. Those need separate
-changes and device validation. A small initial APK also requires the current
-all-language cache payload to be removed during a one-time rebuild.
+## PC plugin
 
 Reborn's PC DLL cannot be used as a drop-in replacement for this hook: it depends
 on BepInEx/Harmony and managed Unity bindings, while this game uses IL2CPP.

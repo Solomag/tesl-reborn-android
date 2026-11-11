@@ -9,8 +9,9 @@ without a new APK.
 - `payloads/<sha256>.js` — the patch files themselves. Each file is named after
   the SHA-256 of its contents, so a name can never point to different code: the
   phone downloads the file a manifest names and refuses it unless the hash
-  matches. Old payloads stay so phones on an older manifest (or the other
-  channel) can still fetch theirs.
+  matches. Only payloads a channel manifest names are kept; publishing removes
+  the others (Git history keeps them). A phone that read a cached older
+  manifest gets a 404 and simply checks again on its next start.
 
 A payload is the built `runtime/core.js` (the bridge plus `hook.ts` compiled
 by `npm run build`) as it was for that revision. To see which revision a file

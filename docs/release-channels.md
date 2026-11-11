@@ -8,7 +8,8 @@ Both channels live in the main repository, `ssorgatem/tesl-reborn-android`:
 | stable | `main` | `updates/stable/manifest.json` |
 
 The URLs are in `runtime/channel.json` (`channels`). Payloads are addressed by
-SHA-256 and kept in `updates/payloads/` on both branches (see
+SHA-256 in `updates/payloads/`; only those a channel manifest names are kept,
+`publish_hook.py` removes the rest (Git history has them; see
 [updates/README.md](../updates/README.md)).
 
 A Russian version is in [release-channels-ru.md](release-channels-ru.md).
@@ -61,7 +62,8 @@ promotion is a fast-forward of `main` to the tested commit, without merges:
 python tools/publish_hook.py --hook updates/payloads/<sha256>.js --revision N \
   --version android-N-… --channel stable \
   --base-url https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/main/updates
-git commit -m "Promote patch N to stable" updates/stable/manifest.json
+git add updates/   # the manifest, and payloads publish_hook.py removed
+git commit -m "Promote patch N to stable"
 git push upstream HEAD:android-ui-and-update-loader
 git push upstream HEAD:main
 ```

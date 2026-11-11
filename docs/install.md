@@ -9,7 +9,8 @@ game you already have; the project does not distribute game files.
 - **The PC game**: *The Elder Scrolls: Legends* installed on that PC (Steam or the Bethesda.net launcher; the Builder finds both).
 - **The original Android XAPK**: `com.bethsoft.theelderscrollslegends`,
   version code 11009 (arm64).
-- A phone with **Android 10 or newer** (arm64), about 3 GB free.
+- A phone with **Android 10 or newer** (arm64), about 3 GB free. It also installs
+  on Android 8 and 9, but nobody has tested it there yet.
 - A TESL Reborn account (the same one as on PC).
 
 ## 1. Get the Builder
