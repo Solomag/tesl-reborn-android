@@ -147,6 +147,18 @@ class BuilderServerTest(unittest.TestCase):
         self.assertEqual(self.request("/catalog.json")[0], 401)
         self.assertNotIn(self.server.token, "\n".join(self.logs))
 
+    def test_any_apk_file_name_is_served(self):
+        self.server.stop()
+        apk = self.root / "Сборка build.apk"
+        apk.write_bytes(b"PK" + b"0" * 100)
+        self.server = ResourceServer(self.root, host="127.0.0.1", apk=apk, log=self.logs.append).start()
+        self.server.download_name = "Сборка</script>.apk"
+        status, headers, _ = self.request(self.server.connect_path + "/tesl-reborn.apk")
+        self.assertEqual(status, 200)
+        self.assertIn("filename*=UTF-8''", headers["Content-Disposition"])
+        page = self.server.landing_page().decode("utf-8")
+        self.assertNotIn("Сборка</script>", page, "a file name cannot end the page's script")
+
     def test_interrupted_apk_is_logged_and_can_resume(self):
         import socket
         import struct

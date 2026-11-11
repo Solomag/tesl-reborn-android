@@ -4859,7 +4859,7 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
     const noTouch = new NativeCallback(() => 0, "int", []);
     state.add(52).writeS32(touchCount.isNull() ? 0 : 1);
     const libc = Process.getModuleByName("libc.so");
-    let cm = null, adpfTarget = null;
+    let cm = null, adpfTarget = null, lastFrameUs = NaN;
     try {
       cm = new CModule(`
 #include <gum/guminterceptor.h>
@@ -4872,7 +4872,10 @@ extern int usleep (unsigned us);
 extern void wake (int flags);
 extern int touch_count (void);
 extern State state;
-static long long now_us (void) { ts_t t; clock_gettime (0, &t); return (long long) t.s * 1000000LL + t.ns / 1000; }
+/* Pacing and gaps on the monotonic clock (a clock change must not skew
+   them); due times are Date.now() values, so they stay on the wall clock. */
+static long long now_us (void) { ts_t t; clock_gettime (1, &t); return (long long) t.s * 1000000LL + t.ns / 1000; }
+static long long wall_ms (void) { ts_t t; clock_gettime (0, &t); return (long long) t.s * 1000LL + t.ns / 1000000; }
 void onEnter (GumInvocationContext * ic) {
   long long t = now_us ();
   if (state.last_us) { long long g = (t - state.last_us) / 1000; if (g > state.max_gap) state.max_gap = (unsigned) g; }
@@ -4887,7 +4890,7 @@ void onEnter (GumInvocationContext * ic) {
   if (state.session && state.report && state.work_start_us) state.report (state.session, (t - state.work_start_us) * 1000LL);
   state.work_start_us = now_us ();
   int flags = 0;
-  if ((double) (t / 1000) >= state.next_due) flags |= 1;
+  if ((double) wall_ms () >= state.next_due) flags |= 1;
   if (state.touch_listeners) {
     if (state.has_touch) { int c = touch_count (); if (c > 0 || state.prev_touch) flags |= 2; state.prev_touch = c > 0; }
     else flags |= 2;
@@ -4895,7 +4898,7 @@ void onEnter (GumInvocationContext * ic) {
   if (flags) wake (flags);
 }
 void onLeave (GumInvocationContext * ic) {
-  if ((double) (now_us () / 1000) >= state.next_leave) wake (4);
+  if ((double) wall_ms () >= state.next_leave) wake (4);
 }
 `, { clock_gettime: libc.getExportByName("clock_gettime"), usleep: libc.getExportByName("usleep"), wake, touch_count: touchCount.isNull() ? noTouch : touchCount, state });
       Interceptor.attach(update, cm);
@@ -5020,7 +5023,10 @@ void onLeave (GumInvocationContext * ic) {
         return gap;
       },
       setFrameUs(us) {
-        state.add(16).writeS64(Math.round(us));
+        const rounded = Math.round(us);
+        if (rounded === lastFrameUs) return;
+        lastFrameUs = rounded;
+        state.add(16).writeS64(rounded);
         try {
           adpfTarget?.(us > 0 ? us : 1e6 / 120);
         } catch (_) {
@@ -5166,7 +5172,11 @@ void onLeave (GumInvocationContext * ic) {
       }, 2e3);
     });
     const loadingFile = `${persistentPath()}/tesl-reborn-loading.json`;
-    const mark = (loaded) => File.writeAllText(loadingFile, JSON.stringify({ pid: Process.id, loaded, at: Date.now() }));
+    const mark = (loaded) => {
+      const text = JSON.stringify({ pid: Process.id, loaded, at: Date.now() });
+      File.writeAllText(loadingFile + ".tmp", text);
+      if (!atomicRename(loadingFile + ".tmp", loadingFile)) File.writeAllText(loadingFile, text);
+    };
     const framesFile = `${persistentPath()}/tesl-reborn-frames.json`;
     let framesWritten = 0;
     let hung = false, seenAdj = "";

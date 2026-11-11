@@ -275,7 +275,11 @@ class ResourceServer:
                     if browser:
                         self.send_header(
                             "Content-Disposition",
-                            f'attachment; filename="{owner.download_name}"',
+                            # ASCII fallback plus the UTF-8 name: a header
+                            # must be Latin-1, the file name need not be.
+                            "attachment; filename=\"{}\"; filename*=UTF-8''{}".format(
+                                owner.download_name.encode("ascii", "replace").decode().replace('"', "_").replace("?", "_"),
+                                quote(owner.download_name)),
                         )
                     if partial:
                         self.send_header(
@@ -436,9 +440,10 @@ class ResourceServer:
                '<button id="apk-cancel" hidden>Pause</button><p id="apk-status"></p>'
                '<a class="button" id="apk-save" hidden>Save verified APK</a>') if self.apk else "<p>This transfer has no APK.</p>"
         downloader = Path(__file__).with_name("apk-download.js").read_text(encoding="utf-8")
+        # Inside <script>: "</" in a file name must not end it.
         config = json.dumps(dict(bytes=self.apk_size, sha256=self.apk_hash,
                                  url=self.token + "/tesl-reborn.apk", name=self.download_name,
-                                 verifiedUrl=self.token + "/apk-verified"))
+                                 verifiedUrl=self.token + "/apk-verified")).replace("<", "\\u003c")
         return (
             """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Install TESL Reborn</title>

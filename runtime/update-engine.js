@@ -29,6 +29,9 @@ function createRebornUpdater(io, embedded) {
     if (!match) throw Error("Updates require a public HTTPS URL without credentials/query/fragment");
     return `https://${match[1].toLowerCase()}:${Number(match[2] || 443)}`;
   }
+  // Only what proves the file or manifest wrong rejects a hash for good; a
+  // read that failed (storage busy, removed) does not.
+  function integrityError(message) { const error = Error(message); error.integrity = true; return error; }
   function validate(meta) {
     if (!meta || meta.schema !== 1 || meta.format !== "tesl-reborn-hook-v1" ||
         meta.loaderApi !== 1 || meta.gameVersionCode !== 11009 || meta.abi !== "arm64-v8a" ||
@@ -36,7 +39,7 @@ function createRebornUpdater(io, embedded) {
         typeof meta.version !== "string" || !/^[a-z0-9._+-]{1,80}$/i.test(meta.version) ||
         !Number.isSafeInteger(meta.bytes) || meta.bytes < 1 || meta.bytes > LIMIT ||
         typeof meta.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(meta.sha256))
-      throw Error("Incompatible or invalid Android release manifest");
+      throw integrityError("Incompatible or invalid Android release manifest");
     return { schema: 1, format: meta.format, loaderApi: 1, gameVersionCode: 11009,
       abi: "arm64-v8a", revision: meta.revision, version: meta.version,
       bytes: meta.bytes, sha256: meta.sha256 };
@@ -45,7 +48,7 @@ function createRebornUpdater(io, embedded) {
     validate(meta);
     if (typeof code !== "string" || io.byteLength(code) !== meta.bytes ||
         io.sha256(code) !== meta.sha256 || !code.startsWith("// TESL-REBORN-ANDROID-CORE v1\n"))
-      throw Error("Hook size, SHA-256 or Android format mismatch");
+      throw integrityError("Hook size, SHA-256 or Android format mismatch");
     return code;
   }
   function readCore(meta) {
@@ -112,10 +115,12 @@ function createRebornUpdater(io, embedded) {
           trial = !state.active || selected.sha256 !== state.active.sha256 || selected.revision !== state.active.revision;
           break;
         } catch (error) {
-          reject(candidate && candidate.sha256);
+          // A pending patch that cannot be read is dropped either way, so the
+          // same revision can be downloaded again unless it was proven bad.
+          if (error && error.integrity) reject(candidate && candidate.sha256);
           if (candidate === state.pending) state.pending = null;
           save();
-          report("cached-update-rejected", String(error));
+          report(error && error.integrity ? "cached-update-rejected" : "cached-update-unreadable", String(error));
         }
       }
     }

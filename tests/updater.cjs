@@ -130,3 +130,15 @@ console.log('PASS: APK upgrade revision floor and embedded HTTPS feed');
  assert.equal(f.disk.state.pending,null);
 }
 console.log('PASS: higher revision with unchanged payload commits and clears pending');
+{
+ // A cached patch that cannot be read once (storage busy) is not rejected
+ // for good: the next start uses it again. A corrupted one is rejected.
+ const f=fixture();f.launch().stage(meta(6),code(6));f.launch().ready();
+ const saved=f.disk.cores[meta(6).sha256];delete f.disk.cores[meta(6).sha256];
+ f.launch();assert.equal(f.loaded.at(-1),code(5),'falls back while unreadable');
+ assert(!f.disk.state.rejected.includes(meta(6).sha256),'an unreadable file is not proof of a bad patch');
+ f.disk.cores[meta(6).sha256]=saved;f.launch();assert.equal(f.loaded.at(-1),code(6),'used again once readable');
+ f.disk.cores[meta(6).sha256]=code(6)+'tampered';f.launch();
+ assert(f.disk.state.rejected.includes(meta(6).sha256),'a mismatching file is rejected');
+}
+console.log('PASS: unreadable cached patch kept, corrupted one rejected');

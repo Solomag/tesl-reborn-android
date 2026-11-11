@@ -5,7 +5,15 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 283 — Test
+## Patch 284 — Test
+
+- Frame pacing no longer jumps when the phone's clock is changed.
+- A downloaded patch that could not be read once (storage busy) is tried
+  again instead of being refused for good. *(new APK)*
+- **Builder:** an APK with any file name can be sent to the phone; a wrong
+  XAPK gets a clear message.
+
+## Patch 283
 
 - Starting the game from its icon no longer opens the multi-gigabyte game
   data each time (a shorter pause). *(new APK)*

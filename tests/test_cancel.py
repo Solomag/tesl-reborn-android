@@ -52,3 +52,13 @@ class CancelLongStepsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class XapkMessagesTest(unittest.TestCase):
+    def test_a_missing_entry_says_what_is_missing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            xapk = Path(folder) / "other.xapk"
+            with zipfile.ZipFile(xapk, "w") as made:
+                made.writestr("icon.png", b"x")
+            with self.assertRaisesRegex(ValueError, "original game XAPK.*manifest.json"):
+                resources.unpack_xapk(xapk, Path(folder) / "work")

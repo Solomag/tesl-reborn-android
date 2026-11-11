@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def prepare(code, revision, version, base_url, channel, output):
     url = urlsplit(base_url)
     if (url.scheme != 'https' or not url.hostname or url.username or url.password or
-            url.query or url.fragment or not re.fullmatch(r'[A-Za-z0-9._~/-]*', url.path)):
+            url.query or url.fragment or not re.fullmatch(r'[A-Za-z0-9._~/-]*', url.path) or
+            '..' in url.path.split('/')):
         raise ValueError('Use a public HTTPS base URL without credentials, query or fragment')
     if not re.fullmatch(r'[a-z0-9-]{1,40}', channel):
         raise ValueError('Invalid channel name')

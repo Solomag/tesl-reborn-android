@@ -710,9 +710,14 @@ class BuilderWindow:
                                 key=key,
                                 # Named after channel and build (TESL-Reborn-Test-build46.apk);
                                 # older builds used tesl-reborn.apk.
+                                # The build folder holds the APK and resources/;
+                                # an old layout kept catalog.json in the build
+                                # folder itself, whose parent is shared by all
+                                # builds, so only that folder is searched then.
                                 apk=next(
                                     (path for pattern in ("*.apk", "*.xapk")
-                                     for path in sorted(root.parent.glob(pattern)) if path.is_file()),
+                                     for path in sorted((root.parent if root.name == "resources" else root).glob(pattern))
+                                     if path.is_file()),
                                     None,
                                 ),
                             ).start(),

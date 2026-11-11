@@ -122,6 +122,14 @@ def source_roots(game, assets):
 
 def unpack_xapk(source, work):
     """Extract only expected inputs, never arbitrary archive paths."""
+    try:
+        return _unpack_xapk(source, work)
+    except KeyError as error:
+        # zipfile names a missing entry with a bare KeyError: say what it is.
+        raise ValueError(f"This is not the original game XAPK ({error.args[0]})") from error
+
+
+def _unpack_xapk(source, work):
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(source) as archive:
