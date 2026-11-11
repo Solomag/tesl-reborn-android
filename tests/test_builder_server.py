@@ -44,6 +44,14 @@ class BuilderServerTest(unittest.TestCase):
         self.server.stop()
         self.temp.cleanup()
 
+    def logged(self, condition, seconds=5):
+        # The server logs the end of a transfer after the client has its
+        # last byte, from the request's own thread.
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and not any(condition(line) for line in self.logs):
+            time.sleep(.02)
+        return any(condition(line) for line in self.logs)
+
     def request(self, path, headers=None, method="GET", body=None):
         connection = http.client.HTTPConnection(
             "127.0.0.1", self.server.port, timeout=5
@@ -135,9 +143,9 @@ class BuilderServerTest(unittest.TestCase):
         self.assertEqual(status, 206)
         self.assertEqual(data, apk.read_bytes()[4:11])
         self.assertTrue(any("APK #1: start" in entry for entry in self.logs))
-        self.assertTrue(any("file sent" in entry for entry in self.logs))
+        self.assertTrue(self.logged(lambda entry: "file sent" in entry), self.logs)
         self.assertTrue(any("resume/range" in entry for entry in self.logs))
-        self.assertTrue(any("range sent" in entry for entry in self.logs))
+        self.assertTrue(self.logged(lambda entry: "range sent" in entry), self.logs)
         self.assertNotIn(self.server.token, "\n".join(self.logs))
         self.assertEqual(self.request(page + "/../catalog.json")[0], 401)
         self.assertEqual(self.request("/connect/wrong/tesl-reborn.apk")[0], 401)
@@ -233,7 +241,7 @@ class BuilderServerTest(unittest.TestCase):
         self.assertEqual(self.request(self.path, self.auth())[0], 200)
         name = self.path.rsplit("/", 1)[-1]
         self.assertTrue(any(entry.startswith(f"{name} #") and "start" in entry for entry in self.logs), self.logs)
-        self.assertTrue(any(entry.startswith(f"{name} #") and "file sent" in entry for entry in self.logs), self.logs)
+        self.assertTrue(self.logged(lambda entry: entry.startswith(f"{name} #") and "file sent" in entry), self.logs)
         self.request("/catalog.json", self.auth())
         self.assertFalse(any("catalog" in entry for entry in self.logs))
 

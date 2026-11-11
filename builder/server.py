@@ -406,8 +406,24 @@ class ResourceServer:
                 # TLS: the handshake runs here, in the request's own thread
                 # and under its timeout, not in accept(): a client that
                 # connects and stays silent would stop every other one.
+                # A client that leaves mid-handshake (a browser probing the
+                # certificate, a port scan) is closed without a traceback.
+                self.handshake_failed = False
                 if hasattr(self.connection, "do_handshake"):
-                    self.connection.do_handshake()
+                    try:
+                        self.connection.do_handshake()
+                    except (OSError, ValueError):
+                        self.handshake_failed = True
+
+            def handle(self):
+                if not self.handshake_failed:
+                    super().handle()
+
+            def finish(self):
+                try:
+                    super().finish()
+                except OSError:
+                    pass
 
         self.http = ThreadingHTTPServer((host, port), Handler)
         self.http.daemon_threads = True
