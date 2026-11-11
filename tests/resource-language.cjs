@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const {transformSync}=require('esbuild');
-const text=fs.readFileSync('hook.ts','utf8');
+const text=require('../tools/hook-source.cjs')();
 const a=text.indexOf('  function resourceLanguage()'),b=text.indexOf('  // ---------------------------------------------------------------------',a+40);
 const code=transformSync(text.slice(a,b),{loader:'ts',target:'es2020'}).code;
 function fixture(type,choice){

@@ -1,5 +1,5 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const text=fs.readFileSync('hook.ts','utf8');
+const text=require('../tools/hook-source.cjs')();
 const redact=text.slice(text.indexOf('function redactLog('),text.indexOf('\nlet portLog ='));
 const context={};vm.createContext(context);vm.runInContext(fs.readFileSync('runtime/port-log.js','utf8')+'\n'+redact,context);
 const files={current:'previous-session'},sizes=[];let rotations=0;

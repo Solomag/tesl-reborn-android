@@ -33,7 +33,7 @@ f.hooks.GetCurrentLanguage.onLeave(result);assert.equal(result.value,71);
 f.select('ru_ru');assert.equal(f.actual,'ru');assert.equal(f.reports.at(-1).selected,'ru_ru');
 f=fixture('en_us',[['UNKNOWN',99]]);assert.equal(f.calls.length,0,'unresolved languages do not receive an invented enum value');
 
-const hook=require('node:fs').readFileSync('hook.ts','utf8');
+const hook=require('../tools/hook-source.cjs')();
 const labelSource=hook.slice(hook.indexOf('  function languageLabel('),hook.indexOf('  section("translation fixes"'));
 const labelCode=transformSync(labelSource,{loader:'ts'}).code;
 const native=transformSync(source('native-language-dropdown'),{loader:'ts'}).code;

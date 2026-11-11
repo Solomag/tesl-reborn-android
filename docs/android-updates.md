@@ -89,7 +89,7 @@ restore fails before writing if any selected PC source bundle is missing.
 `tools/publish_hook.py` prepares `updates/<channel>/manifest.json` and a
 content-addressed payload under `updates/payloads/`. Committing and pushing
 these files publishes a raw-GitHub channel without requiring Pages. The phone
-downloads the compiled Android core, never `hook.ts` or the PC DLL. The command
+downloads the compiled Android core, never the hook sources or the PC DLL. The command
 does not push or open a PR itself. Channel revisions must increase.
 
 `tools/prepare_test_apk.py` replaces the loader in an existing complete APK,

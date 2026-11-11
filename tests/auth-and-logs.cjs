@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const {transformSync}=require('esbuild');const src=fs.readFileSync('hook.ts','utf8');
-const extract=(a,b)=>{const i=src.indexOf(a),j=src.indexOf(b,i);if(i<0||j<0)throw new Error(`hook.ts marker not found: ${i<0?a:b}`);return transformSync(src.slice(i,j),{loader:'ts'}).code;};
+const {transformSync}=require('esbuild');const src=require('../tools/hook-source.cjs')();
+const extract=(a,b)=>{const i=src.indexOf(a),j=src.indexOf(b,i);if(i<0||j<0)throw new Error(`hook source marker not found: ${i<0?a:b}`);return transformSync(src.slice(i,j),{loader:'ts'}).code;};
 const c={saved:[],pendingLogin:null,log:()=>{},isNull:x=>x==null,
  call:(o,n)=>({get_Uri:o.uri,get_State:o.state,get_Response:o.response,get_StatusCode:o?.status,get_DataAsText:{content:o?.body}}[n]),
  readSavedLogin:()=>c.saved.at(-1),writeSavedLogin:(u,p)=>c.saved.push({username:u,password:p})};

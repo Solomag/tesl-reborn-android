@@ -1,5 +1,5 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),{transformSync}=require('esbuild');
-const text=fs.readFileSync('hook.ts','utf8');
+const text=require('../tools/hook-source.cjs')();
 const a=text.indexOf('  // BEGIN android-ui: settings-data'),b=text.indexOf('  // END android-ui: settings-data',a);
 const objects=new Map();let opened=0,created=0;
 const root={};const self={};let rootName="SettingsWin_Mobile(Clone)", controls=1;

@@ -1,8 +1,8 @@
 """Check the hook's native patches against the game's own libraries, offline.
 
-Every place where hook.ts reads or rewrites engine code is guarded by the
+Every place where the hook (hook/*.ts) reads or rewrites engine code is guarded by the
 bytes it expects at a libunity offset. This script finds those guards in
-hook.ts, compares them with the game's libunity.so, names the functions with
+hook, compares them with the game's libunity.so, names the functions with
 Unity's symbols matched into that build, and decodes the instructions the
 patches write, so a wrong offset or a wrong encoding is caught before a phone
 runs it. The game's libraries stay outside Git; pass their paths.
@@ -110,14 +110,16 @@ def guards(hook_source):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hook", default=str(Path(__file__).resolve().parents[1] / "hook.ts"))
+    parser.add_argument("--hook", help="one source file; default: hook/*.ts joined in name order")
     parser.add_argument("--libunity", required=True)
     parser.add_argument("--syms")
     parser.add_argument("--libil2cpp")
     parser.add_argument("--script")
     args = parser.parse_args()
 
-    source = Path(args.hook).read_text(encoding="utf-8")
+    hook_dir = Path(__file__).resolve().parents[1] / "hook"
+    source = (Path(args.hook).read_text(encoding="utf-8") if args.hook else
+              "".join(p.read_text(encoding="utf-8") for p in sorted(hook_dir.glob("[0-9][0-9]-*.ts"))))
     unity = Path(args.libunity).read_bytes()
     segments = load_segments(unity)
     syms = Symbols(args.syms)

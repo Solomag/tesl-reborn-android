@@ -3,8 +3,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { transformSync } from 'esbuild';
+import { createRequire } from 'node:module';
 process.chdir(fileURLToPath(new URL('..', import.meta.url)));
-const source = readFileSync('hook.ts', 'utf8');
+// hook/*.ts joined in name order (tools/hook-source.cjs).
+const source = createRequire(import.meta.url)('./hook-source.cjs')();
 const imports = source.match(/^import "frida-il2cpp-bridge";$/gm);
 if (imports?.length !== 1) throw Error('Expected exactly one bridge import');
 const code = transformSync(source.replace(/^import "frida-il2cpp-bridge";$/m, ''), {

@@ -163,11 +163,14 @@ adb push ./creds/tesl-login.json \\
   per-file payload restore silently breaks.
 - Cache files belong under `…/UnityCache/Shared` (one level up ⇒ Unity never
   resolves them and the game re-downloads them from the dead CDN).
-- Bump the hook's `log("...")` build marker whenever `hook.ts` changes.
+- Bump `revision` in `runtime/manifest.json` whenever the hook changes.
 
 ## Source files
 
-- `hook.ts` — the Frida / IL2CPP hook (compiled to `hook.js`).
+- `hook/` — the Frida / IL2CPP hook, one file per area (`NN-name.ts`). The
+  files are joined in name order into one script (`tools/hook-source.cjs`)
+  and share its scope; `npm run build` compiles them into `runtime/core.js`
+  and `hook.js`.
 - `hook.js` — prebuilt compiled hook (regenerate with step 1).
 - `build_apk.py` — injects the gadget + hook into `base.apk`.
 - `build_single_apk.py` — appends OBB and/or cache to the patched APK.

@@ -1,5 +1,5 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),{transformSync}=require('esbuild');
-const hook=fs.readFileSync('hook.ts','utf8'),start=hook.indexOf('  function newWith('),end=hook.indexOf('  function isNull(',start);
+const hook=require('../tools/hook-source.cjs')(),start=hook.indexOf('  function newWith('),end=hook.indexOf('  function isNull(',start);
 const c={};vm.createContext(c);
 vm.runInContext(transformSync(hook.slice(start,end)+require('./source.cjs')('ui-common'),{loader:'ts'}).code,c);
 let count=0,ctorFails=false;

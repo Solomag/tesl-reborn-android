@@ -1,4 +1,4 @@
-// hook.ts attaches through hookAttach (a timing wrapper defined at the top of
+// The hook (hook/*.ts) attaches through hookAttach (a timing wrapper defined at the top of
 // the hook, outside the extracted sections): give every test context one
 // that forwards to that context's Interceptor stub.
 const vm = require('node:vm');

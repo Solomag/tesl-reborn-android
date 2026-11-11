@@ -1,5 +1,5 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const {transformSync}=require('esbuild');const text=fs.readFileSync('hook.ts','utf8');
+const {transformSync}=require('esbuild');const text=require('../tools/hook-source.cjs')();
 const a=text.indexOf('  // BEGIN android-ui: global-shortcuts'),b=text.indexOf('  // END android-ui: global-shortcuts',a);
 const code=transformSync(text.slice(a,b),{loader:'ts',target:'es2020'}).code;
 const hooks={}, logs=[];let frame=1,phase=0,point={x:10,y:990},now=1000,count=1;

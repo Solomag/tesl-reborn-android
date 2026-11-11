@@ -33,7 +33,7 @@ NAMES = {
     "tr_tr": "Türkçe",
 }
 # Text-only languages: the game runs on the English pack, and the dictionary
-# and font come with the APK (languages/ in the repository, see hook.ts).
+# and font come with the APK (languages/ in the repository, see hook/).
 TEXT_LANGUAGES = {"zh_cn": "en_us"}
 TEXT_NAMES = {"zh_cn": "简体中文"}
 PACKAGE = "com.bethsoft.theelderscrollslegends"

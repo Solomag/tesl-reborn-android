@@ -40,7 +40,7 @@ Commit and push to `android-ui-and-update-loader`.
 ## What's new
 
 Every patch updates `CHANGELOG.md` (what players notice, newest first) and
-`PATCH_NOTES` in `hook.ts`: one line per language that the game shows with
+`PATCH_NOTES` in `hook/29-update-notices.ts`: one line per language that the game shows with
 "Reborn update N applied". Mark changes that need a new APK.
 
 ## When a patch needs a new APK
@@ -48,7 +48,7 @@ Every patch updates `CHANGELOG.md` (what players notice, newest first) and
 Changes to the setup screens, the Java side of the game (`android-setup/`) or
 the loader reach phones only with a new APK. Raise `ApkLevel.LEVEL` in
 `android-setup/src/org/teslreborn/setup/ApkLevel.java` and `APK_LEVEL` in
-`hook.ts` together. A phone whose APK is older then shows a notice asking to
+`hook/29-update-notices.ts` together. A phone whose APK is older then shows a notice asking to
 build *APK only* in the Builder and install it over the old one. Publish the
 patch only after the Builder of that channel has been rebuilt by CI, so the
 new APK exists when the notice appears.

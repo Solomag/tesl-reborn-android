@@ -1,6 +1,6 @@
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict'), crypto = require('node:crypto');
 const { transformSync } = require('esbuild');
-const source = fs.readFileSync('hook.ts', 'utf8');
+const source = require('../tools/hook-source.cjs')();
 const start = source.indexOf('  section("payload from the apk",');
 const end = source.indexOf('  // The path of the APK of the game', start);
 const script = transformSync(source.slice(start, end), { loader: 'ts', target: 'es2020' }).code;

@@ -3,7 +3,7 @@ on:
   push:
     branches: [main, android-ui-and-update-loader, portable-builder-and-resources, "sync-upstream-*"]
     paths:
-      - 'hook.ts'
+      - 'hook/**'
       - 'hook.js'
       - 'updates/**'
       - 'android-setup/**'
@@ -18,7 +18,7 @@ on:
       - '.github/workflows/tests.yml'
   pull_request:
     paths:
-      - 'hook.ts'
+      - 'hook/**'
       - 'hook.js'
       - 'updates/**'
       - 'android-setup/**'
@@ -75,7 +75,7 @@ jobs:
           python -m pip install -r builder/requirements.txt
       - name: Run tests
         run: npm test
-      # The committed loader and core must be what hook.ts builds to: a stale
+      # The committed loader and core must be what hook/ builds to: a stale
       # one would publish a different SHA than the APK embeds.
       - name: Setup screens (Java)
         run: |
