@@ -38,12 +38,13 @@ env:
 jobs:
   tests:
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
       # The builder needs Python 3.11+ (hashlib.file_digest) and UnityPy; the
       # distribution python3 of ubuntu-22.04 is 3.10. Use the builder's own
       # Python and requirements. builder.gui imports tkinter, which needs the
@@ -51,6 +52,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: builder/requirements.txt
+      # The setup screens (Java) are compiled and tested on pull requests too,
+      # not only when the Builder is built after a push.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/cache@v4
+        with:
+          path: vendor/_downloads
+          key: tools-${{ runner.os }}-${{ hashFiles('builder/bootstrap_tools.py', 'builder/*.json') }}
+          restore-keys: tools-${{ runner.os }}-
       - name: Install Tk
         run: |
           sudo apt-get update
@@ -63,6 +77,12 @@ jobs:
         run: npm test
       # The committed loader and core must be what hook.ts builds to: a stale
       # one would publish a different SHA than the APK embeds.
+      - name: Setup screens (Java)
+        run: |
+          python -m builder.bootstrap_tools
+          python android-setup/build.py
+          python android-setup/test_native.py
+          python android-setup/test_prelaunch.py
       - name: Generated files are current
         run: |
           npm run build

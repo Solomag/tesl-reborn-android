@@ -16,14 +16,14 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
-    permissions:
-      contents: write
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: builder/requirements.txt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -31,6 +31,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+      # Tool downloads are checked against their pinned digests, so an old
+      # cache can only save time, never change what is used.
+      - uses: actions/cache@v4
+        with:
+          path: vendor/_downloads
+          key: tools-${{ runner.os }}-${{ hashFiles('builder/bootstrap_tools.py', 'builder/*.json') }}
+          restore-keys: tools-${{ runner.os }}-
       - name: Install dependencies
         run: |
           python -m pip install -r builder/requirements.txt
@@ -80,24 +88,22 @@ jobs:
             dist/THIRD_PARTY_BUILDER.md
             dist/third-party-notices
           retention-days: 14
-      - name: Publish Builder for self-update
-        # Only the main repository's channels: builder-stable from main,
-        # builder-test from the test branch (tools/publish_builder.py).
-        if: github.repository == 'ssorgatem/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python tools/publish_builder.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publish-windows
+          path: dist/TESL-Reborn-Builder.exe
+          retention-days: 1
 
   linux:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: builder/requirements.txt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -105,6 +111,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+      # Tool downloads are checked against their pinned digests, so an old
+      # cache can only save time, never change what is used.
+      - uses: actions/cache@v4
+        with:
+          path: vendor/_downloads
+          key: tools-${{ runner.os }}-${{ hashFiles('builder/bootstrap_tools.py', 'builder/*.json') }}
+          restore-keys: tools-${{ runner.os }}-
       - name: Install desktop dependencies
         run: |
           sudo apt-get update
@@ -136,10 +150,44 @@ jobs:
             dist/TESL-Reborn-Builder-Linux-x86_64.tar.gz
             dist/self-test.json
           retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publish-linux
+          path: dist/TESL-Reborn-Builder
+          retention-days: 1
+
+  # The write token is given only here, to a job that installs nothing: the
+  # build jobs run npm ci, pip and the tool downloads with a read-only one.
+  publish:
+    needs: [windows, linux]
+    if: github.repository == 'ssorgatem/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    # Two pushes in a row must not replace the same release asset at once.
+    concurrency:
+      group: publish-builder-${{ github.ref }}
+      cancel-in-progress: false
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select update channel
+        run: python tools/select_channel.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: publish-windows
+          path: publish/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: publish-linux
+          path: publish/linux
       - name: Publish Builder for self-update
-        # Only the main repository's channels: builder-stable from main,
-        # builder-test from the test branch (tools/publish_builder.py).
-        if: github.repository == 'ssorgatem/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
+        # builder-stable from main, builder-test from the test branch.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python tools/publish_builder.py
+        run: |
+          python tools/publish_builder.py --platform windows --dist publish/windows
+          python tools/publish_builder.py --platform linux --dist publish/linux

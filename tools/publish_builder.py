@@ -10,6 +10,7 @@ nothing else is uploaded. The unsuffixed "transition" copy for Builders made
 before the channel names is removed: those update by hand now. The release is created on
 first use; test is marked as a pre-release.
 """
+import argparse
 import json
 import os
 from pathlib import Path
@@ -28,12 +29,23 @@ def label(executable, build, windows=sys.platform == "win32"):
     return f"[{'Windows' if windows else 'Linux'}]{executable.name} · build {build}"
 
 
-def main():
+def main(argv=None):
+    # CI builds on Windows and Linux with a read-only token and publishes both
+    # from one job of its own: --platform and --dist say whose file this is.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--platform", choices=("windows", "linux"),
+                        default="windows" if sys.platform == "win32" else "linux")
+    parser.add_argument("--dist", type=Path, default=ROOT / "dist")
+    args = parser.parse_args(argv)
     version = json.loads((ROOT / "builder/version.json").read_text(encoding="utf-8"))
     if version.get("build", 0) <= 0:
         raise SystemExit("Not an official build: builder/version.json has no build number")
-    windows = sys.platform == "win32"
-    executable = ROOT / "dist" / ("TESL-Reborn-Builder" + (".exe" if windows else ""))
+    windows = args.platform == "windows"
+    executable = args.dist / ("TESL-Reborn-Builder" + (".exe" if windows else ""))
+    if not executable.is_file():
+        raise SystemExit(f"{executable} is missing")
+    if not os.environ.get("GITHUB_SHA"):
+        raise SystemExit("GITHUB_SHA is not set: run from CI")
     tag = "builder-" + version["channel"]
     channel = version["channel"].capitalize()
     notes = ("Updated by CI; the Builder updates itself from here. "
@@ -44,7 +56,7 @@ def main():
         title = "Builder (" + version["channel"] + ")"
         flags = ["--prerelease"] if version["channel"] == "test" else []
         created = subprocess.run(["gh", "release", "create", tag, "--title", title, "--notes", notes,
-                                  "--target", os.environ.get("GITHUB_SHA", "HEAD"), *flags])
+                                  "--target", os.environ["GITHUB_SHA"], *flags])
         # A parallel job may have created it first.
         if created.returncode != 0 and subprocess.run(["gh", "release", "view", tag], capture_output=True).returncode != 0:
             raise SystemExit("Could not create release " + tag)
@@ -52,7 +64,7 @@ def main():
         subprocess.run(["gh", "release", "edit", tag, "--notes", notes], check=True)
     named = executable.with_name(executable.stem + "-" + version["channel"].capitalize() + executable.suffix)
     shutil.copyfile(executable, named)
-    subprocess.run(["gh", "release", "upload", tag, f"{named}#{label(named, version['build'])}", "--clobber"],
+    subprocess.run(["gh", "release", "upload", tag, f"{named}#{label(named, version['build'], windows)}", "--clobber"],
                    check=True)
     for name in (executable.name, *LEGACY_ASSETS):
         subprocess.run(["gh", "release", "delete-asset", tag, name, "--yes"], capture_output=True)
