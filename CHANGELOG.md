@@ -5,7 +5,13 @@ themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
 first; Stable gets it after testing.
 
-## Patch 284 — Test
+## Patch 285 — Test
+
+- Phones that raise clocks for games (Pixels): the game's job workers,
+  created after the start, now get the performance hints too, and on a
+  phone with one fastest core they leave it to the main thread.
+
+## Patch 284
 
 - Frame pacing no longer jumps when the phone's clock is changed.
 - A downloaded patch that could not be read once (storage busy) is tried

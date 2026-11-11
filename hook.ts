@@ -1378,6 +1378,14 @@ void onLeave (GumInvocationContext * ic) {
       // (12 us median, half of all wall time). Workers at a lower priority
       // (nice +10) wait for a free core instead. Phones with one fastest
       // core first, where this was measured.
+      // Report 137 (Pixel 8 Pro): both lists below were made when the frame
+      // bus started, before Unity creates its job workers: "0 job workers
+      // at nice 10" and hints for 2 threads only. The game's threads are
+      // looked at again a few times after start (on Frida's thread), and
+      // workers found later get both.
+      const threadName = (id: number) => { try { return String((File as any).readAllText(`/proc/self/task/${id}/comm`)).trim(); } catch (_) { return ""; } };
+      let niceWorkers: ((id: number) => boolean) | null = null;
+      const niced = new Set<number>();
       try {
         let oneFastest = false;
         const max = [];
@@ -1387,14 +1395,7 @@ void onLeave (GumInvocationContext * ic) {
         const top = Math.max(...max); oneFastest = top > 0 && max.filter(f => f === top).length === 1;
         if (oneFastest || experiment("workerNice")) {
           const setpriority = new NativeFunction(libc.getExportByName("setpriority"), "int", ["int", "int", "int"]);
-          let changed = 0, failed = 0;
-          for (const id of listThreadIds()) {
-            let name = "";
-            try { name = String((File as any).readAllText(`/proc/self/task/${id}/comm`)).trim(); } catch (_) {}
-            if (!/^Worker Thread/.test(name)) continue;
-            if (setpriority(0, id, 10) === 0) changed++; else failed++;
-          }
-          log(`frame bus: ${changed} job workers at nice 10${failed ? `, ${failed} refused` : ""}`);
+          niceWorkers = (id) => setpriority(0, id, 10) === 0;
         }
       } catch (error) { log(`frame bus: worker priority unchanged: ${error}`); }
       // Reports 110-111 (Pixel 8 Pro): in battle the GPU sat at 150-302 of
@@ -1403,30 +1404,55 @@ void onLeave (GumInvocationContext * ic) {
       // performance hints (ADPF); Unity 2017 sends none. A hint session for
       // the game's main, graphics and worker threads gets the target frame
       // time and, every frame from the native bus, the time the frame took.
+      let hints: ((tids: number[]) => boolean) | null = null;
+      const hinted = new Set<number>();
       try {
         const android = Process.getModuleByName("libandroid.so");
         const getManager = new NativeFunction(android.getExportByName("APerformanceHint_getManager"), "pointer", []);
         const createSession = new NativeFunction(android.getExportByName("APerformanceHint_createSession"), "pointer", ["pointer", "pointer", "size_t", "int64"]);
         const updateTarget = new NativeFunction(android.getExportByName("APerformanceHint_updateTargetWorkDuration"), "int", ["pointer", "int64"]);
         const report = android.getExportByName("APerformanceHint_reportActualWorkDuration");
-        const tids = [];
-        for (const thread of listThreadIds().map(id => ({ id }))) {
-          let name = "";
-          try { name = String((File as any).readAllText(`/proc/self/task/${thread.id}/comm`)).trim(); } catch (_) {}
-          if (/^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(name)) tids.push(thread.id);
-        }
+        // Android 14+: a session's threads can be changed in place.
+        const setThreadsAt = android.findExportByName("APerformanceHint_setThreads");
+        const setThreads = setThreadsAt ? new NativeFunction(setThreadsAt, "int", ["pointer", "pointer", "size_t"]) : null;
+        const closeAt = android.findExportByName("APerformanceHint_closeSession");
+        const closeSession = closeAt ? new NativeFunction(closeAt, "void", ["pointer"]) : null;
         const manager = getManager();
-        if (!manager.isNull() && tids.length) {
+        let session = ptr(0), targetNs = 16666667;
+        if (!manager.isNull()) hints = (tids) => {
           const list = Memory.alloc(4 * tids.length);
           tids.forEach((tid, i) => list.add(4 * i).writeS32(tid));
-          const session = createSession(manager, list, tids.length, 16666667);
-          if (!session.isNull()) {
-            state.add(64).writePointer(session); state.add(72).writePointer(report);
-            adpfTarget = (us) => updateTarget(session, Math.round(us * 1000));
-            log(`frame bus: performance hints for ${tids.length} game threads`);
-          } else log("frame bus: performance hints refused");
-        }
+          if (!session.isNull() && setThreads) return setThreads(session, list, tids.length) === 0;
+          const fresh = createSession(manager, list, tids.length, targetNs);
+          if (fresh.isNull()) return false;
+          const old = session;
+          // The frame bus reads the pointer every frame: the new session is
+          // in place before the old one is closed.
+          session = fresh;
+          state.add(64).writePointer(fresh); state.add(72).writePointer(report);
+          if (!old.isNull() && closeSession) setTimeout(() => { try { closeSession(old); } catch (_) {} }, 1000);
+          return true;
+        };
+        adpfTarget = (us) => { targetNs = Math.round(us * 1000); return session.isNull() ? 0 : updateTarget(session, targetNs); };
       } catch (error) { log(`frame bus: performance hints unavailable: ${error}`); }
+      const tuneThreads = (when: string) => {
+        try {
+          const game = listThreadIds().map(id => ({ id, name: threadName(id) }));
+          const workers = game.filter(t => /^Worker Thread/.test(t.name) && !niced.has(t.id));
+          if (niceWorkers && workers.length) {
+            let changed = 0;
+            for (const t of workers) { niced.add(t.id); if (niceWorkers(t.id)) changed++; }
+            log(`frame bus: ${changed} job workers at nice 10 (${when})`);
+          }
+          const wanted = game.filter(t => /^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(t.name)).map(t => t.id);
+          if (hints && wanted.some(id => !hinted.has(id))) {
+            if (hints(wanted)) { wanted.forEach(id => hinted.add(id)); log(`frame bus: performance hints for ${wanted.length} game threads (${when})`); }
+            else log(`frame bus: performance hints refused (${when})`);
+          }
+        } catch (error) { log(`frame bus: thread tuning failed: ${error}`); }
+      };
+      tuneThreads("start");
+      for (const seconds of [5, 15, 45, 120]) setTimeout(() => tuneThreads(`${seconds} s`), seconds * 1000);
     } catch (error) {
       // The same work in JS, as before the bus: one listener instead of a dozen.
       log(`frame bus: native unavailable, JS fallback: ${error}`);

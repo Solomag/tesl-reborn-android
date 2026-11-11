@@ -4903,6 +4903,15 @@ void onLeave (GumInvocationContext * ic) {
 `, { clock_gettime: libc.getExportByName("clock_gettime"), usleep: libc.getExportByName("usleep"), wake, touch_count: touchCount.isNull() ? noTouch : touchCount, state });
       Interceptor.attach(update, cm);
       log("frame bus: native");
+      const threadName = (id) => {
+        try {
+          return String(File.readAllText(`/proc/self/task/${id}/comm`)).trim();
+        } catch (_) {
+          return "";
+        }
+      };
+      let niceWorkers = null;
+      const niced = /* @__PURE__ */ new Set();
       try {
         let oneFastest = false;
         const max = [];
@@ -4916,52 +4925,75 @@ void onLeave (GumInvocationContext * ic) {
         oneFastest = top > 0 && max.filter((f) => f === top).length === 1;
         if (oneFastest || experiment("workerNice")) {
           const setpriority = new NativeFunction(libc.getExportByName("setpriority"), "int", ["int", "int", "int"]);
-          let changed = 0, failed = 0;
-          for (const id of listThreadIds()) {
-            let name = "";
-            try {
-              name = String(File.readAllText(`/proc/self/task/${id}/comm`)).trim();
-            } catch (_) {
-            }
-            if (!/^Worker Thread/.test(name)) continue;
-            if (setpriority(0, id, 10) === 0) changed++;
-            else failed++;
-          }
-          log(`frame bus: ${changed} job workers at nice 10${failed ? `, ${failed} refused` : ""}`);
+          niceWorkers = (id) => setpriority(0, id, 10) === 0;
         }
       } catch (error) {
         log(`frame bus: worker priority unchanged: ${error}`);
       }
+      let hints = null;
+      const hinted = /* @__PURE__ */ new Set();
       try {
         const android = Process.getModuleByName("libandroid.so");
         const getManager = new NativeFunction(android.getExportByName("APerformanceHint_getManager"), "pointer", []);
         const createSession = new NativeFunction(android.getExportByName("APerformanceHint_createSession"), "pointer", ["pointer", "pointer", "size_t", "int64"]);
         const updateTarget = new NativeFunction(android.getExportByName("APerformanceHint_updateTargetWorkDuration"), "int", ["pointer", "int64"]);
         const report = android.getExportByName("APerformanceHint_reportActualWorkDuration");
-        const tids = [];
-        for (const thread of listThreadIds().map((id) => ({ id }))) {
-          let name = "";
-          try {
-            name = String(File.readAllText(`/proc/self/task/${thread.id}/comm`)).trim();
-          } catch (_) {
-          }
-          if (/^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(name)) tids.push(thread.id);
-        }
+        const setThreadsAt = android.findExportByName("APerformanceHint_setThreads");
+        const setThreads = setThreadsAt ? new NativeFunction(setThreadsAt, "int", ["pointer", "pointer", "size_t"]) : null;
+        const closeAt = android.findExportByName("APerformanceHint_closeSession");
+        const closeSession = closeAt ? new NativeFunction(closeAt, "void", ["pointer"]) : null;
         const manager = getManager();
-        if (!manager.isNull() && tids.length) {
+        let session = ptr(0), targetNs = 16666667;
+        if (!manager.isNull()) hints = (tids) => {
           const list = Memory.alloc(4 * tids.length);
           tids.forEach((tid, i) => list.add(4 * i).writeS32(tid));
-          const session = createSession(manager, list, tids.length, 16666667);
-          if (!session.isNull()) {
-            state.add(64).writePointer(session);
-            state.add(72).writePointer(report);
-            adpfTarget = (us) => updateTarget(session, Math.round(us * 1e3));
-            log(`frame bus: performance hints for ${tids.length} game threads`);
-          } else log("frame bus: performance hints refused");
-        }
+          if (!session.isNull() && setThreads) return setThreads(session, list, tids.length) === 0;
+          const fresh = createSession(manager, list, tids.length, targetNs);
+          if (fresh.isNull()) return false;
+          const old = session;
+          session = fresh;
+          state.add(64).writePointer(fresh);
+          state.add(72).writePointer(report);
+          if (!old.isNull() && closeSession) setTimeout(() => {
+            try {
+              closeSession(old);
+            } catch (_) {
+            }
+          }, 1e3);
+          return true;
+        };
+        adpfTarget = (us) => {
+          targetNs = Math.round(us * 1e3);
+          return session.isNull() ? 0 : updateTarget(session, targetNs);
+        };
       } catch (error) {
         log(`frame bus: performance hints unavailable: ${error}`);
       }
+      const tuneThreads = (when) => {
+        try {
+          const game = listThreadIds().map((id) => ({ id, name: threadName(id) }));
+          const workers = game.filter((t) => /^Worker Thread/.test(t.name) && !niced.has(t.id));
+          if (niceWorkers && workers.length) {
+            let changed = 0;
+            for (const t of workers) {
+              niced.add(t.id);
+              if (niceWorkers(t.id)) changed++;
+            }
+            log(`frame bus: ${changed} job workers at nice 10 (${when})`);
+          }
+          const wanted = game.filter((t) => /^(UnityMain|UnityGfxDeviceW|Worker Thread)/.test(t.name)).map((t) => t.id);
+          if (hints && wanted.some((id) => !hinted.has(id))) {
+            if (hints(wanted)) {
+              wanted.forEach((id) => hinted.add(id));
+              log(`frame bus: performance hints for ${wanted.length} game threads (${when})`);
+            } else log(`frame bus: performance hints refused (${when})`);
+          }
+        } catch (error) {
+          log(`frame bus: thread tuning failed: ${error}`);
+        }
+      };
+      tuneThreads("start");
+      for (const seconds of [5, 15, 45, 120]) setTimeout(() => tuneThreads(`${seconds} s`), seconds * 1e3);
     } catch (error) {
       log(`frame bus: native unavailable, JS fallback: ${error}`);
       const usleep = new NativeFunction(libc.getExportByName("usleep"), "int", ["uint"]);
