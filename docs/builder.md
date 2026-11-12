@@ -73,7 +73,9 @@ Without the window: `TESL-Reborn-Builder-Test.exe --build --xapk original.xapk
 --format apk --log build.log` takes the options of `python -m builder.cli`
 and writes its output to the log; the last line is `BUILD_READY: <folder>` or
 `BUILD_FAILED: <reason>`. `tools/fresh-apk.ps1` downloads the current Stable
-and Test Builders (checked by SHA-256) and builds an *APK only* with each.
+and Test Builders (checked by SHA-256) and builds an *APK only* with each;
+with `-OnlyNew` only when a Builder changed, and `-Register` runs it so every
+hour and at logon (Windows Task Scheduler, this user, no window).
 
 ## Transfer from the PC
 

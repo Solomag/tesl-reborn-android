@@ -15,6 +15,12 @@
       powershell -ExecutionPolicy Bypass -File fresh-apk.ps1
       powershell -ExecutionPolicy Bypass -File fresh-apk.ps1 -Channels test
 
+  With -OnlyNew a channel is built only when its Builder changed since the
+  last APK this script made (<Output>\fresh-apk-state.json). -Register adds
+  a Windows scheduled task for this user that runs it that way every hour
+  and at logon, without a window; -Unregister removes it. Every run appends
+  its outcome to <Output>\fresh-apk.log.
+
 .PARAMETER Folder
   Where the Builders live; the script's own folder by default.
 .PARAMETER Xapk
@@ -25,19 +31,56 @@
   The PC game folder, when the Builder cannot find it by itself.
 .PARAMETER Channels
   stable, test or both (the default).
+.PARAMETER OnlyNew
+  Build a channel only when a new Builder came out.
+.PARAMETER Register
+  Run this script with -OnlyNew every hour and at logon (Task Scheduler).
+.PARAMETER Unregister
+  Remove that scheduled task.
 #>
 param(
     [string]$Folder = $PSScriptRoot,
     [string]$Xapk,
     [string]$Output,
     [string]$Game,
-    [ValidateSet("stable", "test")][string[]]$Channels = @("stable", "test")
+    [ValidateSet("stable", "test")][string[]]$Channels = @("stable", "test"),
+    [switch]$OnlyNew,
+    [switch]$Register,
+    [switch]$Unregister
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"  # Invoke-WebRequest is much faster without the progress bar.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Repository = "ssorgatem/tesl-reborn-android"
+$TaskName = "TESL Reborn fresh APK"
+
+if ($Unregister) {
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Write-Host "Scheduled task '$TaskName' removed"
+    exit 0
+}
+if ($Register) {
+    $script = $PSCommandPath
+    $extra = ""
+    if ($PSBoundParameters.ContainsKey("Xapk")) { $extra += " -Xapk `"$Xapk`"" }
+    if ($PSBoundParameters.ContainsKey("Output")) { $extra += " -Output `"$Output`"" }
+    if ($PSBoundParameters.ContainsKey("Game")) { $extra += " -Game `"$Game`"" }
+    # -File passes each argument as text: one channel, or both by default.
+    if ($Channels.Count -eq 1) { $extra += " -Channels " + $Channels[0] }
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+        -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`" -OnlyNew$extra" `
+        -WorkingDirectory $Folder
+    $hourly = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Hours 1)
+    $logon = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -DontStopIfGoingOnBatteries `
+        -AllowStartIfOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $hourly, $logon -Settings $settings `
+        -Principal $principal -Description "Builds a fresh APK only when a new TESL Reborn Builder comes out ($script)" -Force | Out-Null
+    Write-Host "Scheduled task '$TaskName': every hour and at logon, builds only when a Builder changed"
+    exit 0
+}
 # The first Builder build that can build without its window (--build).
 $FirstHeadlessBuild = 233
 if (-not $Xapk) { $Xapk = Join-Path $Folder "original.xapk" }
@@ -72,7 +115,15 @@ function Update-Builder([string]$Channel) {
         Write-Host "[$Channel] $version installed"
     }
     if ($build -lt $FirstHeadlessBuild) { throw "${name}: $version cannot build without its window yet (needs build $FirstHeadlessBuild or later)" }
-    return $path
+    return [pscustomobject]@{ Path = $path; Sha = $sha; Version = $version }
+}
+
+$StateFile = Join-Path $Output "fresh-apk-state.json"
+function Read-State {
+    try { return (Get-Content -LiteralPath $StateFile -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return [pscustomobject]@{} }
+}
+function Save-State($State) {
+    $State | ConvertTo-Json | Set-Content -LiteralPath $StateFile -Encoding UTF8
 }
 
 function Invoke-Build([string]$Channel, [string]$Builder) {
@@ -101,14 +152,24 @@ function Invoke-Build([string]$Channel, [string]$Builder) {
 }
 
 $results = @()
+$state = Read-State
 foreach ($channel in $Channels) {
     try {
         $builder = Update-Builder $channel
-        $results += "[$channel] " + (Invoke-Build $channel $builder)
+        $built = $state.PSObject.Properties[$channel]
+        if ($OnlyNew -and $built -and $built.Value -eq $builder.Sha) {
+            $results += "[$channel] $($builder.Version): APK already built"
+            continue
+        }
+        $results += "[$channel] $($builder.Version): " + (Invoke-Build $channel $builder.Path)
+        $state | Add-Member -Force -NotePropertyName $channel -NotePropertyValue $builder.Sha
+        Save-State $state
     } catch {
         $results += "[$channel] FAILED: $($_.Exception.Message)"
     }
 }
 Write-Host ""
 $results | ForEach-Object { Write-Host $_ }
+$stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
+$results | ForEach-Object { "$stamp $_" } | Add-Content -LiteralPath (Join-Path $Output "fresh-apk.log") -Encoding UTF8
 if ($results -match "FAILED") { exit 1 }
