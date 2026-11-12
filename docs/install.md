@@ -69,7 +69,7 @@ There are two kinds of updates:
 - **Patches** (fixes in the game itself) arrive over the air. The game downloads
   them in the background and applies them on the next start. No reinstall.
 - **A new APK** is needed only rarely (a new language, changes to the setup
-  screens). Build *APK only* in the Builder's expert mode and install it over
+  screens). Build *APK only* in the Builder and install it over
   the old one: your game data stays.
 
 ### Stable and Test

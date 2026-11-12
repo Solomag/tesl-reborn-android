@@ -13,6 +13,8 @@ offers its update when started.
   had been offered).
 - The transfer over HTTPS no longer writes an error to the log when a
   phone or browser leaves during the secure connection setup.
+- *APK only* and *Data ZIP only* are shown without expert mode, with a line
+  on what each is for. Expert mode keeps the advanced connection options.
 
 ## Patch 287 — Test and Stable
 

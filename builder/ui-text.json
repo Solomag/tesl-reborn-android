@@ -792,19 +792,6 @@
     "es_mx": "Ver QR / conexión",
     "zh_cn": "显示二维码 / 连接"
   },
-  "APK only: installed game data is kept. No languages, OBB or data ZIP are built.": {
-    "en_us": "APK only: installed game data is kept. No languages, OBB or data ZIP are built.",
-    "de_de": "Nur APK: Installierte Spieldaten bleiben erhalten. Keine Sprachen, OBB oder Daten-ZIP.",
-    "es_es": "Solo APK: se conservan los datos instalados. No se crean idiomas, OBB ni ZIP de datos.",
-    "fr_fr": "APK seul : les données installées sont conservées. Aucun pack, OBB ou ZIP de données.",
-    "it_it": "Solo APK: i dati installati restano. Nessuna lingua, OBB o ZIP dati viene creato.",
-    "pl_pl": "Tylko APK: zainstalowane dane pozostają. Bez pakietów językowych, OBB i ZIP.",
-    "pt_br": "Só APK: os dados instalados são mantidos. Sem idiomas, OBB ou ZIP de dados.",
-    "ru_ru": "Только APK: установленные данные сохраняются. Языки, OBB и ZIP с данными не создаются.",
-    "tr_tr": "Yalnızca APK: kurulu oyun verileri korunur. Dil, OBB veya veri ZIP’i oluşturulmaz.",
-    "es_mx": "Solo APK: se conservan los datos instalados. No se crean idiomas, OBB ni ZIP de datos.",
-    "zh_cn": "仅 APK：保留已安装的游戏数据。不会构建语言、OBB 或数据 ZIP。"
-  },
   "Checking files and starting transfer…": {
     "en_us": "Checking files and starting transfer…",
     "de_de": "Dateien prüfen und Übertragung starten…",
@@ -1012,5 +999,31 @@
     "ru_ru": "Сборка отменена. Недоделанная папка удалена.",
     "tr_tr": "Derleme iptal edildi. Yarım kalan çıktı klasörü silindi.",
     "zh_cn": "构建已取消。未完成的输出文件夹已删除。"
+  },
+  "APK only: when the game asks for a new APK; install it over the old one.": {
+    "en_us": "APK only: when the game asks for a new APK; install it over the old one.",
+    "de_de": "Nur APK: wenn das Spiel eine neue APK verlangt; über die alte installieren.",
+    "es_es": "Solo APK: cuando el juego pida un APK nuevo; instálalo sobre el anterior.",
+    "es_mx": "Solo APK: cuando el juego pida un APK nuevo; instálalo sobre el anterior.",
+    "fr_fr": "APK seul : quand le jeu demande un nouvel APK ; installez-le par-dessus l’ancien.",
+    "it_it": "Solo APK: quando il gioco chiede un nuovo APK; installalo sopra il precedente.",
+    "pl_pl": "Tylko APK: gdy gra poprosi o nowy APK; zainstaluj go na starym.",
+    "pt_br": "Somente APK: quando o jogo pedir um APK novo; instale sobre o antigo.",
+    "ru_ru": "Только APK: когда игра просит новый APK; ставится поверх старого.",
+    "tr_tr": "Yalnızca APK: oyun yeni bir APK istediğinde; eskisinin üzerine kurun.",
+    "zh_cn": "仅 APK：游戏提示需要新 APK 时使用，覆盖安装旧版即可。"
+  },
+  "Data ZIP only: to add languages or set up the game data again on a phone that already has the app.": {
+    "en_us": "Data ZIP only: to add languages or set up the game data again on a phone that already has the app.",
+    "de_de": "Nur Daten-ZIP: um Sprachen hinzuzufügen oder die Spieldaten neu einzurichten, wenn die App schon installiert ist.",
+    "es_es": "Solo ZIP de datos: para añadir idiomas o volver a preparar los datos en un teléfono que ya tiene la app.",
+    "es_mx": "Solo ZIP de datos: para agregar idiomas o volver a preparar los datos en un teléfono que ya tiene la app.",
+    "fr_fr": "ZIP de données uniquement : pour ajouter des langues ou réinstaller les données sur un téléphone qui a déjà l’app.",
+    "it_it": "Solo ZIP dei dati: per aggiungere lingue o reinstallare i dati su un telefono che ha già l’app.",
+    "pl_pl": "Tylko ZIP z danymi: aby dodać języki lub ponownie przygotować dane na telefonie, który ma już aplikację.",
+    "pt_br": "Somente ZIP de dados: para adicionar idiomas ou preparar os dados de novo em um celular que já tem o app.",
+    "ru_ru": "Только ZIP с данными: чтобы добавить языки или заново установить данные игры на телефоне, где приложение уже есть.",
+    "tr_tr": "Yalnızca veri ZIP’i: uygulaması zaten kurulu bir telefonda dil eklemek veya oyun verilerini yeniden kurmak için.",
+    "zh_cn": "仅数据 ZIP：在已安装应用的手机上添加语言或重新安装游戏数据时使用。"
   }
 }

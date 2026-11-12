@@ -281,15 +281,22 @@ class BuilderWindow:
         self.default.current(1)
         self.default.pack(side="left", padx=8)
         self.output_options = options
-        self.expert_row = ttk.Frame(root)
-        ttk.Checkbutton(self.expert_row, text="APK only (keep installed game data)",
+        # Building one half for a phone that has the other: shown to
+        # everyone, with what each is for; expert mode keeps only the
+        # transfer server's network options.
+        only = ttk.Frame(root)
+        only.pack(fill="x", pady=(6, 0))
+        ttk.Checkbutton(only, text="APK only (keep installed game data)",
                         variable=self.apk_only, command=self.apk_only_changed).pack(side="left")
-        ttk.Checkbutton(self.expert_row, text="Data ZIP only (keep installed APK)",
+        ttk.Checkbutton(only, text="Data ZIP only (keep installed APK)",
                         variable=self.data_only, command=self.data_only_changed).pack(side="left", padx=12)
+        ttk.Label(root, wraplength=790,
+                  text="APK only: when the game asks for a new APK; install it over the old one.").pack(anchor="w")
+        ttk.Label(root, wraplength=790,
+                  text="Data ZIP only: to add languages or set up the game data again on a phone that already has the app.").pack(anchor="w")
+        self.expert_row = ttk.Frame(root)
         ttk.Button(self.expert_row, text="Advanced connection…",
                    command=self.network_options).pack(side="right")
-        self.expert_hint = ttk.Label(root, wraplength=790,
-            text="APK only: installed game data is kept. No languages, OBB or data ZIP are built.")
         self.build_button = ttk.Button(root, text="Build", command=self.start_build)
         self.build_button.pack(fill="x", pady=8)
         transfer = ttk.LabelFrame(root, text="Transfer game data to phone", padding=6)
@@ -471,10 +478,6 @@ class BuilderWindow:
         if self.expert.get():
             self.expert_row.pack(fill="x", before=self.build_button)
         else:
-            self.apk_only.set(False)
-            self.apk_only_changed()
-            self.data_only.set(False)
-            self.data_only_changed()
             self.expert_row.pack_forget()
 
     def apk_only_changed(self):
@@ -497,10 +500,6 @@ class BuilderWindow:
         if only and self.data_only.get():
             self.data_only.set(False)
         self.build_button.configure(text=self.build_text())
-        if only:
-            self.expert_hint.pack(anchor="w", before=self.build_button)
-        else:
-            self.expert_hint.pack_forget()
 
     def path_row(self, parent, label, variable, directory, filetypes=None):
         row = ttk.Frame(parent)

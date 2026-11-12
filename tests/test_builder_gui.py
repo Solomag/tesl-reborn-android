@@ -74,23 +74,31 @@ class GuiTests(unittest.TestCase):
         self.root = Widget()
         self.form = gui.BuilderWindow(self.root)
 
-    def test_expert_selection_is_cleared_and_restored(self):
+    def test_apk_only_clears_and_restores_the_language_selection(self):
         form = self.form
         form.languages['ru_ru'].set(True)
         form.default.current(9)
-        form.expert.set(True); form.expert_changed()
-        self.assertTrue(form.expert_row.mapped)
+        # APK only and Data ZIP only are offered without expert mode.
+        self.assertFalse(form.expert.get())
         form.apk_only.set(True); form.apk_only_changed()
         self.assertFalse(any(v.get() for v in form.languages.values()))
         self.assertEqual(form.default.get(), '')
         self.assertTrue(all('disabled' in w.states for w in form.language_checks))
-        form.expert.set(False); form.expert_changed()
-        self.assertFalse(form.expert_row.mapped)
-        self.assertFalse(form.apk_only.get())
+        self.assertEqual(form.build_button['text'], 'Build APK only')
+        form.apk_only.set(False); form.apk_only_changed()
         self.assertTrue(form.languages['ru_ru'].get())
         self.assertTrue(form.languages['en_us'].get())
         self.assertEqual(form.default.current(), 9)
         self.assertTrue(all('disabled' not in w.states for w in form.language_checks))
+
+    def test_expert_mode_only_adds_the_connection_options(self):
+        form = self.form
+        form.data_only.set(True); form.data_only_changed()
+        form.expert.set(True); form.expert_changed()
+        self.assertTrue(form.expert_row.mapped)
+        form.expert.set(False); form.expert_changed()
+        self.assertFalse(form.expert_row.mapped)
+        self.assertTrue(form.data_only.get(), 'leaving expert mode keeps the choice')
 
     def test_connection_controls_follow_server_lifetime(self):
         form = self.form

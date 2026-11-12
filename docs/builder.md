@@ -58,11 +58,12 @@ APK: the hook only, without the setup screens, Game data or the launcher.
   the app with *Import data ZIP*, or transfer it over the network (below).
 - **Offline XAPK:** for XAPK installers; the OBB plus an APK with the language
   packs built in.
-- **Expert mode** (remembered between runs) adds:
-  - *APK only:* a new APK for a phone that keeps its installed game data.
-  - *Data ZIP only:* the language packs, OBB and data ZIP for a phone that keeps
-    its installed APK.
-  - *Advanced connection* for the transfer server.
+- *APK only:* a new APK for a phone that keeps its installed game data, when
+  the game asks for a new APK.
+- *Data ZIP only:* the language packs, OBB and data ZIP for a phone that keeps
+  its installed APK: to add languages or set up the game data again.
+- **Expert mode** (remembered between runs) adds *Advanced connection* for the
+  transfer server.
 
 The interface and game languages are chosen separately. Supported game
 languages: en_us, de_de, es_es, es_mx, fr_fr, it_it, pl_pl, pt_br, ru_ru,
