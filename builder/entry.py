@@ -14,6 +14,12 @@ if __name__ == "__main__":
         from builder.selftest import run
 
         run(sys.argv[2], gui=sys.argv[1] == "--self-test")
+    elif len(sys.argv) > 1 and sys.argv[1] == "--build":
+        # A build without the window, with the options of builder/cli.py:
+        # TESL-Reborn-Builder-Test.exe --build --xapk X --format apk --log build.log
+        from builder.cli import main as build_main
+
+        sys.exit(build_main(sys.argv[2:]))
     else:
         from builder.gui import main
 

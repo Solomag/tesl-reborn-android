@@ -69,6 +69,12 @@ tr_tr, and Simplified Chinese (zh_cn, text only: English voices and images).
 
 A running build can be cancelled; its partial output folder is removed.
 
+Without the window: `TESL-Reborn-Builder-Test.exe --build --xapk original.xapk
+--format apk --log build.log` takes the options of `python -m builder.cli`
+and writes its output to the log; the last line is `BUILD_READY: <folder>` or
+`BUILD_FAILED: <reason>`. `tools/fresh-apk.ps1` downloads the current Stable
+and Test Builders (checked by SHA-256) and builds an *APK only* with each.
+
 ## Transfer from the PC
 
 After a build press *Start transfer* and scan the QR code:

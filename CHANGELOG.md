@@ -11,6 +11,12 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## Builder, 12 November 2026 (evening)
+
+- **Builder:** builds without its window with `--build` (the options of
+  `builder.cli`, output to `--log`); `tools/fresh-apk.ps1` fetches the
+  current Builders and builds a fresh APK with each.
+
 ## v2.288 — Test and Stable
 
 - Versions read as **v2.288** (APK level, patch) in the game, the update
