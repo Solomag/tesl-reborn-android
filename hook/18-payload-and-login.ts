@@ -1,3 +1,39 @@
+  const emojiDirectory = () => `${persistentPath()}/tesl-reborn-emojis`;
+  function emojiInstalled(name) {
+    try { return Checksum.compute("sha256", File.readAllBytes(`${emojiDirectory()}/${name}`)) === EMOJI_FILES[name]; } catch (_) { return false; }
+  }
+  // Emojis the APK did not bring: from the official plugin archive, every
+  // file checked against EMOJI_FILES. At most once an hour, and the work is
+  // done on the script's thread, not the game's.
+  function fetchEmojis() {
+    const missing = Object.keys(EMOJI_FILES).filter(name => !emojiInstalled(name));
+    if (!missing.length) return;
+    const stamp = `${emojiDirectory()}/fetch.json`;
+    try { if (Date.now() - Number(JSON.parse(readTextFile(stamp) || "{}").at || 0) < 3600000) return; } catch (_) {}
+    makeDirectory(emojiDirectory());
+    writeTextFile(stamp, JSON.stringify({ at: Date.now(), url: EMOJI_SOURCE.url }));
+    log(`emojis: ${missing.join(", ")} missing; fetching the Reborn plugin archive`);
+    httpGetBytes(EMOJI_SOURCE.url, (status, bytes) => {
+      if (!bytes) { log(`emojis: download failed (HTTP ${status})`); return; }
+      setTimeout(() => {
+        try {
+          const archive = new Uint8Array(bytes);
+          if (Checksum.compute("sha256", bytes) !== EMOJI_SOURCE.sha256) throw Error("the archive is not the expected plugin release");
+          for (const name of missing) {
+            const data = zipEntry(archive, EMOJI_SOURCE.folder + name);
+            if (!data) throw Error(`${name} is not in the archive`);
+            if (Checksum.compute("sha256", data.buffer) !== EMOJI_FILES[name]) throw Error(`${name} failed verification`);
+            const target = `${emojiDirectory()}/${name}`, part = target + ".part", out = new File(part, "wb");
+            try { out.write(data.buffer); out.flush(); } finally { out.close(); }
+            if (!atomicRename(part, target)) throw Error(`could not save ${name}`);
+          }
+          emojiInitAttempted = false;  // the chat loads them on its next use
+          log(`emojis: installed ${missing.join(", ")} from the plugin archive`);
+        } catch (e) { log(`emojis: ${e}`); }
+      }, 0);
+    });
+  }
+
   section("payload from the apk", () => {
     const apk = apkPath();
     if (!apk) { log("payload: the apk was not found"); return; }
@@ -6,23 +42,15 @@
     try {
     // Keep Reborn artwork out of git, but install the verified build resources
     // from the APK so a clean installation does not require an ADB asset push.
-    const emojiHashes = {
-      "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
-      "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa"
-    };
-    for (const [name, expected] of Object.entries(emojiHashes)) {
+    // An APK with other emojis (an older plugin) leaves them to the download.
+    for (const name of Object.keys(EMOJI_FILES)) {
+      if (emojiInstalled(name)) continue;
       const entry = zip.find(`assets/tesl-reborn/emojis/${name}`);
-      if (!entry) { log(`emoji payload: missing ${name}`); continue; }
-      if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) throw Error("Invalid emoji APK entry");
-      const directory = `${persistentPath()}/tesl-reborn-emojis`;
-      const target = `${directory}/${name}`;
-      let current = false;
-      try { current = Checksum.compute("sha256", File.readAllBytes(target)) === expected; } catch (_) {}
-      if (current) continue;
-      makeDirectory(directory);
-      zip.copy(entry, target);
-      if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid emoji payload: ${name}`);
-      log(`emoji payload: restored ${name}`);
+      if (!entry) { log(`emoji payload: ${name} is not in the APK`); continue; }
+      if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) { log(`emoji payload: ${name} in the APK is not usable`); continue; }
+      makeDirectory(emojiDirectory());
+      zip.copy(entry, `${emojiDirectory()}/${name}`);
+      log(emojiInstalled(name) ? `emoji payload: restored ${name}` : `emoji payload: ${name} in the APK is another version`);
     }
     // Simplified Chinese is a text-only language: the dictionary and the
     // atlas of its font come with the APK (languages/zh_cn in the repository).
@@ -124,6 +152,7 @@
     }
     } finally { zip.close(); }
   });
+  section("emojis from the plugin archive", () => schedule(20000, fetchEmojis, "emoji check"));
 
   // The path of the APK of the game, taken from the streaming assets path.
   // Discover the package's APK even when an OBB is installed.  On Android

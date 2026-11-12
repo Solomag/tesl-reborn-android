@@ -11,6 +11,13 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.290 — Test
+
+- Chat emojis no longer depend on the APK: a phone whose APK lacks them, or
+  has those of an older Reborn plugin, takes them from the official plugin
+  archive once (2 MB, every file checked). A Reborn plugin update with new
+  emojis then needs only a patch.
+
 ## Builder, 12 November 2026 (evening)
 
 - **Builder:** builds without its window with `--build` (the options of

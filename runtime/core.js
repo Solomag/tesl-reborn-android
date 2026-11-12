@@ -3525,6 +3525,15 @@ const COMPONENT_TYPE = "win";
 const MAJOR_VERSION = "db-630167952";
 const CHANGELIST = "317259";
 const TAG = "[tesl-hook]";
+const EMOJI_SOURCE = {
+  url: "https://tesl-reborn.com/download/tesl-reborn-plugin-1.3.1-beta.zip",
+  sha256: "4b4644fa2b0c65065739d27ec94ef08d5670fc42a98b2d423de4b634aaf64848",
+  folder: "BepInEx/plugins/TeslRebornPlugin/data/images/emojis/"
+};
+const EMOJI_FILES = {
+  "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
+  "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa"
+};
 let androidLogWrite = null;
 try {
   androidLogWrite = new NativeFunction(
@@ -3978,6 +3987,152 @@ function invokeDelegatePtr(del, value) {
   const method = del.method("Invoke"), handle = value?.handle ?? value;
   const argument = method.parameters[0].type.name === "System.String" ? new Il2Cpp.String(handle) : new Il2Cpp.Object(handle);
   method.invoke(argument);
+}
+function inflateRaw(input, expectedSize) {
+  const out = new Uint8Array(expectedSize);
+  let op = 0, ip = 0, bitBuf = 0, bitCnt = 0;
+  const bits = (n) => {
+    while (bitCnt < n) {
+      if (ip >= input.length) throw Error("inflate: truncated data");
+      bitBuf |= input[ip++] << bitCnt;
+      bitCnt += 8;
+    }
+    const value = bitBuf & (1 << n) - 1;
+    bitBuf >>>= n;
+    bitCnt -= n;
+    return value;
+  };
+  const table = (lengths, n) => {
+    const counts = new Uint16Array(16), offsets = new Uint16Array(16), symbols = new Uint16Array(n);
+    for (let i = 0; i < n; i++) counts[lengths[i]]++;
+    counts[0] = 0;
+    for (let i = 1; i < 16; i++) offsets[i] = offsets[i - 1] + counts[i - 1];
+    for (let i = 0; i < n; i++) if (lengths[i]) symbols[offsets[lengths[i]]++] = i;
+    return { counts, symbols };
+  };
+  const decode = (t) => {
+    let code = 0, first = 0, index = 0;
+    for (let len = 1; len < 16; len++) {
+      code |= bits(1);
+      const count = t.counts[len];
+      if (code - first < count) return t.symbols[index + code - first];
+      index += count;
+      first = first + count << 1;
+      code <<= 1;
+    }
+    throw Error("inflate: bad code");
+  };
+  const LENGTH_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+  const LENGTH_EXTRA = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  const DIST_BASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+  const DIST_EXTRA = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+  const ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+  let last = 0;
+  while (!last) {
+    last = bits(1);
+    const type = bits(2);
+    if (type === 0) {
+      bitBuf = 0;
+      bitCnt = 0;
+      if (ip + 4 > input.length) throw Error("inflate: truncated block");
+      const len = input[ip] | input[ip + 1] << 8, nlen = input[ip + 2] | input[ip + 3] << 8;
+      if ((len ^ 65535) !== nlen) throw Error("inflate: bad stored block");
+      ip += 4;
+      if (ip + len > input.length || op + len > out.length) throw Error("inflate: stored block too long");
+      out.set(input.subarray(ip, ip + len), op);
+      ip += len;
+      op += len;
+      continue;
+    }
+    let lit, dist;
+    if (type === 1) {
+      const lengths = new Uint8Array(288);
+      lengths.fill(8, 0, 144);
+      lengths.fill(9, 144, 256);
+      lengths.fill(7, 256, 280);
+      lengths.fill(8, 280, 288);
+      lit = table(lengths, 288);
+      dist = table(new Uint8Array(30).fill(5), 30);
+    } else if (type === 2) {
+      const hlit = bits(5) + 257, hdist = bits(5) + 1, hclen = bits(4) + 4;
+      const codeLengths = new Uint8Array(19);
+      for (let i = 0; i < hclen; i++) codeLengths[ORDER[i]] = bits(3);
+      const codes = table(codeLengths, 19);
+      const lengths = new Uint8Array(hlit + hdist);
+      for (let i = 0; i < hlit + hdist; ) {
+        const symbol = decode(codes);
+        if (symbol < 16) {
+          lengths[i++] = symbol;
+          continue;
+        }
+        let repeat, value = 0;
+        if (symbol === 16) {
+          if (!i) throw Error("inflate: repeat without a length");
+          value = lengths[i - 1];
+          repeat = 3 + bits(2);
+        } else repeat = symbol === 17 ? 3 + bits(3) : 11 + bits(7);
+        if (i + repeat > lengths.length) throw Error("inflate: too many lengths");
+        lengths.fill(value, i, i + repeat);
+        i += repeat;
+      }
+      lit = table(lengths.subarray(0, hlit), hlit);
+      dist = table(lengths.subarray(hlit), hdist);
+    } else throw Error("inflate: bad block type");
+    for (; ; ) {
+      const symbol = decode(lit);
+      if (symbol < 256) {
+        if (op >= out.length) throw Error("inflate: output too long");
+        out[op++] = symbol;
+        continue;
+      }
+      if (symbol === 256) break;
+      const index = symbol - 257;
+      if (index >= 29) throw Error("inflate: bad length");
+      const length = LENGTH_BASE[index] + bits(LENGTH_EXTRA[index]);
+      const distSymbol = decode(dist);
+      if (distSymbol >= 30) throw Error("inflate: bad distance");
+      const distance = DIST_BASE[distSymbol] + bits(DIST_EXTRA[distSymbol]);
+      if (distance > op) throw Error("inflate: distance before the start");
+      if (op + length > out.length) throw Error("inflate: output too long");
+      for (let i = 0; i < length; i++, op++) out[op] = out[op - distance];
+    }
+  }
+  if (op !== out.length) throw Error(`inflate: ${op} bytes instead of ${out.length}`);
+  return out;
+}
+function zipEntry(zip, name) {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  let eocd = -1;
+  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 65558); i--) {
+    if (view.getUint32(i, true) === 101010256) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw Error("zip: no central directory");
+  const count = view.getUint16(eocd + 10, true);
+  let at = view.getUint32(eocd + 16, true);
+  for (let i = 0; i < count; i++) {
+    if (at + 46 > zip.length || view.getUint32(at, true) !== 33639248) throw Error("zip: bad central directory");
+    const method = view.getUint16(at + 10, true), packed = view.getUint32(at + 20, true), size = view.getUint32(at + 24, true);
+    const nameLen = view.getUint16(at + 28, true), extraLen = view.getUint16(at + 30, true), commentLen = view.getUint16(at + 32, true);
+    const offset = view.getUint32(at + 42, true);
+    let entryName = "";
+    for (let k = 0; k < nameLen; k++) entryName += String.fromCharCode(zip[at + 46 + k]);
+    at += 46 + nameLen + extraLen + commentLen;
+    if (entryName !== name) continue;
+    if (offset + 30 > zip.length || view.getUint32(offset, true) !== 67324752) throw Error("zip: bad local header");
+    const start = offset + 30 + view.getUint16(offset + 26, true) + view.getUint16(offset + 28, true);
+    if (start + packed > zip.length) throw Error("zip: entry past the end");
+    const data = zip.subarray(start, start + packed);
+    if (method === 0) {
+      if (packed !== size) throw Error("zip: bad stored entry");
+      return data.slice();
+    }
+    if (method === 8) return inflateRaw(data, size);
+    throw Error(`zip: unsupported method ${method}`);
+  }
+  return null;
 }
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
@@ -4786,6 +4941,38 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
       } catch (e) {
         log(`GET ${url} setup failed at ${stage}: ${e}`);
         cb(-1, String(e));
+      }
+    });
+  }
+  function httpGetBytes(url, cb) {
+    schedule(0, () => {
+      try {
+        const uri = ucls("System.Uri").alloc();
+        uri.method(".ctor").overload("System.String").invoke(Il2Cpp.string(url));
+        const del = Il2Cpp.delegate(cls(img, "BestHTTP.OnRequestFinishedDelegate"), (req2, resp) => {
+          try {
+            if (isNull(resp)) {
+              log(`GET ${url} failed: no response`);
+              cb(-1, null);
+              return;
+            }
+            const status = Number(call(resp, "get_StatusCode"));
+            const data = call(resp, "get_Data");
+            const bytes = status === 200 && !isNull(data) && data.length > 0 ? data.elements.handle.readByteArray(data.length) : null;
+            log(`GET ${url} completed: HTTP ${status}, ${bytes ? bytes.byteLength : 0} bytes`);
+            cb(status, bytes);
+          } catch (e) {
+            log(`GET ${url} callback failed: ${e}`);
+            cb(-1, null);
+          }
+        });
+        const req = cls(img, "BestHTTP.HTTPRequest").alloc();
+        req.method(".ctor").overload("System.Uri", "BestHTTP.OnRequestFinishedDelegate").invoke(uri, del);
+        req.method("Send").invoke();
+        log(`GET ${url} queued`);
+      } catch (e) {
+        log(`GET ${url} setup failed: ${e}`);
+        cb(-1, null);
       }
     });
   }
@@ -6461,6 +6648,55 @@ void onLeave (GumInvocationContext * ic) {
       return entry.offset + 30 + head.getUint16(26, true) + head.getUint16(28, true);
     }
   }
+  const emojiDirectory = () => `${persistentPath()}/tesl-reborn-emojis`;
+  function emojiInstalled(name) {
+    try {
+      return Checksum.compute("sha256", File.readAllBytes(`${emojiDirectory()}/${name}`)) === EMOJI_FILES[name];
+    } catch (_) {
+      return false;
+    }
+  }
+  function fetchEmojis() {
+    const missing = Object.keys(EMOJI_FILES).filter((name) => !emojiInstalled(name));
+    if (!missing.length) return;
+    const stamp = `${emojiDirectory()}/fetch.json`;
+    try {
+      if (Date.now() - Number(JSON.parse(readTextFile(stamp) || "{}").at || 0) < 36e5) return;
+    } catch (_) {
+    }
+    makeDirectory(emojiDirectory());
+    writeTextFile(stamp, JSON.stringify({ at: Date.now(), url: EMOJI_SOURCE.url }));
+    log(`emojis: ${missing.join(", ")} missing; fetching the Reborn plugin archive`);
+    httpGetBytes(EMOJI_SOURCE.url, (status, bytes) => {
+      if (!bytes) {
+        log(`emojis: download failed (HTTP ${status})`);
+        return;
+      }
+      setTimeout(() => {
+        try {
+          const archive = new Uint8Array(bytes);
+          if (Checksum.compute("sha256", bytes) !== EMOJI_SOURCE.sha256) throw Error("the archive is not the expected plugin release");
+          for (const name of missing) {
+            const data = zipEntry(archive, EMOJI_SOURCE.folder + name);
+            if (!data) throw Error(`${name} is not in the archive`);
+            if (Checksum.compute("sha256", data.buffer) !== EMOJI_FILES[name]) throw Error(`${name} failed verification`);
+            const target = `${emojiDirectory()}/${name}`, part = target + ".part", out = new File(part, "wb");
+            try {
+              out.write(data.buffer);
+              out.flush();
+            } finally {
+              out.close();
+            }
+            if (!atomicRename(part, target)) throw Error(`could not save ${name}`);
+          }
+          emojiInitAttempted = false;
+          log(`emojis: installed ${missing.join(", ")} from the plugin archive`);
+        } catch (e) {
+          log(`emojis: ${e}`);
+        }
+      }, 0);
+    });
+  }
   section("payload from the apk", () => {
     const apk = apkPath();
     if (!apk) {
@@ -6470,29 +6706,20 @@ void onLeave (GumInvocationContext * ic) {
     const zip = new ZipReader(apk);
     if (!zip.valid()) return;
     try {
-      const emojiHashes = {
-        "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
-        "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa"
-      };
-      for (const [name, expected] of Object.entries(emojiHashes)) {
+      for (const name of Object.keys(EMOJI_FILES)) {
+        if (emojiInstalled(name)) continue;
         const entry = zip.find(`assets/tesl-reborn/emojis/${name}`);
         if (!entry) {
-          log(`emoji payload: missing ${name}`);
+          log(`emoji payload: ${name} is not in the APK`);
           continue;
         }
-        if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) throw Error("Invalid emoji APK entry");
-        const directory = `${persistentPath()}/tesl-reborn-emojis`;
-        const target = `${directory}/${name}`;
-        let current = false;
-        try {
-          current = Checksum.compute("sha256", File.readAllBytes(target)) === expected;
-        } catch (_) {
+        if (entry.method !== 0 || entry.size > 2 * 1024 * 1024) {
+          log(`emoji payload: ${name} in the APK is not usable`);
+          continue;
         }
-        if (current) continue;
-        makeDirectory(directory);
-        zip.copy(entry, target);
-        if (Checksum.compute("sha256", File.readAllBytes(target)) !== expected) throw Error(`Invalid emoji payload: ${name}`);
-        log(`emoji payload: restored ${name}`);
+        makeDirectory(emojiDirectory());
+        zip.copy(entry, `${emojiDirectory()}/${name}`);
+        log(emojiInstalled(name) ? `emoji payload: restored ${name}` : `emoji payload: ${name} in the APK is another version`);
       }
       const chineseFiles = {
         "zh_cn.json": ["tesl-localization-zh_cn.json", "a907539a59efadd7fd249d4ceb4f9a5b4606d9e7c47680ea8f5617ccb17177b8", 1497505],
@@ -6600,6 +6827,7 @@ void onLeave (GumInvocationContext * ic) {
       zip.close();
     }
   });
+  section("emojis from the plugin archive", () => schedule(2e4, fetchEmojis, "emoji check"));
   function apkPath() {
     try {
       const f = new File("/proc/self/maps", "rb");
@@ -10326,7 +10554,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     try {
       const path = `${persistentPath()}/tesl-reborn-emojis`;
       const jsonBytes = File.readAllBytes(`${path}/people.json`), pngBytes = File.readAllBytes(`${path}/people.png`);
-      if (Checksum.compute("sha256", jsonBytes) !== "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d" || Checksum.compute("sha256", pngBytes) !== "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa") throw Error("Emoji resource checksum mismatch");
+      if (Checksum.compute("sha256", jsonBytes) !== EMOJI_FILES["people.json"] || Checksum.compute("sha256", pngBytes) !== EMOJI_FILES["people.png"]) throw Error("Emoji resource checksum mismatch");
       const definition = JSON.parse(File.readAllText(`${path}/people.json`));
       const shader = ucls("UnityEngine.Shader").method("Find", 1).invoke(Il2Cpp.string("TextMeshPro/Sprite"));
       if (isNull(shader)) throw Error("TextMeshPro/Sprite shader is unavailable");
@@ -11410,16 +11638,16 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   const APK_LEVEL = 2;
   const patchVersion = (revision) => `v${APK_LEVEL}.${revision}`;
   const PATCH_NOTES = {
-    en: "New: versions read as APK level.patch; a game that freezes after you come back restarts by itself.",
-    ru: "\u041D\u043E\u0432\u043E\u0435: \u0432\u0435\u0440\u0441\u0438\u044F \u0442\u0435\u043F\u0435\u0440\u044C \u0432 \u0432\u0438\u0434\u0435 \xAB\u0443\u0440\u043E\u0432\u0435\u043D\u044C APK.\u043F\u0430\u0442\u0447\xBB; \u0438\u0433\u0440\u0430, \u0437\u0430\u0432\u0438\u0441\u0448\u0430\u044F \u043F\u043E\u0441\u043B\u0435 \u0432\u043E\u0437\u0432\u0440\u0430\u0442\u0430, \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A\u0430\u0435\u0442\u0441\u044F \u0441\u0430\u043C\u0430.",
-    de: "Neu: Versionen lauten jetzt \u201EAPK-Stufe.Patch\u201C; ein nach der R\xFCckkehr eingefrorenes Spiel startet von selbst neu.",
-    es: "Novedades: la versi\xF3n ahora es \xABnivel de APK.parche\xBB; si el juego se congela al volver, se reinicia solo.",
-    fr: "Nouveau : la version s\u2019\xE9crit d\xE9sormais \xAB niveau d\u2019APK.patch \xBB ; un jeu fig\xE9 au retour red\xE9marre tout seul.",
-    it: "Novit\xE0: la versione ora \xE8 \xABlivello APK.patch\xBB; se il gioco si blocca al ritorno, si riavvia da solo.",
-    pl: "Nowe: wersja ma teraz posta\u0107 \u201Epoziom APK.\u0142atka\u201D; gra zawieszona po powrocie uruchamia si\u0119 ponownie sama.",
-    pt: "Novo: a vers\xE3o agora \xE9 \u201Cn\xEDvel do APK.patch\u201D; se o jogo travar ao voltar, ele reinicia sozinho.",
-    tr: "Yeni: s\xFCr\xFCm art\u0131k \u201CAPK d\xFCzeyi.yama\u201D bi\xE7iminde; geri d\xF6n\xFCnce donan oyun kendili\u011Finden yeniden ba\u015Flar.",
-    zh: "\u65B0\u5185\u5BB9\uFF1A\u7248\u672C\u53F7\u6539\u4E3A\u201CAPK \u7EA7\u522B.\u8865\u4E01\u201D\uFF1B\u8FD4\u56DE\u540E\u5361\u4F4F\u7684\u6E38\u620F\u4F1A\u81EA\u52A8\u91CD\u542F\u3002"
+    en: "New: chat emojis arrive by themselves when the APK lacks them; future Reborn emoji updates need no new APK.",
+    ru: "\u041D\u043E\u0432\u043E\u0435: \u044D\u043C\u043E\u0434\u0437\u0438 \u0432 \u0447\u0430\u0442\u0435 \u0441\u043A\u0430\u0447\u0438\u0432\u0430\u044E\u0442\u0441\u044F \u0441\u0430\u043C\u0438, \u0435\u0441\u043B\u0438 \u0438\u0445 \u043D\u0435\u0442 \u0432 APK; \u043D\u043E\u0432\u044B\u0435 \u044D\u043C\u043E\u0434\u0437\u0438 Reborn \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0435 \u043F\u043E\u0442\u0440\u0435\u0431\u0443\u044E\u0442 \u043D\u043E\u0432\u043E\u0433\u043E APK.",
+    de: "Neu: Chat-Emojis werden selbst geladen, wenn sie in der APK fehlen; neue Reborn-Emojis brauchen keine neue APK mehr.",
+    es: "Novedades: los emojis del chat se descargan solos si faltan en el APK; los nuevos emojis de Reborn ya no necesitar\xE1n un APK nuevo.",
+    fr: "Nouveau : les emojis du chat se t\xE9l\xE9chargent seuls s\u2019ils manquent dans l\u2019APK ; les nouveaux emojis Reborn ne demanderont plus de nouvel APK.",
+    it: "Novit\xE0: le emoji della chat si scaricano da sole se mancano nell\u2019APK; le nuove emoji di Reborn non richiederanno un nuovo APK.",
+    pl: "Nowe: emoji czatu pobieraj\u0105 si\u0119 same, je\u015Bli brakuje ich w APK; nowe emoji Reborn nie b\u0119d\u0105 wymaga\u0107 nowego APK.",
+    pt: "Novo: os emojis do chat s\xE3o baixados sozinhos se faltarem no APK; novos emojis do Reborn n\xE3o v\xE3o exigir um APK novo.",
+    tr: "Yeni: APK\u2019da yoksa sohbet emojileri kendili\u011Finden indirilir; yeni Reborn emojileri art\u0131k yeni APK gerektirmez.",
+    zh: "\u65B0\u5185\u5BB9\uFF1AAPK \u4E2D\u7F3A\u5C11\u804A\u5929\u8868\u60C5\u65F6\u4F1A\u81EA\u52A8\u4E0B\u8F7D\uFF1B\u4EE5\u540E Reborn \u7684\u65B0\u8868\u60C5\u65E0\u9700\u65B0\u7684 APK\u3002"
   };
   function createUpdateNotices(updater, io) {
     let downloadStarted = false, lastStatus = "";

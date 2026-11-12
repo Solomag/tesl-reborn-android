@@ -20,8 +20,8 @@ const emojiByName = new Map(), emojiByAscii = new Map();
     try {
       const path = `${persistentPath()}/tesl-reborn-emojis`;
       const jsonBytes = File.readAllBytes(`${path}/people.json`), pngBytes = File.readAllBytes(`${path}/people.png`);
-      if (Checksum.compute("sha256", jsonBytes) !== "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d" ||
-          Checksum.compute("sha256", pngBytes) !== "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa") throw Error("Emoji resource checksum mismatch");
+      if (Checksum.compute("sha256", jsonBytes) !== EMOJI_FILES["people.json"] ||
+          Checksum.compute("sha256", pngBytes) !== EMOJI_FILES["people.png"]) throw Error("Emoji resource checksum mismatch");
       const definition = JSON.parse(File.readAllText(`${path}/people.json`));
       const shader = ucls("UnityEngine.Shader").method("Find", 1).invoke(Il2Cpp.string("TextMeshPro/Sprite"));
       if (isNull(shader)) throw Error("TextMeshPro/Sprite shader is unavailable");

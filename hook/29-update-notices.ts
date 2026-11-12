@@ -7,16 +7,16 @@
   // What this patch brings, one line per language, shown with "update
   // applied". Rewrite it with every patch (CHANGELOG.md has the full list).
   const PATCH_NOTES = {
-    en: "New: versions read as APK level.patch; a game that freezes after you come back restarts by itself.",
-    ru: "Новое: версия теперь в виде «уровень APK.патч»; игра, зависшая после возврата, перезапускается сама.",
-    de: "Neu: Versionen lauten jetzt „APK-Stufe.Patch“; ein nach der Rückkehr eingefrorenes Spiel startet von selbst neu.",
-    es: "Novedades: la versión ahora es «nivel de APK.parche»; si el juego se congela al volver, se reinicia solo.",
-    fr: "Nouveau : la version s’écrit désormais « niveau d’APK.patch » ; un jeu figé au retour redémarre tout seul.",
-    it: "Novità: la versione ora è «livello APK.patch»; se il gioco si blocca al ritorno, si riavvia da solo.",
-    pl: "Nowe: wersja ma teraz postać „poziom APK.łatka”; gra zawieszona po powrocie uruchamia się ponownie sama.",
-    pt: "Novo: a versão agora é “nível do APK.patch”; se o jogo travar ao voltar, ele reinicia sozinho.",
-    tr: "Yeni: sürüm artık “APK düzeyi.yama” biçiminde; geri dönünce donan oyun kendiliğinden yeniden başlar.",
-    zh: "新内容：版本号改为“APK 级别.补丁”；返回后卡住的游戏会自动重启。"
+    en: "New: chat emojis arrive by themselves when the APK lacks them; future Reborn emoji updates need no new APK.",
+    ru: "Новое: эмодзи в чате скачиваются сами, если их нет в APK; новые эмодзи Reborn больше не потребуют нового APK.",
+    de: "Neu: Chat-Emojis werden selbst geladen, wenn sie in der APK fehlen; neue Reborn-Emojis brauchen keine neue APK mehr.",
+    es: "Novedades: los emojis del chat se descargan solos si faltan en el APK; los nuevos emojis de Reborn ya no necesitarán un APK nuevo.",
+    fr: "Nouveau : les emojis du chat se téléchargent seuls s’ils manquent dans l’APK ; les nouveaux emojis Reborn ne demanderont plus de nouvel APK.",
+    it: "Novità: le emoji della chat si scaricano da sole se mancano nell’APK; le nuove emoji di Reborn non richiederanno un nuovo APK.",
+    pl: "Nowe: emoji czatu pobierają się same, jeśli brakuje ich w APK; nowe emoji Reborn nie będą wymagać nowego APK.",
+    pt: "Novo: os emojis do chat são baixados sozinhos se faltarem no APK; novos emojis do Reborn não vão exigir um APK novo.",
+    tr: "Yeni: APK’da yoksa sohbet emojileri kendiliğinden indirilir; yeni Reborn emojileri artık yeni APK gerektirmez.",
+    zh: "新内容：APK 中缺少聊天表情时会自动下载；以后 Reborn 的新表情无需新的 APK。"
   };
   function createUpdateNotices(updater, io) {
     let downloadStarted = false, lastStatus = "";

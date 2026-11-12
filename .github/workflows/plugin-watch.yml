@@ -1,0 +1,46 @@
+name: Reborn plugin watch
+# Once a day: is there a Reborn PC plugin newer than the one the hook
+# follows (PLUGIN_VERSION)? When there is, this run fails and its summary
+# holds the report of tools/plugin_watch.py: GitHub mails a failed scheduled
+# run to whoever last changed this schedule. Only the public plugin archive
+# is read; nothing is uploaded or committed.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check the download page
+        id: latest
+        run: |
+          set +e
+          python tools/plugin_watch.py latest | tee latest.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "$code" = 3 ]; then
+            echo "new=$(sed -n 's/^NEW_PLUGIN: //p' latest.txt)" >> "$GITHUB_OUTPUT"
+          elif [ "$code" != 0 ]; then
+            exit "$code"
+          fi
+          echo "pinned=$(python -c 'import sys; sys.path.insert(0, "tools"); import plugin_watch; print(plugin_watch.pinned_version())')" >> "$GITHUB_OUTPUT"
+      - name: Report what changed
+        if: steps.latest.outputs.new != ''
+        run: |
+          pip install dnfile==0.18.0
+          python tools/plugin_watch.py diff "${{ steps.latest.outputs.pinned }}" "${{ steps.latest.outputs.new }}" --report report.md > /dev/null
+          {
+            echo "A new Reborn plugin: ${{ steps.latest.outputs.new }} (the hook follows ${{ steps.latest.outputs.pinned }})."
+            echo
+            cat report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Reborn plugin ${{ steps.latest.outputs.new }} is out; the hook follows ${{ steps.latest.outputs.pinned }}. See the run summary."
+          exit 1

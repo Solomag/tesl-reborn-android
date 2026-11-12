@@ -345,6 +345,31 @@
     });
   }
 
+  // A GET of a file (the plugin archive): its bytes, or null. Same stack as
+  // httpGet; the copy out of the managed array is one native read.
+  function httpGetBytes(url, cb) {
+    schedule(0, () => {
+      try {
+        const uri = ucls("System.Uri").alloc();
+        uri.method(".ctor").overload("System.String").invoke(Il2Cpp.string(url));
+        const del = Il2Cpp.delegate(cls(img, "BestHTTP.OnRequestFinishedDelegate"), (req, resp) => {
+          try {
+            if (isNull(resp)) { log(`GET ${url} failed: no response`); cb(-1, null); return; }
+            const status = Number(call(resp, "get_StatusCode"));
+            const data = call(resp, "get_Data");
+            const bytes = status === 200 && !isNull(data) && data.length > 0 ? data.elements.handle.readByteArray(data.length) : null;
+            log(`GET ${url} completed: HTTP ${status}, ${bytes ? bytes.byteLength : 0} bytes`);
+            cb(status, bytes);
+          } catch (e) { log(`GET ${url} callback failed: ${e}`); cb(-1, null); }
+        });
+        const req = cls(img, "BestHTTP.HTTPRequest").alloc();
+        req.method(".ctor").overload("System.Uri", "BestHTTP.OnRequestFinishedDelegate").invoke(uri, del);
+        req.method("Send").invoke();
+        log(`GET ${url} queued`);
+      } catch (e) { log(`GET ${url} setup failed: ${e}`); cb(-1, null); }
+    });
+  }
+
     section("rewards refresh", () => {
     const pubSub = cls(img, "SparkleServices.PubSub");
     const createPush = pubSub.method("CreatePushNotification");

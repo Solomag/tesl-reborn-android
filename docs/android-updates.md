@@ -101,8 +101,25 @@ all of `build_apk.py` from a clean base APK.
 ## PC plugin
 
 Reborn's PC DLL cannot be used as a drop-in replacement for this hook: it depends
-on BepInEx/Harmony and managed Unity bindings, while this game uses IL2CPP.
-Data extraction, upstream DLL metadata/IL diffing and generated patch scaffolds
-can be automated. Shared source with platform adapters is a stronger long-term
-solution. Hosting a CLR and implementing compatible Android interop is another,
-larger engineering path, not a universal DLL-to-JavaScript conversion.
+on BepInEx/Harmony and managed Unity bindings, while this game uses IL2CPP. The
+hook re-implements its patches, so a new plugin release reaches phones as an
+ordinary patch, without a new APK, data or Builder:
+
+1. **Noticed:** `.github/workflows/plugin-watch.yml` checks
+   tesl-reborn.com/download every day; when the plugin there is not
+   `PLUGIN_VERSION` (hook/00-config-and-log.ts), the run fails and its summary
+   holds the report below. `python tools/plugin_watch.py latest` does the
+   same check by hand.
+2. **What changed:** `python tools/plugin_watch.py diff <old> <new>`
+   (needs `pip install dnfile`): files of the archive, Harmony patch targets,
+   methods whose code changed (metadata tokens compared by name, so moved
+   strings and calls are not changes), string literals, JSON/text diffs, and
+   the hook lines that handle the changed patch targets.
+3. **Port** those changes into hook/*.ts, set `PLUGIN_VERSION` (the server sees
+   it as `X-TeslRebornPlugin-Version`), and publish a patch.
+4. **Emojis:** if the report lists new emoji files, update `EMOJI_SOURCE` and
+   `EMOJI_FILES` in hook/00-config-and-log.ts (and `URL`/`FILES` in
+   tools/prepare_emojis.py for the Builder). Phones whose APK carries other
+   emojis fetch the official plugin archive themselves, check its SHA-256 and
+   every file, and unpack them (hook/04-inflate.ts); the artwork is never in
+   git.

@@ -16,6 +16,20 @@ const COMPONENT_TYPE = "win";
 const MAJOR_VERSION = "db-630167952";    // hardcoded by the plugin
 const CHANGELIST = "317259";             // SourceControlVersion.GetChangelist() on the Windows build
 const TAG = "[tesl-hook]";
+// The chat emoji atlas of the Reborn PC plugin. It is not in git: the
+// Builder puts the plugin's copy into the APK, and a phone whose APK lacks
+// these exact files takes them from the official plugin archive below
+// (hook/18). New emojis in a new plugin need only these lines in a patch
+// (and tools/prepare_emojis.py for the Builder).
+const EMOJI_SOURCE = {
+  url: "https://tesl-reborn.com/download/tesl-reborn-plugin-1.3.1-beta.zip",
+  sha256: "4b4644fa2b0c65065739d27ec94ef08d5670fc42a98b2d423de4b634aaf64848",
+  folder: "BepInEx/plugins/TeslRebornPlugin/data/images/emojis/",
+};
+const EMOJI_FILES = {
+  "people.json": "ea39cac729868b482d2147ef8c5758d9f23f605cfd5eedcb9d9117408e71531d",
+  "people.png": "95198a82da017136cb923b655cbe0c83d40456404bef87c86e8a2ae9e67fb4aa",
+};
 
 let androidLogWrite: NativeFunction<number, [number, NativePointer, NativePointer]> | null = null;
 try {
