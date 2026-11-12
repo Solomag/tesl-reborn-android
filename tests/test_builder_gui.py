@@ -55,6 +55,7 @@ class Widget:
     def title(self, value): self.caption = value
     def geometry(self, *args): pass
     def bind(self, *args): pass
+    def bind_class(self, *args, **kwargs): pass
     def protocol(self, *args): pass
     def after(self, *args): pass
     def lift(self): pass

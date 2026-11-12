@@ -52,6 +52,7 @@ def main():
     (bundle / "builder").mkdir()
     shutil.copyfile(ROOT / "builder/ui-text.json", bundle / "builder/ui-text.json")
     shutil.copyfile(ROOT / "builder/apk-download.js", bundle / "builder/apk-download.js")
+    shutil.copyfile(ROOT / "builder/icon.png", bundle / "builder/icon.png")
     # Written by tools/select_channel.py in CI; a local package is build 0.
     if (ROOT / "builder/version.json").is_file():
         shutil.copyfile(ROOT / "builder/version.json", bundle / "builder/version.json")
@@ -123,6 +124,8 @@ def main():
         str(bundle) + os.pathsep + ".",
         str(ROOT / "builder/entry.py"),
     ]
+    if windows:
+        command[-1:-1] = ["--icon", str(ROOT / "builder/icon.ico")]
     environment = os.environ.copy()
     if not windows:
         # Resolve Tcl/Tk shared libraries from non-system Python installations too.

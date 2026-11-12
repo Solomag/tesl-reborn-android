@@ -60,6 +60,41 @@ def configure_ui_font(window):
     window.option_add("*TCombobox*Listbox.font", "TkTextFont")
 
 
+def dark_title_bar(window):
+    """Windows draws the title bar and frame itself: ask it for the dark one
+    (Windows 10 20H1 and later; older ones keep the light frame)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+        on = ctypes.c_int(1)
+        for attribute in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE, its pre-20H1 number
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(on), ctypes.sizeof(on)) == 0:
+                break
+        # Redraw the frame now: Windows 10 repaints a shown window's title
+        # bar only when it is activated again.
+        ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020)
+        if window.winfo_ismapped():
+            active = ctypes.windll.user32.GetForegroundWindow() == hwnd
+            ctypes.windll.user32.SendMessageW(hwnd, 0x0086, int(not active), 0)  # WM_NCACTIVATE
+            ctypes.windll.user32.SendMessageW(hwnd, 0x0086, int(active), 0)
+    except Exception:
+        pass  # Only the frame's colour.
+
+
+def window_icon(window):
+    """The Builder's icon (tools/make_builder_icon.py) instead of Tk's feather,
+    for this window and every dialog it opens."""
+    try:
+        window.builder_icon = tk.PhotoImage(master=window, file=str(Path(__file__).with_name("icon.png")))
+        window.iconphoto(True, window.builder_icon)
+    except Exception:
+        pass
+
+
 def configure_dark_theme(window):
     """Use the same palette on Windows/Linux, independent of OS light mode."""
     bg, panel, field = "#171b22", "#202630", "#262e3a"
@@ -172,6 +207,11 @@ class BuilderWindow:
         self.window = window
         configure_ui_font(window)
         configure_dark_theme(window)
+        window_icon(window)
+        dark_title_bar(window)
+        # Dialogs too, when they appear.
+        # (Windows makes their frame just after <Map>.)
+        window.bind_class("Toplevel", "<Map>", lambda event: event.widget.after(50, dark_title_bar, event.widget), add="+")
         self.window.title("TESL Reborn Builder")
         self.window.geometry("850x850")
         self.events = queue.Queue()
