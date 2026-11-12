@@ -1,45 +1,76 @@
 """Draw the Builder's icon: builder/icon.png (window) and builder/icon.ico (EXE).
 
-A game card with a gold border and an arrow down (the PC game built into
-a phone's). Original artwork, drawn here so it
-can be changed; run it again after editing.
+A gold game card on a deep blue tile with an arrow down cut into it (the PC
+game built into a phone's). Original artwork, drawn here so it can be
+changed; run it again after editing.
 """
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
 SIZE = 1024  # drawn large, scaled down for smooth edges
 
-CARD = (38, 41, 52)
-GOLD = (214, 172, 84)
+TILE_TOP, TILE_BOTTOM = (52, 72, 132), (18, 24, 52)
+GOLD_TOP, GOLD_BOTTOM = (255, 222, 138), (196, 138, 46)
+INK = (22, 28, 58)
+
+
+def gradient(size, top, bottom):
+    w, h = size
+    column = Image.new("RGB", (1, h))
+    for y in range(h):
+        t = y / (h - 1)
+        column.putpixel((0, y), tuple(round(a + (b - a) * t) for a, b in zip(top, bottom)))
+    return column.resize((w, h)).convert("RGBA")
+
+
+def shape(box, radius):
+    mask = Image.new("L", (SIZE, SIZE), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(box, radius=radius, fill=255)
+    return mask
 
 
 def draw():
-    """One upright card that fills the icon, a bold arrow down into a tray:
-    readable at 16 px in a title bar."""
     image = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    d = ImageDraw.Draw(image)
-    w = int(SIZE * 0.74)
-    left, top, bottom = (SIZE - w) // 2, int(SIZE * 0.02), int(SIZE * 0.98)
-    d.rounded_rectangle((left, top, left + w, bottom), radius=SIZE // 9, fill=GOLD)
-    edge = SIZE // 16
-    d.rounded_rectangle((left + edge, top + edge, left + w - edge, bottom - edge), radius=SIZE // 14, fill=CARD)
-    cx, shaft = SIZE // 2, SIZE // 7
-    arrow_top, head_top, tip = int(SIZE * 0.17), int(SIZE * 0.44), int(SIZE * 0.70)
-    d.rectangle((cx - shaft // 2, arrow_top, cx + shaft // 2, head_top + 2), fill=GOLD)
-    head = int(SIZE * 0.25)
-    d.polygon([(cx - head, head_top), (cx + head, head_top), (cx, tip)], fill=GOLD)
-    tray = int(SIZE * 0.24)
-    d.rounded_rectangle((cx - tray, int(SIZE * 0.77), cx + tray, int(SIZE * 0.77) + shaft * 2 // 3), radius=shaft // 3, fill=GOLD)
+    tile = shape((0, 0, SIZE - 1, SIZE - 1), SIZE // 5)
+    image.paste(gradient((SIZE, SIZE), TILE_TOP, TILE_BOTTOM), (0, 0), tile)
+    # The card, with a soft shadow under it.
+    w, h = int(SIZE * 0.50), int(SIZE * 0.70)
+    left, top = (SIZE - w) // 2, (SIZE - h) // 2
+    card_box = (left, top, left + w, top + h)
+    radius = SIZE // 14
+    shadow = shape((left + SIZE // 40, top + SIZE // 25, left + w + SIZE // 40, top + h + SIZE // 25), radius)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(SIZE // 40))
+    dark = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+    dark.putalpha(ImageChops.multiply(shadow, Image.new("L", (SIZE, SIZE), 150)))
+    image.alpha_composite(dark)
+    card = shape(card_box, radius)
+    # The arrow and tray are cut out of the card in the tile's ink.
+    cut = Image.new("L", (SIZE, SIZE), 0)
+    d = ImageDraw.Draw(cut)
+    cx, shaft = SIZE // 2, int(SIZE * 0.105)
+    d.rounded_rectangle((cx - shaft // 2, top + int(h * 0.15), cx + shaft // 2, top + int(h * 0.55)), radius=shaft // 3, fill=255)
+    head, head_top, tip = int(w * 0.33), top + int(h * 0.45), top + int(h * 0.72)
+    d.polygon([(cx - head, head_top), (cx + head, head_top), (cx, tip)], fill=255)
+    tray_w, tray_y = int(w * 0.30), top + int(h * 0.80)
+    d.rounded_rectangle((cx - tray_w, tray_y, cx + tray_w, tray_y + int(shaft * 0.62)), radius=shaft // 3, fill=255)
+    image.paste(gradient((SIZE, SIZE), GOLD_TOP, GOLD_BOTTOM), (0, 0), card)
+    ink = Image.new("RGBA", (SIZE, SIZE), INK + (255,))
+    image.paste(ink, (0, 0), ImageChops.multiply(cut, card))
+    # A thin highlight along the card's top edge.
+    edge = ImageChops.subtract(card, shape((left, top + SIZE // 120, left + w, top + h), radius))
+    light = Image.new("RGBA", (SIZE, SIZE), (255, 246, 214, 0))
+    light.putalpha(ImageChops.multiply(edge, Image.new("L", (SIZE, SIZE), 200)))
+    image.alpha_composite(light)
     return image
 
 
 def main():
     image = draw()
-    image.resize((256, 256), Image.LANCZOS).save(ROOT / "builder/icon.png", optimize=True)
-    image.resize((256, 256), Image.LANCZOS).save(
-        ROOT / "builder/icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    small = image.resize((256, 256), Image.LANCZOS)
+    small.save(ROOT / "builder/icon.png", optimize=True)
+    small.save(ROOT / "builder/icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 
 
 if __name__ == "__main__":
