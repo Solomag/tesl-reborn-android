@@ -178,6 +178,7 @@ class BuilderWindow:
         self.server = None
         self.result = None
         self.running = False
+        self.installing = False
         self.server_starting = False
         self.connection_popup = None
         self.qr = None
@@ -352,7 +353,7 @@ class BuilderWindow:
     def offer_update(self, offer, manual):
         # The start-up check and "Check for updates" can both offer the same
         # build; a second install overwrote the restarted Builder (WinError 32).
-        if getattr(self, "installing", False):
+        if self.installing:
             return
         self.update_button.state(["!disabled"])
         if not offer:

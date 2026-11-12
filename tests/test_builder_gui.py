@@ -112,6 +112,15 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(form.connect_button.mapped)
         self.assertFalse(popup.exists)
 
+    def test_the_window_closes_after_a_build(self):
+        # close() once read an attribute that only an update offer set, so
+        # the window could not be closed without one.
+        self.form.events.put(('built', Path('output')))
+        with patch.object(gui.messagebox, 'showinfo'):
+            self.form.poll()
+        self.form.close()
+        self.assertFalse(self.root.exists)
+
     def test_open_folder_shows_the_latest_build_or_the_output_folder(self):
         import tempfile
         opened = []
