@@ -11,7 +11,7 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
-## v2.288 — Test
+## v2.288 — Test and Stable
 
 - Versions read as **v2.288** (APK level, patch) in the game, the update
   notice and the setup screens *(setup screens: new APK)*, and Builders
@@ -31,7 +31,7 @@ goes up when a new APK is needed), the second the patch. A Builder is
 - With two Builder windows open, the second one to update restarts from the
   build the first installed instead of downloading and swapping it again.
 
-## v2.287 — Test and Stable
+## v2.287
 
 - A game that freezes after coming back is recognised after 12 s instead
   of 20; leaving it and opening it again restarts it.
