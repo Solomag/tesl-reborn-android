@@ -17,8 +17,7 @@ offers its update when started.
   is for. Expert mode is gone: *Advanced connection* is a button in the
   transfer box.
 - The Builder has its own icon (a card with an arrow down), and on Windows
-  10/11 a dark title bar on
-  its window and dialogs.
+  10/11 a dark title bar on its window and dialogs.
 
 ## Patch 287 — Test and Stable
 
