@@ -62,8 +62,6 @@ APK: the hook only, without the setup screens, Game data or the launcher.
   the game asks for a new APK.
 - *Data ZIP only:* the language packs, OBB and data ZIP for a phone that keeps
   its installed APK: to add languages or set up the game data again.
-- **Expert mode** (remembered between runs) adds *Advanced connection* for the
-  transfer server.
 
 The interface and game languages are chosen separately. Supported game
 languages: en_us, de_de, es_es, es_mx, fr_fr, it_it, pl_pl, pt_br, ru_ru,

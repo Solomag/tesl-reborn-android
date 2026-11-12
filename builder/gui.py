@@ -183,7 +183,6 @@ class BuilderWindow:
         self.connection_popup = None
         self.qr = None
         self.appdir = application_directory()
-        self.expert = tk.BooleanVar(value=False)
         self.saved_language_selection = None
         self.public_url = tk.StringVar()
         self.cert = tk.StringVar()
@@ -208,8 +207,6 @@ class BuilderWindow:
         self.ui_locale.bind(
             "<<ComboboxSelected>>", lambda event: self.translate_ui(self.window)
         )
-        ttk.Checkbutton(uirow, text="Expert mode", variable=self.expert,
-                        command=self.expert_changed).pack(side="right")
         # The Builder updates itself from the main repository's releases
         # (builder/selfupdate.py): checked at start, and on demand here.
         self.version = selfupdate.current(data_root())
@@ -281,9 +278,8 @@ class BuilderWindow:
         self.default.current(1)
         self.default.pack(side="left", padx=8)
         self.output_options = options
-        # Building one half for a phone that has the other: shown to
-        # everyone, with what each is for; expert mode keeps only the
-        # transfer server's network options.
+        # Building one half for a phone that has the other, with what each
+        # is for.
         only = ttk.Frame(root)
         only.pack(fill="x", pady=(6, 0))
         ttk.Checkbutton(only, text="APK only (keep installed game data)",
@@ -294,9 +290,6 @@ class BuilderWindow:
                   text="APK only: when the game asks for a new APK; install it over the old one.").pack(anchor="w")
         ttk.Label(root, wraplength=790,
                   text="Data ZIP only: to add languages or set up the game data again on a phone that already has the app.").pack(anchor="w")
-        self.expert_row = ttk.Frame(root)
-        ttk.Button(self.expert_row, text="Advanced connection…",
-                   command=self.network_options).pack(side="right")
         self.build_button = ttk.Button(root, text="Build", command=self.start_build)
         self.build_button.pack(fill="x", pady=8)
         transfer = ttk.LabelFrame(root, text="Transfer game data to phone", padding=6)
@@ -315,6 +308,10 @@ class BuilderWindow:
 
         self.start_button = ttk.Button(row, text="Start transfer", command=self.start_server)
         self.start_button.pack(side="left", padx=8)
+        # The address, port and an existing public HTTPS server: rarely
+        # needed, so behind a button of the transfer it belongs to.
+        ttk.Button(row, text="Advanced connection…",
+                   command=self.network_options).pack(side="right")
         self.stop_button = ttk.Button(row, text="Stop", command=self.stop_server)
         self.connect_button = ttk.Button(row, text="Show QR / connection", command=self.show_connection)
         ttk.Label(transfer, text="Reuse an output folder to transfer it again without rebuilding.").pack(anchor="w")
@@ -333,9 +330,6 @@ class BuilderWindow:
         self.text = tk.Text(root, height=12, wrap="word", state="disabled")
         self.text.pack(fill="both", expand=True, pady=8)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
-        if self.preferences().get("expert"):
-            self.expert.set(True)
-            self.expert_changed()
         self.window.after(100, self.poll)
         if getattr(sys, "frozen", False):
             selfupdate.cleanup()
@@ -455,30 +449,6 @@ class BuilderWindow:
         for widget in self.output_options.winfo_children():
             widget.state(["disabled"] if self.data_only.get() else ["!disabled"])
         self.build_button.configure(text=self.build_text())
-
-    @staticmethod
-    def preferences_path():
-        return application_directory() / "builder-settings.json"
-
-    def preferences(self):
-        try:
-            value = json.loads(self.preferences_path().read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) else {}
-        except (OSError, ValueError):
-            return {}
-
-    def expert_changed(self):
-        preferences = self.preferences()
-        if preferences.get("expert") != self.expert.get():
-            preferences["expert"] = self.expert.get()
-            try:
-                self.preferences_path().write_text(json.dumps(preferences), encoding="utf-8")
-            except OSError:
-                pass  # A read-only folder only loses the remembered choice.
-        if self.expert.get():
-            self.expert_row.pack(fill="x", before=self.build_button)
-        else:
-            self.expert_row.pack_forget()
 
     def apk_only_changed(self):
         only = self.apk_only.get()

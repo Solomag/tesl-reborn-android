@@ -78,8 +78,6 @@ class GuiTests(unittest.TestCase):
         form = self.form
         form.languages['ru_ru'].set(True)
         form.default.current(9)
-        # APK only and Data ZIP only are offered without expert mode.
-        self.assertFalse(form.expert.get())
         form.apk_only.set(True); form.apk_only_changed()
         self.assertFalse(any(v.get() for v in form.languages.values()))
         self.assertEqual(form.default.get(), '')
@@ -91,14 +89,11 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(form.default.current(), 9)
         self.assertTrue(all('disabled' not in w.states for w in form.language_checks))
 
-    def test_expert_mode_only_adds_the_connection_options(self):
-        form = self.form
-        form.data_only.set(True); form.data_only_changed()
-        form.expert.set(True); form.expert_changed()
-        self.assertTrue(form.expert_row.mapped)
-        form.expert.set(False); form.expert_changed()
-        self.assertFalse(form.expert_row.mapped)
-        self.assertTrue(form.data_only.get(), 'leaving expert mode keeps the choice')
+    def test_advanced_connection_is_in_the_transfer_box(self):
+        transfer = next(w for w in self.root.children[0].children if w.options.get('text') == 'Transfer game data to phone')
+        buttons = [w for row in transfer.children for w in row.children]
+        self.assertTrue(any(w.options.get('text') == 'Advanced connection…' and w.mapped for w in buttons))
+        self.assertFalse(hasattr(self.form, 'expert'))
 
     def test_connection_controls_follow_server_lifetime(self):
         form = self.form
@@ -158,5 +153,5 @@ class GuiTests(unittest.TestCase):
             for child in widget.children: yield from walk(child)
         labels = [w.options.get('text') for w in walk(self.root)]
         self.assertIn('Для каждой сборки создаётся отдельная папка. Временные файлы удаляются автоматически.', labels)
-        self.assertIn('Режим эксперта', labels)
+        self.assertIn('Дополнительные настройки связи…', labels)
         self.assertIn('Передать готовую сборку…', labels)
