@@ -1,7 +1,7 @@
 """Draw the Builder's icon: builder/icon.png (window) and builder/icon.ico (EXE).
 
-Two game cards with a gold border on a dark tile, an arrow down on the front
-one (the PC game built into a phone's). Original artwork, drawn here so it
+A game card with a gold border and an arrow down (the PC game built into
+a phone's). Original artwork, drawn here so it
 can be changed; run it again after editing.
 """
 from pathlib import Path
@@ -11,40 +11,27 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 SIZE = 1024  # drawn large, scaled down for smooth edges
 
-TILE = (27, 29, 36)
-CARD_BACK = (52, 46, 40)
 CARD = (38, 41, 52)
 GOLD = (214, 172, 84)
-GOLD_DARK = (150, 116, 52)
-
-
-def card(size, fill, border):
-    image = Image.new("RGBA", size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    w, h = size
-    draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=w // 9, fill=border)
-    edge = w // 18
-    draw.rounded_rectangle((edge, edge, w - 1 - edge, h - 1 - edge), radius=w // 12, fill=fill)
-    return image
 
 
 def draw():
+    """One upright card that fills the icon, a bold arrow down into a tray:
+    readable at 16 px in a title bar."""
     image = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    ImageDraw.Draw(image).rounded_rectangle((0, 0, SIZE - 1, SIZE - 1), radius=SIZE // 5, fill=TILE)
-    cw, ch = int(SIZE * 0.42), int(SIZE * 0.58)
-    back = card((cw, ch), CARD_BACK, GOLD_DARK).rotate(14, expand=True, resample=Image.BICUBIC)
-    image.alpha_composite(back, (int(SIZE * 0.38), int(SIZE * 0.11)))
-    front = card((cw, ch), CARD, GOLD)
-    d = ImageDraw.Draw(front)
-    # The arrow down into a tray: built for, and sent to, the phone.
-    cx, top, bottom, shaft = cw // 2, int(ch * 0.20), int(ch * 0.62), cw // 9
-    d.rectangle((cx - shaft // 2, top, cx + shaft // 2, bottom - shaft), fill=GOLD)
-    head = int(cw * 0.24)
-    d.polygon([(cx - head, bottom - head - shaft // 2), (cx + head, bottom - head - shaft // 2), (cx, bottom + shaft // 3)], fill=GOLD)
-    tray_y, tray_w = int(ch * 0.78), int(cw * 0.30)
-    d.rounded_rectangle((cx - tray_w, tray_y, cx + tray_w, tray_y + shaft), radius=shaft // 2, fill=GOLD)
-    front = front.rotate(-8, expand=True, resample=Image.BICUBIC)
-    image.alpha_composite(front, (int(SIZE * 0.13), int(SIZE * 0.22)))
+    d = ImageDraw.Draw(image)
+    w = int(SIZE * 0.74)
+    left, top, bottom = (SIZE - w) // 2, int(SIZE * 0.02), int(SIZE * 0.98)
+    d.rounded_rectangle((left, top, left + w, bottom), radius=SIZE // 9, fill=GOLD)
+    edge = SIZE // 16
+    d.rounded_rectangle((left + edge, top + edge, left + w - edge, bottom - edge), radius=SIZE // 14, fill=CARD)
+    cx, shaft = SIZE // 2, SIZE // 7
+    arrow_top, head_top, tip = int(SIZE * 0.17), int(SIZE * 0.44), int(SIZE * 0.70)
+    d.rectangle((cx - shaft // 2, arrow_top, cx + shaft // 2, head_top + 2), fill=GOLD)
+    head = int(SIZE * 0.25)
+    d.polygon([(cx - head, head_top), (cx + head, head_top), (cx, tip)], fill=GOLD)
+    tray = int(SIZE * 0.24)
+    d.rounded_rectangle((cx - tray, int(SIZE * 0.77), cx + tray, int(SIZE * 0.77) + shaft * 2 // 3), radius=shaft // 3, fill=GOLD)
     return image
 
 
