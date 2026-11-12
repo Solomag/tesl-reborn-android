@@ -3,9 +3,18 @@
 Changes players notice, newest first. **Patches** arrive in the game by
 themselves; a change marked **new APK** needs *APK only* built in the Builder
 and installed over the old one (your game data stays). Test gets a patch
-first; Stable gets it after testing.
+first; Stable gets it after testing. **Builder** changes are marked so; a
+Builder that only changed itself gets its own entry, by date. The Builder
+offers its update when started.
 
-## Patch 287 — Test
+## Builder, 12 November 2026
+
+- The window closes again (the close button did nothing unless an update
+  had been offered).
+- The transfer over HTTPS no longer writes an error to the log when a
+  phone or browser leaves during the secure connection setup.
+
+## Patch 287 — Test and Stable
 
 - A game that freezes after coming back is recognised after 12 s instead
   of 20; leaving it and opening it again restarts it.
@@ -72,7 +81,7 @@ first; Stable gets it after testing.
 - After **Log Out**, the username is filled in again even when the login form
   appears late.
 
-## Patch 277 — Stable
+## Patch 277
 
 - **Password managers** fill the login form: username and password together,
   from the suggestions in the keyboard. *(new APK)*

@@ -42,6 +42,10 @@ Commit and push to `android-ui-and-update-loader`.
 Every patch updates `CHANGELOG.md` (what players notice, newest first) and
 `PATCH_NOTES` in `hook/29-update-notices.ts`: one line per language that the game shows with
 "Reborn update N applied". Mark changes that need a new APK.
+A Builder change goes under the patch it ships with, marked **Builder:**; a
+Builder that changes on its own gets a "Builder, <date>" entry (its build
+number is only known once CI has built it). Promoting a patch to Stable
+moves the "— Stable" mark in its heading.
 
 ## When a patch needs a new APK
 
