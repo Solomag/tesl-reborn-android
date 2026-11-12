@@ -142,7 +142,7 @@ class SelfUpdateTest(unittest.TestCase):
         offer = selfupdate.check({"channel": "test", "build": 4}, lambda *a, **k: body)
         self.assertEqual(offer["build"], 5, "what CI publishes is what the Builder accepts")
         label = module.label(Path(selfupdate.asset_name("test")), 229, True, 2)
-        self.assertEqual(label, "[Windows]TESL-Reborn-Builder-Test.exe · Builder 2.229 (build 229)")
+        self.assertEqual(label, f"[Windows]{selfupdate.asset_name('test')} · Builder 2.229 (build 229)")
         offer = selfupdate.check({"channel": "test", "build": 228}, lambda *a, **k: self.release(b"builder", label=label))
         self.assertEqual((offer["build"], offer["apkLevel"]), (229, 2))
         self.assertEqual(selfupdate.display(offer), "Builder 2.229")
