@@ -123,10 +123,14 @@ class SelfUpdateTest(unittest.TestCase):
 
     def test_version_defaults_and_ci_stamp(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(selfupdate.current(tmp), {"channel": "test", "build": 0, "commit": ""})
+            self.assertEqual(selfupdate.current(tmp), {"channel": "test", "build": 0, "commit": "", "apkLevel": 0})
             (Path(tmp) / "builder").mkdir()
-            (Path(tmp) / "builder/version.json").write_text('{"channel":"stable","build":42,"commit":"abc"}')
-            self.assertEqual(selfupdate.current(tmp), {"channel": "stable", "build": 42, "commit": "abc"})
+            (Path(tmp) / "builder/version.json").write_text('{"channel":"stable","build":42,"commit":"abc","apkLevel":2}')
+            self.assertEqual(selfupdate.current(tmp), {"channel": "stable", "build": 42, "commit": "abc", "apkLevel": 2})
+            self.assertEqual(selfupdate.display(selfupdate.current(tmp)), "Builder 2.42")
+        # A source checkout reads the level the APK it builds will have.
+        self.assertEqual(selfupdate.current(ROOT)["apkLevel"], selfupdate.source_apk_level(ROOT))
+        self.assertGreater(selfupdate.source_apk_level(ROOT), 0)
 
     def test_publish_label_is_what_the_builder_reads(self):
         spec = importlib.util.spec_from_file_location("publish_builder", ROOT / "tools/publish_builder.py")
@@ -137,6 +141,11 @@ class SelfUpdateTest(unittest.TestCase):
         body = self.release(b"builder", label=label)
         offer = selfupdate.check({"channel": "test", "build": 4}, lambda *a, **k: body)
         self.assertEqual(offer["build"], 5, "what CI publishes is what the Builder accepts")
+        label = module.label(Path(selfupdate.asset_name("test")), 229, True, 2)
+        self.assertEqual(label, "[Windows]TESL-Reborn-Builder-Test.exe · Builder 2.229 (build 229)")
+        offer = selfupdate.check({"channel": "test", "build": 228}, lambda *a, **k: self.release(b"builder", label=label))
+        self.assertEqual((offer["build"], offer["apkLevel"]), (229, 2))
+        self.assertEqual(selfupdate.display(offer), "Builder 2.229")
 
 
 if __name__ == "__main__":

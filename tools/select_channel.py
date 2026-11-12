@@ -7,6 +7,7 @@ branch (the fork, PR builds, local builds) builds test. Run in CI before
 """
 import json
 import os
+import re
 from pathlib import Path
 
 STABLE_REPOSITORY = "ssorgatem/tesl-reborn-android"
@@ -31,8 +32,9 @@ def main():
     # release of the main repository (builder/selfupdate.py). Only that
     # repository's builds count; others stay at build 0.
     official = repository == STABLE_REPOSITORY
+    level = re.search(r"static final int LEVEL\s*=\s*(\d+)", (path.parents[1] / "android-setup/src/org/teslreborn/setup/ApkLevel.java").read_text(encoding="utf-8"))
     version = dict(channel=name, build=int(os.environ.get("GITHUB_RUN_NUMBER", "0")) if official else 0,
-                   commit=os.environ.get("GITHUB_SHA", ""))
+                   commit=os.environ.get("GITHUB_SHA", ""), apkLevel=int(level.group(1)))
     (path.parents[1] / "builder/version.json").write_text(json.dumps(version) + "\n", encoding="utf-8", newline="\n")
     # The CI artifacts are named [Platform][Channel]TESL-Reborn-Builder.
     if os.environ.get("GITHUB_ENV"):

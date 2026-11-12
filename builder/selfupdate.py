@@ -33,8 +33,22 @@ def asset_name(channel=None):
     return "TESL-Reborn-Builder" + suffix + (".exe" if sys.platform == "win32" else "")
 
 
+APK_LEVEL_SOURCE = "android-setup/src/org/teslreborn/setup/ApkLevel.java"
+
+
+def source_apk_level(root):
+    """ApkLevel.LEVEL of the APK this checkout builds; 0 when unknown."""
+    try:
+        found = re.search(r"static final int LEVEL\s*=\s*(\d+)", (Path(root) / APK_LEVEL_SOURCE).read_text(encoding="utf-8"))
+        return int(found.group(1)) if found else 0
+    except OSError:
+        return 0
+
+
 def current(root):
-    """This Builder's channel and build; a local build is build 0 on test."""
+    """This Builder's channel and build, and the level of the APKs it makes
+    (CI stamps it; a source checkout reads it); a local build is build 0 on
+    test."""
     try:
         data = json.loads((Path(root) / "builder/version.json").read_text(encoding="utf-8"))
         channel = data.get("channel")
@@ -42,9 +56,18 @@ def current(root):
             "channel": channel if channel in ("stable", "test") else "test",
             "build": int(data.get("build", 0)),
             "commit": str(data.get("commit", ""))[:40],
+            "apkLevel": int(data.get("apkLevel") or source_apk_level(root)),
         }
     except (OSError, ValueError, TypeError):
-        return {"channel": "test", "build": 0, "commit": ""}
+        return {"channel": "test", "build": 0, "commit": "", "apkLevel": source_apk_level(root)}
+
+
+def display(version):
+    """How people see a Builder: "Builder 2.229" (APK level, then build)."""
+    build, level = version.get("build", 0), version.get("apkLevel", 0)
+    if not build:
+        return "Builder local build"
+    return f"Builder {level}.{build}" if level else f"Builder build {build}"
 
 
 def _get(url, limit, timeout=15, accept=None, progress=None):
@@ -99,7 +122,9 @@ def check(version, fetch=_get):
     build = int(label.group(1))
     if build <= version["build"]:
         return None
-    return {"build": build, "sha256": digest.group(1), "bytes": size, "url": url,
+    level = re.search(r"Builder (\d+)\.\d+", str(asset.get("label") or ""))
+    return {"build": build, "apkLevel": int(level.group(1)) if level else 0,
+            "sha256": digest.group(1), "bytes": size, "url": url,
             "name": asset_name(version["channel"])}
 
 

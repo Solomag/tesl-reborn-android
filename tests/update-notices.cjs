@@ -64,7 +64,7 @@ assert.equal(persisted,null,'an old attempted notice must not count as displayed
 acknowledged();assert.equal(persisted.shownRevision,36);
 for(const language of ['en_us','ru_ru','de_de','es_es','es_mx','fr_fr','it_it','pl_pl','pt_br','tr_tr'])
  for(const kind of ['downloading','restart','applied','error']) assert(context.updateNoticeText(kind,36,language).length>10);
-assert(context.updateNoticeText('applied',36,'ru_ru').includes('36'));
+assert(context.updateNoticeText('applied',36,'ru_ru').includes('v2.36'));
 assert(context.updateNoticeText('restart',36,'unknown').startsWith('Reborn'));
 
 // Replay the actual renderer with strict fake managed objects. Startup fonts
@@ -115,7 +115,7 @@ const banner=r.createUpdateBanner();banner.show('downloading',0);banner.tick();
 assert(objects.filter(o=>o.name==='RebornUpdateNotice').every(o=>o.dead),'partial UI is discarded if the built-in font is not available yet');
 banner.show('restart',0);fontReady=true;clock=9000;banner.tick();
 const root=objects.find(o=>o.name==='RebornUpdateNotice'&&!o.dead);assert(root.active);
-assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('APK 38 · patch 37')),'loaded version is persistently visible');
+assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('Android v2.37') && String(v).includes('APK 38')),'loaded version is persistently visible');
 assert(!objects.some(o=>o.name==='UnityEngine.CanvasGroup'));
 assert(!objects.some(o=>o.name==='UnityEngine.UI.CanvasScaler'));
 assert(calls.some(([o,m,v])=>m==='set_raycastTarget'&&v===false));
@@ -213,7 +213,7 @@ assert(nestedRoot,'our object is parented under the game overlay Canvas');
 assert(calls.some(([o,m,v])=>m==='set_overrideSorting'&&v===true),'the nested Canvas overrides the sorting');
 assert(calls.some(([o,m,v])=>m==='set_sortingOrder'&&v===32760));
 assert(!calls.some(([o,m])=>o===nestedRoot&&m==='DontDestroyOnLoad'),'DontDestroyOnLoad only applies to root objects');
-assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('patch 37')),'the version badge is drawn');
+assert(calls.some(([o,m,v])=>m==='set_text'&&String(v).includes('v2.37')),'the version badge is drawn');
 // The host's scene ends: the destroyed banner is rebuilt under the next host.
 host.dead=true;nestedRoot.dead=true;const second=object('NextOverlayCanvas');Object.assign(second,{isRoot:true,renderMode:0,sortingOrder:1});
 r.call=(value,method,...args)=>{

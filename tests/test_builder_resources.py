@@ -484,6 +484,7 @@ class BuildFolderNameTest(unittest.TestCase):
         self.assertEqual(build_folder_name("stable", 90, "xapk", ["es_es", "es_mx"], now),
                          "stable_patch90_xapk_es_es+es_mx_2026-10-28_1015", "regional codes stay apart")
         self.assertEqual(build_folder_name("test", 91, "apk", [], now), "test_patch91_apk-only_2026-10-28_1015")
+        self.assertEqual(build_folder_name("test", 287, "apk", [], now, 2), "test_v2.287_apk-only_2026-10-28_1015")
         self.assertEqual(build_folder_name("stable", 90, "manual", list(LANGUAGES), now),
                          "stable_patch90_apk+data_all-languages_2026-10-28_1015")
 

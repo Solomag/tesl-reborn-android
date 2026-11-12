@@ -11408,17 +11408,18 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     } });
   });
   const APK_LEVEL = 2;
+  const patchVersion = (revision) => `v${APK_LEVEL}.${revision}`;
   const PATCH_NOTES = {
-    en: "New: password managers fill the login form, a Restart button after updates, sound settings are kept.",
-    ru: "\u041D\u043E\u0432\u043E\u0435: \u043C\u0435\u043D\u0435\u0434\u0436\u0435\u0440\u044B \u043F\u0430\u0440\u043E\u043B\u0435\u0439 \u0437\u0430\u043F\u043E\u043B\u043D\u044F\u044E\u0442 \u0432\u0445\u043E\u0434, \u043A\u043D\u043E\u043F\u043A\u0430 \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A\u0430 \u043F\u043E\u0441\u043B\u0435 \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u044F, \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u0437\u0432\u0443\u043A\u0430 \u0441\u043E\u0445\u0440\u0430\u043D\u044F\u044E\u0442\u0441\u044F.",
-    de: "Neu: Passwortmanager f\xFCllen die Anmeldung aus, Neustart-Knopf nach Updates, Toneinstellungen bleiben erhalten.",
-    es: "Novedades: los gestores de contrase\xF1as rellenan el inicio de sesi\xF3n, bot\xF3n Reiniciar tras actualizar, se guarda el sonido.",
-    fr: "Nouveau : les gestionnaires de mots de passe remplissent la connexion, bouton Red\xE9marrer apr\xE8s une mise \xE0 jour, le son est conserv\xE9.",
-    it: "Novit\xE0: i gestori di password compilano l\u2019accesso, pulsante Riavvia dopo gli aggiornamenti, l\u2019audio resta salvato.",
-    pl: "Nowe: mened\u017Cery hase\u0142 wype\u0142niaj\u0105 logowanie, przycisk restartu po aktualizacji, ustawienia d\u017Awi\u0119ku s\u0105 zapami\u0119tywane.",
-    pt: "Novo: gerenciadores de senha preenchem o login, bot\xE3o Reiniciar ap\xF3s atualizar, o som fica salvo.",
-    tr: "Yeni: \u015Fifre y\xF6neticileri giri\u015Fi doldurur, g\xFCncellemeden sonra Yeniden ba\u015Flat d\xFC\u011Fmesi, ses ayarlar\u0131 korunur.",
-    zh: "\u65B0\u5185\u5BB9\uFF1A\u5BC6\u7801\u7BA1\u7406\u5668\u53EF\u81EA\u52A8\u586B\u5199\u767B\u5F55\uFF0C\u66F4\u65B0\u540E\u53EF\u4E00\u952E\u91CD\u542F\uFF0C\u58F0\u97F3\u8BBE\u7F6E\u4F1A\u88AB\u4FDD\u5B58\u3002"
+    en: "New: versions read as APK level.patch; a game that freezes after you come back restarts by itself.",
+    ru: "\u041D\u043E\u0432\u043E\u0435: \u0432\u0435\u0440\u0441\u0438\u044F \u0442\u0435\u043F\u0435\u0440\u044C \u0432 \u0432\u0438\u0434\u0435 \xAB\u0443\u0440\u043E\u0432\u0435\u043D\u044C APK.\u043F\u0430\u0442\u0447\xBB; \u0438\u0433\u0440\u0430, \u0437\u0430\u0432\u0438\u0441\u0448\u0430\u044F \u043F\u043E\u0441\u043B\u0435 \u0432\u043E\u0437\u0432\u0440\u0430\u0442\u0430, \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A\u0430\u0435\u0442\u0441\u044F \u0441\u0430\u043C\u0430.",
+    de: "Neu: Versionen lauten jetzt \u201EAPK-Stufe.Patch\u201C; ein nach der R\xFCckkehr eingefrorenes Spiel startet von selbst neu.",
+    es: "Novedades: la versi\xF3n ahora es \xABnivel de APK.parche\xBB; si el juego se congela al volver, se reinicia solo.",
+    fr: "Nouveau : la version s\u2019\xE9crit d\xE9sormais \xAB niveau d\u2019APK.patch \xBB ; un jeu fig\xE9 au retour red\xE9marre tout seul.",
+    it: "Novit\xE0: la versione ora \xE8 \xABlivello APK.patch\xBB; se il gioco si blocca al ritorno, si riavvia da solo.",
+    pl: "Nowe: wersja ma teraz posta\u0107 \u201Epoziom APK.\u0142atka\u201D; gra zawieszona po powrocie uruchamia si\u0119 ponownie sama.",
+    pt: "Novo: a vers\xE3o agora \xE9 \u201Cn\xEDvel do APK.patch\u201D; se o jogo travar ao voltar, ele reinicia sozinho.",
+    tr: "Yeni: s\xFCr\xFCm art\u0131k \u201CAPK d\xFCzeyi.yama\u201D bi\xE7iminde; geri d\xF6n\xFCnce donan oyun kendili\u011Finden yeniden ba\u015Flar.",
+    zh: "\u65B0\u5185\u5BB9\uFF1A\u7248\u672C\u53F7\u6539\u4E3A\u201CAPK \u7EA7\u522B.\u8865\u4E01\u201D\uFF1B\u8FD4\u56DE\u540E\u5361\u4F4F\u7684\u6E38\u620F\u4F1A\u81EA\u52A8\u91CD\u542F\u3002"
   };
   function createUpdateNotices(updater, io) {
     let downloadStarted = false, lastStatus = "";
@@ -11473,7 +11474,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "A new TESL Reborn APK is available. Build \u201CAPK only\u201D in the Builder and install it over this one; your game data stays.",
         downloading: "Downloading a Reborn update. You can keep playing.",
         restart: "Reborn update downloaded and verified. Restart the game when convenient to apply it.",
-        applied: `Reborn update ${revision} applied.`,
+        applied: `Reborn update ${patchVersion(revision)} applied.`,
         error: "Reborn update could not be downloaded or verified. You can keep playing; it will retry on the next launch."
       },
       ru: {
@@ -11485,7 +11486,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "\u0412\u044B\u0448\u0435\u043B \u043D\u043E\u0432\u044B\u0439 APK TESL Reborn. \u0421\u043E\u0431\u0435\u0440\u0438\u0442\u0435 \u0432 Builder \xAB\u0422\u043E\u043B\u044C\u043A\u043E APK\xBB \u0438 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u0435 \u043F\u043E\u0432\u0435\u0440\u0445 \u044D\u0442\u043E\u0433\u043E; \u0438\u0433\u0440\u043E\u0432\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435 \u0441\u043E\u0445\u0440\u0430\u043D\u044F\u0442\u0441\u044F.",
         downloading: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u0435\u0442\u0441\u044F \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn. \u041C\u043E\u0436\u043D\u043E \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u0442\u044C \u0438\u0433\u0440\u0430\u0442\u044C.",
         restart: "\u041E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn \u0441\u043A\u0430\u0447\u0430\u043D\u043E \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E. \u041F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 \u0438\u0433\u0440\u0443, \u043A\u043E\u0433\u0434\u0430 \u0431\u0443\u0434\u0435\u0442 \u0443\u0434\u043E\u0431\u043D\u043E, \u0447\u0442\u043E\u0431\u044B \u043F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C \u0435\u0433\u043E.",
-        applied: `\u041E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn ${revision} \u043F\u0440\u0438\u043C\u0435\u043D\u0435\u043D\u043E.`,
+        applied: `\u041E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn ${patchVersion(revision)} \u043F\u0440\u0438\u043C\u0435\u043D\u0435\u043D\u043E.`,
         error: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u043B\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 Reborn. \u041C\u043E\u0436\u043D\u043E \u0438\u0433\u0440\u0430\u0442\u044C \u0434\u0430\u043B\u044C\u0448\u0435; \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u043C \u043F\u0440\u0438 \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u043C \u0437\u0430\u043F\u0443\u0441\u043A\u0435."
       },
       de: {
@@ -11497,7 +11498,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "Eine neue TESL-Reborn-APK ist verf\xFCgbar. Erstelle im Builder \u201ENur APK\u201C und installiere sie \xFCber diese; deine Spieldaten bleiben.",
         downloading: "Ein Reborn-Update wird heruntergeladen. Du kannst weiterspielen.",
         restart: "Reborn-Update heruntergeladen und gepr\xFCft. Starte das Spiel neu, wenn es dir passt, um es anzuwenden.",
-        applied: `Reborn-Update ${revision} angewendet.`,
+        applied: `Reborn-Update ${patchVersion(revision)} angewendet.`,
         error: "Reborn-Update konnte nicht geladen oder gepr\xFCft werden. Du kannst weiterspielen; neuer Versuch beim n\xE4chsten Start."
       },
       es: {
@@ -11509,7 +11510,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "Hay un APK nuevo de TESL Reborn. Crea \xABSolo APK\xBB en el Builder e inst\xE1lalo encima de este; tus datos del juego se conservan.",
         downloading: "Descargando una actualizaci\xF3n de Reborn. Puedes seguir jugando.",
         restart: "Actualizaci\xF3n de Reborn descargada y verificada. Reinicia el juego cuando quieras para aplicarla.",
-        applied: `Actualizaci\xF3n ${revision} de Reborn aplicada.`,
+        applied: `Actualizaci\xF3n ${patchVersion(revision)} de Reborn aplicada.`,
         error: "No se pudo descargar o verificar la actualizaci\xF3n de Reborn. Puedes seguir jugando; se reintentar\xE1 al iniciar."
       },
       fr: {
@@ -11521,7 +11522,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "Un nouvel APK TESL Reborn est disponible. Cr\xE9ez \xAB APK seul \xBB dans le Builder et installez-le par-dessus ; vos donn\xE9es de jeu restent.",
         downloading: "T\xE9l\xE9chargement d\u2019une mise \xE0 jour Reborn. Vous pouvez continuer \xE0 jouer.",
         restart: "Mise \xE0 jour Reborn t\xE9l\xE9charg\xE9e et v\xE9rifi\xE9e. Red\xE9marrez le jeu quand vous le souhaitez pour l\u2019appliquer.",
-        applied: `Mise \xE0 jour Reborn ${revision} appliqu\xE9e.`,
+        applied: `Mise \xE0 jour Reborn ${patchVersion(revision)} appliqu\xE9e.`,
         error: "Impossible de t\xE9l\xE9charger ou v\xE9rifier la mise \xE0 jour Reborn. Vous pouvez jouer ; nouvel essai au prochain lancement."
       },
       it: {
@@ -11533,7 +11534,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "\xC8 disponibile un nuovo APK di TESL Reborn. Crea \xABSolo APK\xBB nel Builder e installalo sopra questo; i dati di gioco restano.",
         downloading: "Download di un aggiornamento Reborn. Puoi continuare a giocare.",
         restart: "Aggiornamento Reborn scaricato e verificato. Riavvia il gioco quando vuoi per applicarlo.",
-        applied: `Aggiornamento Reborn ${revision} applicato.`,
+        applied: `Aggiornamento Reborn ${patchVersion(revision)} applicato.`,
         error: "Impossibile scaricare o verificare l\u2019aggiornamento Reborn. Puoi giocare; nuovo tentativo al prossimo avvio."
       },
       pl: {
@@ -11545,7 +11546,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "Dost\u0119pny jest nowy APK TESL Reborn. Zbuduj \u201ETylko APK\u201D w Builderze i zainstaluj go na tym; dane gry zostan\u0105.",
         downloading: "Pobieranie aktualizacji Reborn. Mo\u017Cesz gra\u0107 dalej.",
         restart: "Aktualizacja Reborn pobrana i zweryfikowana. Uruchom gr\u0119 ponownie w dogodnym momencie, aby j\u0105 zastosowa\u0107.",
-        applied: `Aktualizacja Reborn ${revision} zastosowana.`,
+        applied: `Aktualizacja Reborn ${patchVersion(revision)} zastosowana.`,
         error: "Nie uda\u0142o si\u0119 pobra\u0107 lub sprawdzi\u0107 aktualizacji Reborn. Mo\u017Cesz gra\u0107 dalej; ponowimy pr\xF3b\u0119 przy nast\u0119pnym uruchomieniu."
       },
       pt: {
@@ -11557,7 +11558,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "H\xE1 um novo APK do TESL Reborn. Gere \u201CSomente APK\u201D no Builder e instale por cima deste; seus dados do jogo continuam.",
         downloading: "Baixando uma atualiza\xE7\xE3o do Reborn. Voc\xEA pode continuar jogando.",
         restart: "Atualiza\xE7\xE3o do Reborn baixada e verificada. Reinicie o jogo quando quiser para aplic\xE1-la.",
-        applied: `Atualiza\xE7\xE3o ${revision} do Reborn aplicada.`,
+        applied: `Atualiza\xE7\xE3o ${patchVersion(revision)} do Reborn aplicada.`,
         error: "N\xE3o foi poss\xEDvel baixar ou verificar a atualiza\xE7\xE3o do Reborn. Voc\xEA pode jogar; nova tentativa na pr\xF3xima inicializa\xE7\xE3o."
       },
       tr: {
@@ -11569,7 +11570,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         apk: "Yeni bir TESL Reborn APK's\u0131 var. Builder'da \u201CYaln\u0131zca APK\u201D olu\u015Fturup bunun \xFCzerine kurun; oyun verileriniz korunur.",
         downloading: "Reborn g\xFCncellemesi indiriliyor. Oynamaya devam edebilirsiniz.",
         restart: "Reborn g\xFCncellemesi indirildi ve do\u011Fruland\u0131. Uygulamak i\xE7in uygun oldu\u011Funuzda oyunu yeniden ba\u015Flat\u0131n.",
-        applied: `Reborn ${revision} g\xFCncellemesi uyguland\u0131.`,
+        applied: `Reborn ${patchVersion(revision)} g\xFCncellemesi uyguland\u0131.`,
         error: "Reborn g\xFCncellemesi indirilemedi veya do\u011Frulanamad\u0131. Oynamaya devam edebilirsiniz; sonraki a\xE7\u0131l\u0131\u015Fta yeniden denenecek."
       }
     };
@@ -11663,7 +11664,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       const builder = setup.builder;
       if (builder && typeof builder === "object") {
         const number = Number(builder.build), channel2 = builder.channel === "stable" ? "stable" : "test";
-        build = `${Number.isSafeInteger(number) && number > 0 ? `Builder ${number}` : "local build"} (${channel2})`;
+        const level = Number(builder.apkLevel);
+        build = `${Number.isSafeInteger(number) && number > 0 ? `Builder ${Number.isSafeInteger(level) && level > 0 ? `${level}.` : ""}${number}` : "local build"} (${channel2})`;
       } else if (Number.isSafeInteger(setup.androidBuild)) build = `APK ${setup.androidBuild}`;
     } catch (_) {
     }
@@ -11675,7 +11677,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     } catch (_) {
     }
     return cachedPortCaption = `Reborn ${PLUGIN_VERSION}
-Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "embedded"}${channel}`;
+Android ${Number.isSafeInteger(revision) ? patchVersion(revision) : "embedded"}${channel} \xB7 ${build}`;
   }
   function noticeCanvasProperty(canvas, name, value) {
     const method = canvas.tryMethod(name, value === void 0 ? 0 : 1);
@@ -12089,7 +12091,7 @@ Android \xB7 ${build} \xB7 patch ${Number.isSafeInteger(revision) ? revision : "
           if (signature !== reportedCaption) {
             reportedCaption = signature;
             try {
-              writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ version: caption, visible: versionScreen.visible, scene: versionScreen.scene, at: (/* @__PURE__ */ new Date()).toISOString() }));
+              writeTextFile(`${persistentPath()}/tesl-reborn-ui-status.json`, JSON.stringify({ version: caption, patchVersion: Number.isSafeInteger(globalThis.TeslRebornUpdater?.current()?.revision) ? patchVersion(globalThis.TeslRebornUpdater.current().revision) : "", visible: versionScreen.visible, scene: versionScreen.scene, at: (/* @__PURE__ */ new Date()).toISOString() }));
             } catch (_) {
             }
           }

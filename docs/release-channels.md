@@ -37,6 +37,14 @@ python tools/publish_hook.py --revision N --version android-N-… --channel test
 Bump `revision` and `version` in `runtime/manifest.json` before `npm run build`.
 Commit and push to `android-ui-and-update-loader`.
 
+## Versions
+
+People see one version: **v<APK level>.<revision>** for a patch (v2.288),
+**Builder <APK level>.<build>** for a Builder (Builder 2.230; the build is
+the CI run number). The APK level is `ApkLevel.LEVEL` / `APK_LEVEL`; it goes
+up only when patches need a new APK. The updater, manifests and the Builder's
+self-update still compare the plain revision and build numbers.
+
 ## What's new
 
 Every patch updates `CHANGELOG.md` (what players notice, newest first) and

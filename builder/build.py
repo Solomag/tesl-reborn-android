@@ -682,11 +682,12 @@ def stale_gadget(vendor):
 
 
 def output_name(builder, extension):
-    """The channel and Builder build in the file name, e.g.
-    TESL-Reborn-Test-build46.apk; Android updates by package, not file name."""
+    """The channel and Builder version in the file name, e.g.
+    TESL-Reborn-Test-2.229.apk; Android updates by package, not file name."""
     channel = str(builder.get("channel") or "test").capitalize()
-    build = int(builder.get("build") or 0)
-    return f"TESL-Reborn-{channel}-{'build' + str(build) if build else 'local'}.{extension}"
+    build, level = int(builder.get("build") or 0), int(builder.get("apkLevel") or 0)
+    version = (f"{level}.{build}" if level else f"build{build}") if build else "local"
+    return f"TESL-Reborn-{channel}-{version}.{extension}"
 
 
 def missing_tools(vendor):
@@ -727,6 +728,12 @@ def builder_channel():
     return current(data_root())["channel"]
 
 
+def builder_version_level():
+    from .selfupdate import current
+
+    return current(data_root())["apkLevel"]
+
+
 def hook_revision():
     try:
         return int(json.loads((data_root() / "runtime/manifest.json").read_text(encoding="utf-8"))["revision"])
@@ -734,14 +741,14 @@ def hook_revision():
         return 0
 
 
-def build_folder_name(channel, revision, format, languages, now):
+def build_folder_name(channel, revision, format, languages, now, level=0):
     """What a build is, readable in the output folder:
-    test_patch91_apk+data_en_us+ru_ru_2026-10-28_1015. The files inside keep fixed
-    names; transfers and the phone rely on them."""
+    test_v2.91_apk+data_en_us+ru_ru_2026-10-28_1015 (the patch's version). The
+    files inside keep fixed names; transfers and the phone rely on them."""
     kind = {"manual": "apk+data", "xapk": "xapk", "apk": "apk-only", "data": "data-only"}.get(format, format)
     # Full codes: es_es and es_mx are both "es".
     codes = "all-languages" if set(languages) >= set(LANGUAGES) else "+".join(sorted(set(languages)))
-    parts = [channel, f"patch{revision}", kind] + ([codes] if codes and format != "apk" else [])
+    parts = [channel, f"v{level}.{revision}" if level else f"patch{revision}", kind] + ([codes] if codes and format != "apk" else [])
     return "_".join(parts + [now.strftime("%Y-%m-%d_%H%M")])
 
 
@@ -805,7 +812,8 @@ def _build(
         import datetime
 
         name = build_folder_name(
-            builder_channel(), hook_revision(), format, languages, datetime.datetime.now()
+            builder_channel(), hook_revision(), format, languages, datetime.datetime.now(),
+            builder_version_level(),
         )
         result = output / name
         for attempt in range(2, 100):
@@ -895,7 +903,7 @@ def _build(
             schema=1,
             androidBuild=50,
             # The Builder that made this APK, shown in the app and the game.
-            builder={k: v for k, v in builder_version(data_root()).items() if k in ("channel", "build")},
+            builder={k: v for k, v in builder_version(data_root()).items() if k in ("channel", "build", "apkLevel")},
             obb=obb_meta,
             defaultLanguage=default_language,
             hookFeed=hook_feed(),

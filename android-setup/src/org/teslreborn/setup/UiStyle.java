@@ -63,25 +63,36 @@ public final class UiStyle {
   }
 
   /**
-   * The Builder that made this APK, as "Builder 12 (test)"; "local build"
-   * when it was not built by the main repository's CI, "APK 50" for an APK
-   * from a Builder that did not record itself.
+   * The Builder that made this APK, as "Builder 2.229 (test)" (APK level,
+   * then build); "local build" when it was not built by the main
+   * repository's CI, "APK 50" for an APK from a Builder that did not record
+   * itself.
    */
   static String apkCaption(JSONObject setup) {
     JSONObject builder = setup.optJSONObject("builder");
     if (builder == null) return "APK " + setup.optInt("androidBuild", 50);
-    int build = builder.optInt("build", 0);
-    return (build > 0 ? "Builder " + build : "local build") + " (" + builder.optString("channel", "test") + ")";
+    int build = builder.optInt("build", 0), level = builder.optInt("apkLevel", 0);
+    String name = build <= 0 ? "local build" : "Builder " + (level > 0 ? level + "." : "") + build;
+    return name + " (" + builder.optString("channel", "test") + ")";
   }
 
-  /** The installed APK and patch, like the version shown on the game's loading screen. */
+  /** The patch and the APK, like the version on the game's loading screen:
+   * "TESL Reborn v2.287 · Builder 2.229 (test)": the APK level the patch
+   * expects (the game writes it), then the installed patch's number. */
   static TextView version(Activity activity, LinearLayout box, JSONObject setup) {
-    String line = "TESL Reborn · " + apkCaption(setup);
+    String line = "TESL Reborn";
     try {
-      JSONObject current = PackInstaller.json(new File(activity.getExternalFilesDir(null), "tesl-reborn-update-status.json"))
-          .optJSONObject("current");
-      if (current != null) line += " · patch " + current.optInt("revision");
+      File files = activity.getExternalFilesDir(null);
+      JSONObject current = PackInstaller.json(new File(files, "tesl-reborn-update-status.json")).optJSONObject("current");
+      if (current != null) {
+        int level = ApkLevel.LEVEL;
+        java.util.regex.Matcher shown = java.util.regex.Pattern.compile("^v(\\d+)\\.")
+            .matcher(PackInstaller.json(new File(files, "tesl-reborn-ui-status.json")).optString("patchVersion", ""));
+        if (shown.find()) level = Integer.parseInt(shown.group(1));
+        line += " v" + level + "." + current.optInt("revision");
+      }
     } catch (Exception ignored) {}
+    line += " · " + apkCaption(setup);
     TextView view = text(activity, box, line, 14, MUTED);
     view.setPadding(0, 0, 0, dp(activity, 12));
     return view;

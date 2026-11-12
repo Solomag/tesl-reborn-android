@@ -376,8 +376,7 @@ class BuilderWindow:
             self.window.after(1500, self.check_updates)
 
     def version_text(self):
-        build = self.version["build"]
-        return "Builder " + (f"build {build}" if build else "local build") + " · " + self.version["channel"]
+        return selfupdate.display(self.version) + " · " + self.version["channel"]
 
     def check_updates(self, manual=False):
         """Ask the release of this Builder's channel in the background."""
@@ -402,7 +401,7 @@ class BuilderWindow:
                 messagebox.showinfo("Builder", self.tr("You have the latest Builder.") + "\n" + self.version_text())
             return
         if not getattr(sys, "frozen", False):
-            self.log(f"Builder build {offer['build']} is available; a source checkout does not update itself.")
+            self.log(f"{selfupdate.display(offer)} is available; a source checkout does not update itself.")
             return
         if self.running:
             if manual:
@@ -412,12 +411,12 @@ class BuilderWindow:
         if not messagebox.askyesno(
             "Builder",
             self.tr("A new Builder is available. Update and restart now?")
-            + f"\n{self.version_text()} → build {offer['build']}",
+            + f"\n{self.version_text()} → {selfupdate.display(offer)}",
         ):
             self.installing = False
             return
         self.update_button.state(["disabled"])
-        self.log(f"Downloading Builder build {offer['build']}…")
+        self.log(f"Downloading {selfupdate.display(offer)}…")
 
         def work():
             try:
@@ -427,7 +426,7 @@ class BuilderWindow:
                     # One line per 10 %, through the event queue (Tk is not thread-safe).
                     if percent >= shown[0] + 10 or percent == 100 and shown[0] < 100:
                         shown[0] = percent - percent % 10 if percent < 100 else 100
-                        self.events.put(("log", f"Downloading Builder build {offer['build']}… {shown[0]}%"))
+                        self.events.put(("log", f"Downloading {selfupdate.display(offer)}… {shown[0]}%"))
 
                 self.events.put(("update-installed", selfupdate.install(offer, progress=progress)))
             except Exception as error:

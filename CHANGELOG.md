@@ -7,6 +7,16 @@ first; Stable gets it after testing. **Builder** changes are marked so; a
 Builder that only changed itself gets its own entry, by date. The Builder
 offers its update when started.
 
+**Versions.** A patch is *v2.288*: the first number is the APK level (it
+goes up when a new APK is needed), the second the patch. A Builder is
+*Builder 2.230*: the level of the APKs it makes, then its build.
+
+## v2.288 — Test
+
+- Versions read as **v2.288** (APK level, patch) in the game, the update
+  notice and the setup screens *(setup screens: new APK)*, and Builders
+  as **Builder 2.230**; built APKs are named so too.
+
 ## Builder, 12 November 2026
 
 - The window closes again (the close button did nothing unless an update
@@ -21,26 +31,26 @@ offers its update when started.
 - With two Builder windows open, the second one to update restarts from the
   build the first installed instead of downloading and swapping it again.
 
-## Patch 287 — Test and Stable
+## v2.287 — Test and Stable
 
 - A game that freezes after coming back is recognised after 12 s instead
   of 20; leaving it and opening it again restarts it.
 - Back after a while, the game is restarted by itself when it froze after
   drawing a single frame (before, one frame counted as running). *(new APK)*
 
-## Patch 286
+## v2.286
 
 - Performance hints cover only the threads that run the game (9 instead
   of 18 on a Pixel 6 Pro).
 - The account name is no longer written to the phone's system log.
 
-## Patch 285
+## v2.285
 
 - Phones that raise clocks for games (Pixels): the game's job workers,
   created after the start, now get the performance hints too, and on a
   phone with one fastest core they leave it to the main thread.
 
-## Patch 284
+## v2.284
 
 - Frame pacing no longer jumps when the phone's clock is changed.
 - A downloaded patch that could not be read once (storage busy) is tried
@@ -48,7 +58,7 @@ offers its update when started.
 - **Builder:** an APK with any file name can be sent to the phone; a wrong
   XAPK gets a clear message.
 
-## Patch 283
+## v2.283
 
 - Starting the game from its icon no longer opens the multi-gigabyte game
   data each time (a shorter pause). *(new APK)*
@@ -57,7 +67,7 @@ offers its update when started.
 - **Builder:** Cancel stops at once also while copying, checking or
   packing the game data.
 
-## Patch 282
+## v2.282
 
 - Files the game shares with the setup screens are never read half-written
   (could switch off the restart after leaving the game while loading).
@@ -69,7 +79,7 @@ offers its update when started.
 - **Builder:** finds games installed with the Bethesda.net launcher; the
   transfer listens only on the chosen address.
 
-## Patch 281
+## v2.281
 
 - The **saved login** moved from the shared game folder to the game's
   private storage, which other apps and USB cannot read. Moved by itself.
@@ -78,17 +88,17 @@ offers its update when started.
 - Password managers: what they fill is handed over through private storage
   too. *(new APK)*
 
-## Patch 279
+## v2.279
 
 - The freeze watch no longer risks a long stall of its own after returning
   to the game (the same thread query that froze a Samsung for minutes).
 
-## Patch 278
+## v2.278
 
 - After **Log Out**, the username is filled in again even when the login form
   appears late.
 
-## Patch 277
+## v2.277
 
 - **Password managers** fill the login form: username and password together,
   from the suggestions in the keyboard. *(new APK)*
@@ -107,7 +117,7 @@ offers its update when started.
 - After an update the game says in one line what is new; this list is
   [CHANGELOG.md](CHANGELOG.md).
 
-## Patch 266
+## v1.266
 
 - **Popups fit the screen:** a popup taller than the screen (the arena rules
   before a match in Russian, on 20:9 phones) is scaled down so its buttons
@@ -115,7 +125,7 @@ offers its update when started.
 - **Frame rate after the background:** coming back to the game no longer
   drops a battle to 30 FPS.
 
-## Patch 262
+## v1.262
 
 - **Simplified Chinese** as a full game language: menus, cards, store and
   server texts, its own entry in the language list.

@@ -23,10 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGACY_ASSETS = ("builder-windows.json", "builder-linux.json")
 
 
-def label(executable, build, windows=sys.platform == "win32"):
+def label(executable, build, windows=sys.platform == "win32", level=0):
     """The name shown on the release page: [platform] then the file, which
-    already carries the channel."""
-    return f"[{'Windows' if windows else 'Linux'}]{executable.name} · build {build}"
+    already carries the channel, and the version ("Builder 2.229"). Builders
+    read the number after "build"; keep it for those already installed."""
+    version = f"Builder {level}.{build} (build {build})" if level else f"build {build}"
+    return f"[{'Windows' if windows else 'Linux'}]{executable.name} · {version}"
 
 
 def main(argv=None):
@@ -64,7 +66,7 @@ def main(argv=None):
         subprocess.run(["gh", "release", "edit", tag, "--notes", notes], check=True)
     named = executable.with_name(executable.stem + "-" + version["channel"].capitalize() + executable.suffix)
     shutil.copyfile(executable, named)
-    subprocess.run(["gh", "release", "upload", tag, f"{named}#{label(named, version['build'], windows)}", "--clobber"],
+    subprocess.run(["gh", "release", "upload", tag, f"{named}#{label(named, version['build'], windows, int(version.get('apkLevel') or 0))}", "--clobber"],
                    check=True)
     for name in (executable.name, *LEGACY_ASSETS):
         subprocess.run(["gh", "release", "delete-asset", tag, name, "--yes"], capture_output=True)
