@@ -16,7 +16,7 @@ offers its update when started.
 - *APK only* and *Data ZIP only* are always shown, with a line on what each
   is for. Expert mode is gone: *Advanced connection* is a button in the
   transfer box.
-- The Builder has its own icon (a gold card with an arrow down), and on Windows
+- The Builder has its own icon (a gold arrow on dark stone), and on Windows
   10/11 a dark title bar on its window and dialogs.
 
 ## Patch 287 — Test and Stable
