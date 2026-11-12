@@ -114,12 +114,27 @@ def cleanup(executable=None):
             pass
 
 
+def _file_sha256(path):
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as stream:
+            for chunk in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
 def install(offer, executable=None, fetch=_get, progress=None):
     """Swap this executable for the verified new build; returns its path.
     The new build takes the channel name (TESL-Reborn-Builder-Test.exe) when
     the offer has one, so an older TESL-Reborn-Builder.exe is renamed."""
     executable = Path(executable or sys.executable)
     target = executable.with_name(offer.get("name") or executable.name)
+    # Another Builder window from this folder may have installed this very
+    # build already: then there is nothing to swap, only to restart.
+    if _file_sha256(target) == offer["sha256"]:
+        return target
     data = fetch(offer["url"], LIMIT, timeout=120, **({"progress": progress} if progress else {}))
     if len(data) != offer["bytes"] or hashlib.sha256(data).hexdigest() != offer["sha256"]:
         raise ValueError("Downloaded Builder does not match its SHA-256")

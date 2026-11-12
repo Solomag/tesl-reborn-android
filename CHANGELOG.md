@@ -18,6 +18,8 @@ offers its update when started.
   transfer box.
 - The Builder has its own icon (a gold arrow on dark stone), and on Windows
   10/11 a dark title bar on its window and dialogs.
+- With two Builder windows open, the second one to update restarts from the
+  build the first installed instead of downloading and swapping it again.
 
 ## Patch 287 — Test and Stable
 

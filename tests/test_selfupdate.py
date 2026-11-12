@@ -61,6 +61,19 @@ class SelfUpdateTest(unittest.TestCase):
             selfupdate.cleanup(exe)
             self.assertFalse(old.exists())
 
+    def test_a_second_window_finds_the_build_already_installed(self):
+        # Two Builders from one folder: the first swapped the file, the
+        # second only restarts from it, without a download or a swap.
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / selfupdate.asset_name()
+            data = b"new builder"
+            exe.write_bytes(data)
+            offer = dict(build=12, url="u", bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+            fetch = mock.Mock(side_effect=AssertionError("no download"))
+            self.assertEqual(selfupdate.install(offer, exe, fetch), exe)
+            self.assertEqual(exe.read_bytes(), data)
+            self.assertFalse(exe.with_name(exe.name + ".old").exists())
+
     def test_install_renames_an_old_builder_to_its_channel_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             exe = Path(tmp) / selfupdate.asset_name()
