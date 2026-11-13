@@ -10533,13 +10533,26 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     });
   });
   const emojiByName = /* @__PURE__ */ new Map(), emojiByAscii = /* @__PURE__ */ new Map();
-  let emojiDefinitions = [], emojiAsset = null, emojiTexture = null, emojiInitAttempted = false;
+  let emojiDefinitions = [], emojiGroups = [], emojiAsset = null, emojiTexture = null, emojiInitAttempted = false;
   const emojiHandles = [];
+  const EMOJI_UNICODE = [["\u{1F600}", "grinning"], ["\u{1F603}", "smiley"], ["\u{1F604}", "smile"], ["\u{1F601}", "grin"], ["\u{1F606}", "laughing"], ["\u{1F605}", "sweat_smile"], ["\u{1F923}", "rofl"], ["\u{1F602}", "joy"], ["\u{1F642}", "slight_smile"], ["\u{1F643}", "upside_down"], ["\u{1FAE0}", "melting"], ["\u{1F609}", "wink"], ["\u{1F60A}", "blush"], ["\u{1F607}", "innocent"], ["\u{1F970}", "smiling_face_with_3_hearts"], ["\u{1F60D}", "heart_eyes"], ["\u{1F929}", "star_struck"], ["\u{1F618}", "kissing_heart"], ["\u{1F617}", "kissing"], ["\u263A", "relaxed"], ["\u{1F61A}", "kissing_closed_eyes"], ["\u{1F619}", "kissing_smiling_eyes"], ["\u{1F972}", "smilling_face_with_tear"], ["\u{1F60B}", "yum"], ["\u{1F61B}", "stuck_out_tongue"], ["\u{1F61C}", "stuck_out_tongue_winking_eye"], ["\u{1F92A}", "zany_face"], ["\u{1F61D}", "stuck_out_tongue_closed_eyes"], ["\u{1F911}", "money_mouth"], ["\u{1F917}", "hugs"], ["\u{1F92D}", "hand_over_mouth_closed_eyes"], ["\u{1FAE2}", "face_with_open_eyes_and_hand_over_mouth"], ["\u{1FAE3}", "face_with_peeking_eye"], ["\u{1F92B}", "shushing"], ["\u{1F914}", "thinking"], ["\u{1FAE1}", "saluting"], ["\u{1F910}", "zipper_mouth"], ["\u{1F928}", "raised_eyebrow"], ["\u{1F610}", "neutral_face"], ["\u{1F611}", "expressionless"], ["\u{1F636}", "no_mouth"], ["\u{1FAE5}", "dotted_line_face"], ["\u{1F636}\u200D\u{1F32B}", "face_in_clouds"], ["\u{1F60F}", "smirking"], ["\u{1F612}", "unamused"], ["\u{1F644}", "rolling_eyes"], ["\u{1F62C}", "grimacing"], ["\u{1F62E}\u200D\u{1F4A8}", "face_exhaling"], ["\u{1F925}", "lying_face"], ["\u{1F60C}", "relieved"], ["\u{1F614}", "pensive"], ["\u{1F62A}", "sleepy"], ["\u{1F924}", "drooling_face"], ["\u{1F634}", "sleeping"], ["\u{1F637}", "mask"], ["\u{1F912}", "face_with_thermometer"], ["\u{1F915}", "face_with_head_bandage"], ["\u{1F922}", "nauseated_face"], ["\u{1F92E}", "face_vomiting"], ["\u{1F927}", "sneezing_face"], ["\u{1F975}", "hot_face"], ["\u{1F976}", "cold_face"], ["\u{1F974}", "woozy_face"], ["\u{1F635}", "dizzy_face"], ["\u{1F635}\u200D\u{1F4AB}", "spiral_eyes"], ["\u{1F92F}", "exploding_head"], ["\u{1F920}", "cowboy_hat_face"], ["\u{1F973}", "partying_face"], ["\u{1F978}", "disguised_face"], ["\u{1F60E}", "smiling_face_with_sunglasses"], ["\u{1F913}", "nerd_face"], ["\u{1F9D0}", "face_with_monocle"], ["\u{1F615}", "confused"], ["\u{1FAE4}", "face_with_diagonal_mouth"], ["\u{1F61F}", "worried"], ["\u{1F641}", "slight_frown"], ["\u2639", "frowning_face"], ["\u{1F62E}", "open_mouth"], ["\u{1F62F}", "hushed"], ["\u{1F632}", "astonished"], ["\u{1F633}", "flushed"], ["\u{1F97A}", "pleading_face"], ["\u{1F979}", "face_holding_back_tears"], ["\u{1F626}", "frowing"], ["\u{1F627}", "anguished"], ["\u{1F628}", "fearful"], ["\u{1F630}", "cold_sweat"], ["\u{1F625}", "disappointed_relieved"], ["\u{1F622}", "cry"], ["\u{1F62D}", "sob"], ["\u{1F631}", "scream"], ["\u{1F616}", "confounded"], ["\u{1F623}", "persevere"], ["\u{1F61E}", "disappointed"], ["\u{1F613}", "sweat"], ["\u{1F629}", "weary"], ["\u{1F62B}", "tired_face"], ["\u{1F971}", "yawning_face"], ["\u{1F624}", "triumph"], ["\u{1F621}", "rage"], ["\u{1F620}", "angry"], ["\u{1F92C}", "cursing"], ["\u{1F608}", "smiling_imp"], ["\u{1F47F}", "imp"], ["\u{1F480}", "skull"], ["\u2620", "skull_crossbones"], ["\u{1F4A9}", "shit"], ["\u{1F921}", "clown"], ["\u{1F479}", "japanese_ogre"], ["\u{1F47A}", "japanese_goblin"], ["\u{1F47B}", "ghost"], ["\u{1F47D}", "alien"], ["\u{1F47E}", "space_invader"], ["\u{1F916}", "robot"], ["\u{1F63A}", "smiley_cat"], ["\u{1F638}", "smile_cat"], ["\u{1F639}", "joy_cat"], ["\u{1F63B}", "heart_eyes_cat"], ["\u{1F63C}", "smirk_cat"], ["\u{1F63D}", "kissing_cat"], ["\u{1F640}", "scream_cat"], ["\u{1F63F}", "crying_cat"], ["\u{1F63E}", "pouting_cat"], ["\u{1F648}", "see_no_evil"], ["\u{1F649}", "hear_no_evil"], ["\u{1F64A}", "speak_no_evil"], ["\u{1F48B}", "kiss"], ["\u{1F48C}", "love_letter"], ["\u{1F498}", "cupid"], ["\u{1F49D}", "gift_heart"], ["\u{1F496}", "sparkling_heart"], ["\u{1F497}", "heartpulse"], ["\u{1F493}", "heartbeat"], ["\u{1F49E}", "revolving_hearts"], ["\u{1F495}", "two_hearts"], ["\u{1F49F}", "heart_decoration"], ["\u2763", "heart_exclamation"], ["\u{1F494}", "broken_heart"], ["\u2764\u200D\u{1F525}", "heart_on_fire"], ["\u2764\u200D\u{1FA79}", "mending_heart"], ["\u2764", "heart"], ["\u{1F4AF}", "100"], ["\u{1F4A2}", "anger"], ["\u{1F4A5}", "boom"], ["\u{1F4AB}", "dizzy"], ["\u{1F4A6}", "sweat_drops"], ["\u{1F4A8}", "dash"], ["\u{1F573}", "hole"], ["\u{1F4A3}", "bomb"], ["\u{1F4AC}", "speech_balloon"], ["\u{1F441}\u200D\u{1F5E8}", "eye_speech_bubble"], ["\u{1F5E8}", "left_speech_bubble"], ["\u{1F5EF}", "right_anger_bubble"], ["\u{1F4AD}", "thought_balloon"], ["\u{1F4A4}", "zzz"], ["\u{1F44B}", "wave"], ["\u{1F91A}", "raised_back_of_hand"], ["\u{1F590}", "hand_splayed"], ["\u270B", "raised_hand"], ["\u{1F596}", "vulcan_salute"], ["\u{1FAF1}", "rightwards_hand"], ["\u{1FAF2}", "leftwards_hand"], ["\u{1FAF3}", "palm_down_hand"], ["\u{1FAF4}", "palm_up_hand"], ["\u{1F44C}", "ok_hand"], ["\u{1F90C}", "pinched_fingers"], ["\u{1F90F}", "pinching_hand"], ["\u270C", "victory_hand"], ["\u{1F91E}", "crossed_fingers"], ["\u{1FAF0}", "hand_with_index_finger_and_thumb_crossed"], ["\u{1F91F}", "love_you_gesture"], ["\u{1F918}", "sign_of_the_horns"], ["\u{1F919}", "call_me_hand"], ["\u{1F448}", "backhand_index_pointing_left"], ["\u{1F449}", "backhand_index_pointing_right"], ["\u{1F446}", "backhand_index_pointing_up"], ["\u{1F595}", "middle_finger"], ["\u{1F447}", "backhand_index_pointing_down"], ["\u261D", "index_pointing_up"], ["\u{1FAF5}", "index_pointing_at_the_viewer"], ["\u{1F44D}", "thumbs_up"], ["\u{1F44E}", "thumbs_down"], ["\u270A", "raised_fist"], ["\u{1F44A}", "oncoming_fist"], ["\u{1F91B}", "left_facing_fist"], ["\u{1F91C}", "right_facing_fist"], ["\u{1F44F}", "clapping_hands"], ["\u{1F64C}", "raising_hands"], ["\u{1FAF6}", "heart_hands"], ["\u{1F450}", "open_hands"], ["\u{1F932}", "palms_up_together"], ["\u{1F91D}", "handshake"], ["\u{1F64F}", "folded_hands"], ["\u270D", "writing_hand"], ["\u{1F485}", "nail_care"], ["\u{1F933}", "selfie"], ["\u{1F4AA}", "muscle"], ["\u{1F9BE}", "mechanical_arm"], ["\u{1F9BF}", "mechanical_leg"], ["\u{1F9B5}", "leg"], ["\u{1F9B6}", "foot"], ["\u{1F442}", "ear"], ["\u{1F9BB}", "ear_with_hearing_aid"], ["\u{1F443}", "nose"], ["\u{1F9E0}", "brain"], ["\u{1FAC0}", "anatomical_heart"], ["\u{1FAC1}", "lungs"], ["\u{1F9B7}", "tooth"], ["\u{1F9B4}", "bone"], ["\u{1F440}", "eyes"], ["\u{1F441}", "eye"], ["\u{1F445}", "tongue"], ["\u{1F444}", "lips"], ["\u{1FAE6}", "biting_lip"], ["\u{1F9E1}", "heart"], ["\u{1F49B}", "heart"], ["\u{1F49A}", "heart"], ["\u{1F499}", "heart"], ["\u{1F49C}", "heart"], ["\u{1F5A4}", "heart"], ["\u{1F90D}", "heart"], ["\u{1F90E}", "heart"], ["\u{1FA77}", "heart"], ["\u{1FA75}", "heart"], ["\u{1FA76}", "heart"], ["\u{1F642}\u200D\u2194", "slight_smile"], ["\u{1F642}\u200D\u2195", "slight_smile"], ["\u{1FAE8}", "dizzy_face"]];
+  let emojiUnicode = null;
+  const EMOJI_DECORATION = /[\u{fe0e}\u{fe0f}\u{1f3fb}-\u{1f3ff}]/gu;
+  const EMOJI_ANY = /[\u{2600}-\u{27bf}\u{1f000}-\u{1faff}]/u;
+  function emojiFromUnicode(text) {
+    if (!EMOJI_ANY.test(text)) return text;
+    if (!emojiUnicode) {
+      const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, (ch) => "\\" + ch);
+      emojiUnicode = { map: new Map(EMOJI_UNICODE), pattern: new RegExp(EMOJI_UNICODE.map(([seq]) => seq).sort((a, b) => b.length - a.length).map(escape).join("|"), "gu") };
+    }
+    const { map, pattern } = emojiUnicode;
+    return text.replace(EMOJI_DECORATION, "").replace(pattern, (seq) => `:${map.get(seq)}:`);
+  }
   function emojiIndex(definition, columns) {
     return (definition.Row - 1) * columns + definition.Column - 1;
   }
   function emojiFormat(message) {
-    let plain = String(message).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
+    let plain = emojiFromUnicode(String(message)).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
     plain = uiPlain(plain);
     plain = plain.split(" ").map((word) => emojiByAscii.has(word) ? `:${emojiByAscii.get(word)}:` : word).join(" ");
     return plain.replace(/:([a-z0-9_]+):/gi, (whole, name) => {
@@ -10606,6 +10619,10 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       }
       asset.field("spriteInfoList").value = list;
       emojiDefinitions = definitions.map((item) => emojiByName.get(item.Name));
+      emojiGroups = definition.Groups.map((group) => ({
+        name: String(group.Name || ""),
+        entries: group.Sprites.map((item) => emojiByName.get(item.Name))
+      }));
       emojiAsset = asset;
       emojiTexture = texture;
       (globalThis.__teslOnResume ?? (globalThis.__teslOnResume = [])).push(() => {
@@ -11104,64 +11121,247 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   }
   const chatWindows = /* @__PURE__ */ new Map();
   const chatSetupDiagnosed = /* @__PURE__ */ new Set();
-  function chatInputInsert(record, name) {
+  let chatEmojiReports = 0;
+  function chatReplaceKeyboardEmoji(record) {
     const input = record.input.target;
     const text = String(call(input, "get_text")?.content || "");
+    if (text === record.lastText) return;
+    const fixed = emojiFromUnicode(text);
+    record.lastText = fixed;
+    if (fixed === text) return;
+    const caret = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
+    const after = emojiFromUnicode(text.slice(caret));
+    call(input, "set_text", Il2Cpp.string(fixed));
+    record.caret = Math.max(0, fixed.length - after.length);
+    const move = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
+    if (move) move.invoke(record.caret);
+    if (chatEmojiReports++ < 4) log(`emoji: keyboard emoji replaced (${text.length} -> ${fixed.length} chars)`);
+  }
+  function chatCaretTo(record, index) {
+    record.caret = index;
+    const input = record.input.target;
+    const caret = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
+    if (caret) caret.invoke(index);
+  }
+  function chatInputText(record) {
+    return String(call(record.input.target, "get_text")?.content || "");
+  }
+  function chatInputInsert(record, name) {
+    const text = chatInputText(record);
     const index = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
     const insertion = `:${name}: `;
-    call(input, "set_text", Il2Cpp.string(text.slice(0, index) + insertion + text.slice(index)));
-    record.caret = index + insertion.length;
-    const caret = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
-    if (caret) caret.invoke(record.caret);
-    call(input, "ActivateInputField");
+    const value = text.slice(0, index) + insertion + text.slice(index);
+    call(record.input.target, "set_text", Il2Cpp.string(value));
+    record.lastText = value;
+    chatCaretTo(record, index + insertion.length);
   }
-  function chatBuildPicker(record) {
-    if (record.picker) return true;
-    if (!initializeEmojis()) return false;
-    const go = uiNew("RebornEmojiPicker", record.window.target);
-    uiPlace(go, 1, 0, 1, 0, -16, 84, 284, 250);
-    call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-    const bg = uiAdd(go, "UnityEngine.UI.Image");
-    call(bg, "set_color", rgba(0.08, 0.08, 0.08, 0.98));
-    const root = call(go, "get_transform");
-    record.picker = go.ref(false);
-    record.page = 0;
-    record.cells = [];
-    for (let i = 0; i < 48; i++) {
-      const cell = uiNew(`Emoji${i}`, root);
-      uiPlace(cell, 0, 1, 0, 1, 6 + i % 8 * 34, -6 - Math.floor(i / 8) * 34, 30, 30);
-      const icon = uiAdd(cell, "UnityEngine.UI.RawImage");
-      call(icon, "set_texture", emojiTexture);
-      uiButton(cell, icon, () => {
-        const entry = emojiDefinitions[record.page * 48 + i];
-        if (!entry) return;
-        chatInputInsert(record, entry.Name);
-        call(record.picker.target, "SetActive", false);
-      });
-      record.cells.push({ object: cell.ref(false), image: icon.ref(false) });
+  function chatInputErase(record) {
+    const text = chatInputText(record);
+    const index = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
+    if (!index) return;
+    const before = text.slice(0, index);
+    const code = /:([a-z0-9_]+): ?$/.exec(before);
+    const cut = code && emojiByName.has(code[1]) ? code[0].length : Array.from(before).pop().length;
+    const value = before.slice(0, before.length - cut) + text.slice(index);
+    call(record.input.target, "set_text", Il2Cpp.string(value));
+    record.lastText = value;
+    chatCaretTo(record, index - cut);
+  }
+  let chatKeyboardHeight = 0;
+  function chatKeyboardWatch(record) {
+    if ((record.keyboardChecks = (record.keyboardChecks || 0) + 1) % 15 !== 1) return;
+    try {
+      const keyboard = ucls("UnityEngine.TouchScreenKeyboard");
+      if (!Boolean(keyboard.method("get_visible", 0).invoke())) return;
+      const pixels = Number(keyboard.method("get_area", 0).invoke().field("m_Height").value);
+      if (!(pixels > 50)) return;
+      const units = pixels / Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
+      if (Math.abs(units - chatKeyboardHeight) > 2) {
+        chatKeyboardHeight = units;
+        log(`emoji panel: keyboard height ${Math.round(pixels)} px`);
+      }
+    } catch (_) {
     }
-    uiLabeledButton("Previous", root, "<", -196, -216, 68, () => chatPickerPage(record, -1));
-    uiLabeledButton("Next", root, ">", -112, -216, 68, () => chatPickerPage(record, 1));
-    uiLabeledButton("Close", root, "X", -8, -216, 68, () => call(record.picker.target, "SetActive", false));
-    chatPickerPage(record, 0);
+  }
+  const PANEL_BAR = 56;
+  let chatPanelMethodsLogged = false;
+  function chatPanelHeight(record) {
+    const area = call(uiRect(call(record.panelParent.target, "get_gameObject")), "get_rect");
+    const parent = Number(area.field("m_Height").value);
+    return Math.round(Math.max(parent * 0.3, Math.min(parent * 0.6, chatKeyboardHeight || parent * 0.42)));
+  }
+  function chatBuildPanel(record) {
+    if (record.panel) return true;
+    if (!initializeEmojis()) return false;
+    const started = Date.now();
+    const parent = call(record.self.target, "get_transform");
+    record.panelParent = parent.ref(false);
+    const go = uiNew("RebornEmojiPanel", parent), rect = uiRect(go);
+    record.panel = go.ref(false);
+    call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
+    call(rect, "set_anchorMin", vec2(0, 0));
+    call(rect, "set_anchorMax", vec2(1, 0));
+    call(rect, "set_pivot", vec2(0.5, 0));
+    call(rect, "set_anchoredPosition", vec2(0, 0));
+    call(rect, "set_sizeDelta", vec2(0, chatPanelHeight(record)));
+    const bg = uiAdd(go, "UnityEngine.UI.Image");
+    call(bg, "set_color", rgba(0.07, 0.07, 0.08, 0.98));
+    const root = call(go, "get_transform");
+    const width = Number(call(rect, "get_rect").field("m_Width").value);
+    const tab = (name, x, w, content2, action) => {
+      const button = uiNew(name, root);
+      uiPlace(button, 0, 1, 0, 1, x, -6, w, PANEL_BAR - 12);
+      const back = uiAdd(button, "UnityEngine.UI.Image");
+      call(back, "set_color", rgba(0.16, 0.16, 0.18, 1));
+      const labelGO = uiNew("Label", call(button, "get_transform"));
+      uiStretch(uiRect(labelGO));
+      const label = uiText(labelGO, "", 28);
+      call(label, "set_spriteAsset", emojiAsset);
+      call(label, "set_richText", true);
+      call(label, "set_text", Il2Cpp.string(content2));
+      uiButton(button, back, action);
+    };
+    const offsets = [];
+    emojiGroups.forEach((group, i) => tab(`Group${i}`, 8 + i * 76, 68, `<sprite=${group.entries[0].index}>`, () => chatPanelScroll(record, offsets[i])));
+    tab("Erase", width - 8 - 76 - 8 - 96, 96, "<size=60%>DEL</size>", () => chatInputErase(record));
+    const send = record.self.target.class.methods.find((m) => m.name === "SendChatMessage" && !m.isStatic);
+    if (send) {
+      log(`emoji panel: send is SendChatMessage(${send.parameters.map((p) => p.type.name).join(", ")})`);
+      const plain = send.parameterCount === 1 && send.parameters[0].type.name === "System.String";
+      if (plain || send.parameterCount === 0) tab("Send", width - 8 - 76 - 8 - 96 - 8 - 120, 120, "<size=60%>SEND</size>", () => {
+        const text = chatInputText(record);
+        if (!text.trim()) return;
+        const self = record.self.target;
+        if (plain) self.method("SendChatMessage", 1).invoke(Il2Cpp.string(text));
+        else self.method("SendChatMessage", 0).invoke();
+        const clear = self.tryMethod("ClearInputText", 0);
+        if (clear) clear.invoke();
+        else call(record.input.target, "set_text", Il2Cpp.string(""));
+        record.lastText = chatInputText(record);
+        chatCaretTo(record, 0);
+        log("emoji panel: message sent from the panel");
+      });
+    }
+    tab("Keyboard", width - 8 - 76, 76, "<size=60%>ABC</size>", () => chatPanelShow(record, false, true));
+    const viewport = uiNew("Viewport", root), viewRect = uiRect(viewport);
+    call(viewRect, "set_anchorMin", vec2(0, 0));
+    call(viewRect, "set_anchorMax", vec2(1, 1));
+    call(viewRect, "set_offsetMin", vec2(0, 0));
+    call(viewRect, "set_offsetMax", vec2(0, -PANEL_BAR));
+    const hit = uiAdd(viewport, "UnityEngine.UI.Image");
+    call(hit, "set_color", rgba(0, 0, 0, 0));
+    uiAdd(viewport, "UnityEngine.UI.RectMask2D");
+    const content = uiNew("Content", call(viewport, "get_transform")), contentRect = uiRect(content);
+    call(contentRect, "set_anchorMin", vec2(0, 1));
+    call(contentRect, "set_anchorMax", vec2(1, 1));
+    call(contentRect, "set_pivot", vec2(0.5, 1));
+    const columns = Math.max(6, Math.floor((width - 16) / 64)), cell = (width - 16) / columns;
+    const contentTransform = call(content, "get_transform");
+    let y = 0;
+    emojiGroups.forEach((group, g) => {
+      offsets[g] = y;
+      const heading = uiNew(`Heading${g}`, contentTransform);
+      uiPlace(heading, 0, 1, 0, 1, 14, -y, width - 28, 32);
+      const label = uiText(heading, uiPlain(group.name), 18);
+      call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Left"));
+      call(label, "set_color", rgba(0.7, 0.7, 0.72, 1));
+      y += 34;
+      group.entries.forEach((entry, i) => {
+        const item = uiNew(entry.Name, contentTransform);
+        const pad = Math.round(cell * 0.14);
+        uiPlace(item, 0, 1, 0, 1, 8 + i % columns * cell + pad, -(y + Math.floor(i / columns) * cell + pad), cell - 2 * pad, cell - 2 * pad);
+        const icon = uiAdd(item, "UnityEngine.UI.RawImage");
+        call(icon, "set_texture", emojiTexture);
+        call(icon, "set_uvRect", unityStruct("UnityEngine.Rect", { m_XMin: entry.u, m_YMin: entry.v, m_Width: entry.du, m_Height: entry.dv }));
+        const button = uiButton(item, icon, () => chatInputInsert(record, entry.Name));
+        const transition = button.tryMethod("set_transition", 1);
+        if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
+      });
+      y += Math.ceil(group.entries.length / columns) * cell + 8;
+    });
+    call(contentRect, "set_sizeDelta", vec2(0, y));
+    const scroll = uiAdd(viewport, "UnityEngine.UI.ScrollRect");
+    call(scroll, "set_content", contentRect);
+    call(scroll, "set_viewport", viewRect);
+    call(scroll, "set_horizontal", false);
+    call(scroll, "set_vertical", true);
+    record.panelScroll = scroll.ref(false);
+    record.panelContent = contentRect.ref(false);
     call(go, "SetActive", false);
+    const area = call(uiRect(call(parent, "get_gameObject")), "get_rect"), screen = chatScreen();
+    log(`emoji panel: built ${emojiDefinitions.length} sprites, ${columns} columns, ${Date.now() - started} ms; host ${Math.round(Number(area.field("m_Width").value))}x${Math.round(Number(area.field("m_Height").value))} screen ${screen.width}x${screen.height} scale ${Number(call(record.canvas.target, "get_scaleFactor")).toFixed(2)}`);
+    if (!chatPanelMethodsLogged) {
+      chatPanelMethodsLogged = true;
+      log(`emoji panel: chat window methods ${record.self.target.class.methods.map((m) => m.name).join(",")}`);
+      let hide = "?";
+      try {
+        hide = String(call(record.input.target, "get_shouldHideMobileInput"));
+      } catch (_) {
+      }
+      const where = uiXY(call(record.rect.target, "get_anchoredPosition")), size = call(record.rect.target, "get_rect");
+      log(`emoji panel: input ${record.input.target.class.name} hideMobileInput=${hide}; window at ${Math.round(where.x)},${Math.round(where.y)} size ${Math.round(Number(size.field("m_Width").value))}x${Math.round(Number(size.field("m_Height").value))}`);
+    }
     return true;
   }
-  function chatPickerPage(record, delta) {
-    const pages = Math.ceil(emojiDefinitions.length / 48);
-    record.page = (record.page + delta + pages) % pages;
-    for (let i = 0; i < record.cells.length; i++) {
-      const entry = emojiDefinitions[record.page * 48 + i], cell = record.cells[i];
-      call(cell.object.target, "SetActive", !!entry);
-      if (!entry) continue;
-      call(cell.image.target, "set_uvRect", unityStruct("UnityEngine.Rect", {
-        m_XMin: entry.u,
-        m_YMin: entry.v,
-        m_Width: entry.du,
-        m_Height: entry.dv
-      }));
+  function chatPanelScroll(record, offset) {
+    call(record.panelScroll.target, "StopMovement");
+    call(record.panelContent.target, "set_anchoredPosition", vec2(0, offset || 0));
+  }
+  function chatPanelShow(record, show, keyboard = false) {
+    if (show && !chatBuildPanel(record)) return;
+    record.panelOpen = show;
+    if (record.pickerLabel) call(record.pickerLabel.target, "set_text", Il2Cpp.string(show ? "<size=45%>ABC</size>" : "<sprite=8>"));
+    if (!record.panel) return;
+    const panel = record.panel.target;
+    if (show) {
+      const height = chatPanelHeight(record);
+      call(uiRect(panel), "set_sizeDelta", vec2(0, height));
+      call(panel, "SetActive", true);
+      try {
+        chatPanelLift(record, height);
+      } catch (error) {
+        log(`emoji panel: lift failed: ${error}`);
+      }
+      call(call(panel, "get_transform"), "SetAsLastSibling");
+      record.panelOpenedAt = Date.now();
+      const input = record.input.target;
+      const off = input.tryMethod("DeactivateInputField", 0) || input.tryMethod("DeactivateInputField", 1);
+      if (off) {
+        if (off.parameterCount) off.invoke(false);
+        else off.invoke();
+      }
+    } else {
+      call(panel, "SetActive", false);
+      chatPanelDrop(record);
+      if (keyboard) call(record.input.target, "ActivateInputField");
     }
-    log(`emoji: picker page ${record.page + 1}/${pages}`);
+  }
+  function chatPanelLift(record, height) {
+    const scale = Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
+    const camera = call(record.canvas.target, "get_worldCamera");
+    const inputRect = uiRect(call(record.input.target, "get_gameObject"));
+    const world = call(call(inputRect, "get_transform"), "get_position");
+    const project = isNull(camera) ? null : camera.tryMethod("WorldToScreenPoint", 1);
+    const center = uiXY(project ? project.invoke(world) : world);
+    const pixels = Number(call(inputRect, "get_rect").field("m_Height").value) * scale * (record.factor || 1);
+    const pivot = Number(call(inputRect, "get_pivot").field("y").value);
+    const bottom = center.y - pivot * pixels;
+    const lift = (height * scale + 12 - bottom) / scale;
+    if (!(lift > 0)) return;
+    const rect = record.rect.target, at = record.desired || uiXY(call(rect, "get_anchoredPosition"));
+    record.panelLift = { from: { x: at.x, y: at.y }, to: { x: at.x, y: at.y + lift } };
+    record.desired = record.panelLift.to;
+    chatApplyPosition(record);
+    log(`emoji panel: chat raised by ${Math.round(lift)} for the panel`);
+  }
+  function chatPanelDrop(record) {
+    const lift = record.panelLift;
+    if (!lift) return;
+    record.panelLift = null;
+    if (record.desired === lift.to) {
+      record.desired = lift.from;
+      chatApplyPosition(record);
+    }
   }
   function chatFind(root, path) {
     const value = call(root, "Find", Il2Cpp.string(path));
@@ -11172,9 +11372,28 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
     const key = self.handle.toString();
     const kept = chatWindows.get(key);
     if (kept) {
-      if (unityAlive(kept.window.target) && unityAlive(kept.input.target)) return;
+      if (unityAlive(kept.window.target) && unityAlive(kept.input.target)) {
+        if (kept.panelOpen) try {
+          chatPanelShow(kept, false);
+        } catch (_) {
+        }
+        return;
+      }
       chatWindows.delete(key);
-      for (const name of ["window", "rect", "input", "canvas", "controls", "handle"]) try {
+      for (const name of [
+        "window",
+        "rect",
+        "input",
+        "canvas",
+        "controls",
+        "handle",
+        "pickerLabel",
+        "pickerButton",
+        "panel",
+        "panelParent",
+        "panelScroll",
+        "panelContent"
+      ]) try {
         kept[name]?.free();
       } catch (_) {
       }
@@ -11210,7 +11429,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         dragging: false,
         caret: null,
         errors: 0,
-        picker: null,
+        panel: null,
+        panelOpen: false,
         desired: null,
         handle: handle.ref(false)
       };
@@ -11229,12 +11449,8 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         call(label, "set_richText", true);
         call(label, "set_text", Il2Cpp.string("<sprite=8>"));
       } else call(label, "set_text", Il2Cpp.string(":)"));
-      const pickerButton = uiButton(picker, hit, () => {
-        if (!chatBuildPicker(record)) return;
-        const panel = record.picker.target;
-        call(panel, "SetActive", !Boolean(call(panel, "get_activeSelf")));
-        if (Boolean(call(panel, "get_activeSelf"))) call(call(panel, "get_transform"), "SetAsLastSibling");
-      });
+      record.pickerLabel = label.ref(false);
+      const pickerButton = uiButton(picker, hit, () => chatPanelShow(record, !record.panelOpen, true));
       const transition = pickerButton.tryMethod("set_transition", 1);
       if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
       record.pickerButton = uiRect(picker).ref(false);
@@ -11323,6 +11539,9 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       if (Boolean(call(input, "get_isFocused"))) {
         if (record.caretMethod === void 0) record.caretMethod = input.tryMethod("get_stringPosition", 0) || input.tryMethod("get_caretPosition", 0) || null;
         if (record.caretMethod) record.caret = Number(record.caretMethod.invoke());
+        chatReplaceKeyboardEmoji(record);
+        chatKeyboardWatch(record);
+        if (record.panelOpen && Date.now() - record.panelOpenedAt > 400) chatPanelShow(record, false);
       }
       const unityInput = ucls("UnityEngine.Input");
       let point, held, down;
@@ -11367,8 +11586,6 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
         log("chat UI: position saved");
       }
       if (!held) record.armed = false;
-      if (down && record.picker && Boolean(call(record.picker.target, "get_activeSelf")) && !chatContains(uiRect(record.picker.target), point, camera) && !chatContains(record.pickerButton.target, point, camera))
-        call(record.picker.target, "SetActive", false);
       record.errors = 0;
     } catch (error) {
       record.errors++;
@@ -11638,16 +11855,16 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
   const APK_LEVEL = 2;
   const patchVersion = (revision) => `v${APK_LEVEL}.${revision}`;
   const PATCH_NOTES = {
-    en: "New: chat emojis arrive by themselves when the APK lacks them; future Reborn emoji updates need no new APK.",
-    ru: "\u041D\u043E\u0432\u043E\u0435: \u044D\u043C\u043E\u0434\u0437\u0438 \u0432 \u0447\u0430\u0442\u0435 \u0441\u043A\u0430\u0447\u0438\u0432\u0430\u044E\u0442\u0441\u044F \u0441\u0430\u043C\u0438, \u0435\u0441\u043B\u0438 \u0438\u0445 \u043D\u0435\u0442 \u0432 APK; \u043D\u043E\u0432\u044B\u0435 \u044D\u043C\u043E\u0434\u0437\u0438 Reborn \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0435 \u043F\u043E\u0442\u0440\u0435\u0431\u0443\u044E\u0442 \u043D\u043E\u0432\u043E\u0433\u043E APK.",
-    de: "Neu: Chat-Emojis werden selbst geladen, wenn sie in der APK fehlen; neue Reborn-Emojis brauchen keine neue APK mehr.",
-    es: "Novedades: los emojis del chat se descargan solos si faltan en el APK; los nuevos emojis de Reborn ya no necesitar\xE1n un APK nuevo.",
-    fr: "Nouveau : les emojis du chat se t\xE9l\xE9chargent seuls s\u2019ils manquent dans l\u2019APK ; les nouveaux emojis Reborn ne demanderont plus de nouvel APK.",
-    it: "Novit\xE0: le emoji della chat si scaricano da sole se mancano nell\u2019APK; le nuove emoji di Reborn non richiederanno un nuovo APK.",
-    pl: "Nowe: emoji czatu pobieraj\u0105 si\u0119 same, je\u015Bli brakuje ich w APK; nowe emoji Reborn nie b\u0119d\u0105 wymaga\u0107 nowego APK.",
-    pt: "Novo: os emojis do chat s\xE3o baixados sozinhos se faltarem no APK; novos emojis do Reborn n\xE3o v\xE3o exigir um APK novo.",
-    tr: "Yeni: APK\u2019da yoksa sohbet emojileri kendili\u011Finden indirilir; yeni Reborn emojileri art\u0131k yeni APK gerektirmez.",
-    zh: "\u65B0\u5185\u5BB9\uFF1AAPK \u4E2D\u7F3A\u5C11\u804A\u5929\u8868\u60C5\u65F6\u4F1A\u81EA\u52A8\u4E0B\u8F7D\uFF1B\u4EE5\u540E Reborn \u7684\u65B0\u8868\u60C5\u65E0\u9700\u65B0\u7684 APK\u3002"
+    en: "New: the chat smiley opens an emoji panel in place of the keyboard (SEND, DEL, ABC to go back); keyboard emojis go out as Reborn emojis that PC players see too.",
+    ru: "\u041D\u043E\u0432\u043E\u0435: \u0441\u043C\u0430\u0439\u043B\u0438\u043A \u0432 \u0447\u0430\u0442\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442 \u043F\u0430\u043D\u0435\u043B\u044C \u044D\u043C\u043E\u0434\u0437\u0438 \u0432\u043C\u0435\u0441\u0442\u043E \u043A\u043B\u0430\u0432\u0438\u0430\u0442\u0443\u0440\u044B (SEND \u2014 \u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C, DEL \u2014 \u0441\u0442\u0435\u0440\u0435\u0442\u044C, ABC \u2014 \u043D\u0430\u0437\u0430\u0434); \u044D\u043C\u043E\u0434\u0437\u0438 \u0441 \u043A\u043B\u0430\u0432\u0438\u0430\u0442\u0443\u0440\u044B \u0443\u0445\u043E\u0434\u044F\u0442 \u043A\u0430\u043A \u044D\u043C\u043E\u0434\u0437\u0438 Reborn \u0438 \u0432\u0438\u0434\u043D\u044B \u0438\u0433\u0440\u043E\u043A\u0430\u043C \u043D\u0430 \u041F\u041A.",
+    de: "Neu: Der Smiley im Chat \xF6ffnet statt der Tastatur ein Emoji-Feld (SEND senden, DEL l\xF6schen, ABC zur\xFCck); Tastatur-Emojis gehen als Reborn-Emojis raus, die auch PC-Spieler sehen.",
+    es: "Novedades: el emoticono del chat abre un panel de emojis en lugar del teclado (SEND enviar, DEL borrar, ABC volver); los emojis del teclado se env\xEDan como emojis de Reborn que tambi\xE9n ven los jugadores de PC.",
+    fr: "Nouveau : le smiley du chat ouvre un panneau d\u2019emojis \xE0 la place du clavier (SEND envoyer, DEL effacer, ABC revenir) ; les emojis du clavier partent en emojis Reborn, visibles aussi des joueurs PC.",
+    it: "Novit\xE0: lo smile della chat apre un pannello di emoji al posto della tastiera (SEND invia, DEL cancella, ABC torna); le emoji della tastiera partono come emoji Reborn, visibili anche ai giocatori PC.",
+    pl: "Nowe: bu\u017Aka w czacie otwiera panel emoji zamiast klawiatury (SEND wy\u015Blij, DEL usu\u0144, ABC powr\xF3t); emoji z klawiatury s\u0105 wysy\u0142ane jako emoji Reborn, widoczne te\u017C dla graczy na PC.",
+    pt: "Novo: o smiley do chat abre um painel de emojis no lugar do teclado (SEND enviar, DEL apagar, ABC voltar); os emojis do teclado v\xE3o como emojis do Reborn, que os jogadores de PC tamb\xE9m veem.",
+    tr: "Yeni: sohbetteki g\xFClen y\xFCz klavye yerine bir emoji paneli a\xE7ar (SEND g\xF6nder, DEL sil, ABC geri); klavye emojileri PC oyuncular\u0131n\u0131n da g\xF6rd\xFC\u011F\xFC Reborn emojileri olarak gider.",
+    zh: "\u65B0\u5185\u5BB9\uFF1A\u804A\u5929\u4E2D\u7684\u7B11\u8138\u6309\u94AE\u4F1A\u5728\u952E\u76D8\u4F4D\u7F6E\u6253\u5F00\u8868\u60C5\u9762\u677F\uFF08SEND \u53D1\u9001\u3001DEL \u5220\u9664\u3001ABC \u8FD4\u56DE\u952E\u76D8\uFF09\uFF1B\u952E\u76D8\u8868\u60C5\u4F1A\u4EE5 Reborn \u8868\u60C5\u53D1\u9001\uFF0CPC \u73A9\u5BB6\u4E5F\u80FD\u770B\u5230\u3002"
   };
   function createUpdateNotices(updater, io) {
     let downloadStarted = false, lastStatus = "";

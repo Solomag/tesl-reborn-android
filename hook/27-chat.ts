@@ -1,11 +1,29 @@
   // BEGIN android-ui: chat-emojis
 const emojiByName = new Map(), emojiByAscii = new Map();
-  let emojiDefinitions = [], emojiAsset = null, emojiTexture = null, emojiInitAttempted = false;
+  let emojiDefinitions = [], emojiGroups = [], emojiAsset = null, emojiTexture = null, emojiInitAttempted = false;
   const emojiHandles = [];
+  // Phone keyboard emoji -> the PC sprite with the same picture. Generated
+  // from Unicode and checked against the plugin's people.json order; the
+  // tail maps close relatives (coloured hearts) to the nearest sprite.
+  const EMOJI_UNICODE = [["\u{1f600}","grinning"],["\u{1f603}","smiley"],["\u{1f604}","smile"],["\u{1f601}","grin"],["\u{1f606}","laughing"],["\u{1f605}","sweat_smile"],["\u{1f923}","rofl"],["\u{1f602}","joy"],["\u{1f642}","slight_smile"],["\u{1f643}","upside_down"],["\u{1fae0}","melting"],["\u{1f609}","wink"],["\u{1f60a}","blush"],["\u{1f607}","innocent"],["\u{1f970}","smiling_face_with_3_hearts"],["\u{1f60d}","heart_eyes"],["\u{1f929}","star_struck"],["\u{1f618}","kissing_heart"],["\u{1f617}","kissing"],["\u{263a}","relaxed"],["\u{1f61a}","kissing_closed_eyes"],["\u{1f619}","kissing_smiling_eyes"],["\u{1f972}","smilling_face_with_tear"],["\u{1f60b}","yum"],["\u{1f61b}","stuck_out_tongue"],["\u{1f61c}","stuck_out_tongue_winking_eye"],["\u{1f92a}","zany_face"],["\u{1f61d}","stuck_out_tongue_closed_eyes"],["\u{1f911}","money_mouth"],["\u{1f917}","hugs"],["\u{1f92d}","hand_over_mouth_closed_eyes"],["\u{1fae2}","face_with_open_eyes_and_hand_over_mouth"],["\u{1fae3}","face_with_peeking_eye"],["\u{1f92b}","shushing"],["\u{1f914}","thinking"],["\u{1fae1}","saluting"],["\u{1f910}","zipper_mouth"],["\u{1f928}","raised_eyebrow"],["\u{1f610}","neutral_face"],["\u{1f611}","expressionless"],["\u{1f636}","no_mouth"],["\u{1fae5}","dotted_line_face"],["\u{1f636}\u{200d}\u{1f32b}","face_in_clouds"],["\u{1f60f}","smirking"],["\u{1f612}","unamused"],["\u{1f644}","rolling_eyes"],["\u{1f62c}","grimacing"],["\u{1f62e}\u{200d}\u{1f4a8}","face_exhaling"],["\u{1f925}","lying_face"],["\u{1f60c}","relieved"],["\u{1f614}","pensive"],["\u{1f62a}","sleepy"],["\u{1f924}","drooling_face"],["\u{1f634}","sleeping"],["\u{1f637}","mask"],["\u{1f912}","face_with_thermometer"],["\u{1f915}","face_with_head_bandage"],["\u{1f922}","nauseated_face"],["\u{1f92e}","face_vomiting"],["\u{1f927}","sneezing_face"],["\u{1f975}","hot_face"],["\u{1f976}","cold_face"],["\u{1f974}","woozy_face"],["\u{1f635}","dizzy_face"],["\u{1f635}\u{200d}\u{1f4ab}","spiral_eyes"],["\u{1f92f}","exploding_head"],["\u{1f920}","cowboy_hat_face"],["\u{1f973}","partying_face"],["\u{1f978}","disguised_face"],["\u{1f60e}","smiling_face_with_sunglasses"],["\u{1f913}","nerd_face"],["\u{1f9d0}","face_with_monocle"],["\u{1f615}","confused"],["\u{1fae4}","face_with_diagonal_mouth"],["\u{1f61f}","worried"],["\u{1f641}","slight_frown"],["\u{2639}","frowning_face"],["\u{1f62e}","open_mouth"],["\u{1f62f}","hushed"],["\u{1f632}","astonished"],["\u{1f633}","flushed"],["\u{1f97a}","pleading_face"],["\u{1f979}","face_holding_back_tears"],["\u{1f626}","frowing"],["\u{1f627}","anguished"],["\u{1f628}","fearful"],["\u{1f630}","cold_sweat"],["\u{1f625}","disappointed_relieved"],["\u{1f622}","cry"],["\u{1f62d}","sob"],["\u{1f631}","scream"],["\u{1f616}","confounded"],["\u{1f623}","persevere"],["\u{1f61e}","disappointed"],["\u{1f613}","sweat"],["\u{1f629}","weary"],["\u{1f62b}","tired_face"],["\u{1f971}","yawning_face"],["\u{1f624}","triumph"],["\u{1f621}","rage"],["\u{1f620}","angry"],["\u{1f92c}","cursing"],["\u{1f608}","smiling_imp"],["\u{1f47f}","imp"],["\u{1f480}","skull"],["\u{2620}","skull_crossbones"],["\u{1f4a9}","shit"],["\u{1f921}","clown"],["\u{1f479}","japanese_ogre"],["\u{1f47a}","japanese_goblin"],["\u{1f47b}","ghost"],["\u{1f47d}","alien"],["\u{1f47e}","space_invader"],["\u{1f916}","robot"],["\u{1f63a}","smiley_cat"],["\u{1f638}","smile_cat"],["\u{1f639}","joy_cat"],["\u{1f63b}","heart_eyes_cat"],["\u{1f63c}","smirk_cat"],["\u{1f63d}","kissing_cat"],["\u{1f640}","scream_cat"],["\u{1f63f}","crying_cat"],["\u{1f63e}","pouting_cat"],["\u{1f648}","see_no_evil"],["\u{1f649}","hear_no_evil"],["\u{1f64a}","speak_no_evil"],["\u{1f48b}","kiss"],["\u{1f48c}","love_letter"],["\u{1f498}","cupid"],["\u{1f49d}","gift_heart"],["\u{1f496}","sparkling_heart"],["\u{1f497}","heartpulse"],["\u{1f493}","heartbeat"],["\u{1f49e}","revolving_hearts"],["\u{1f495}","two_hearts"],["\u{1f49f}","heart_decoration"],["\u{2763}","heart_exclamation"],["\u{1f494}","broken_heart"],["\u{2764}\u{200d}\u{1f525}","heart_on_fire"],["\u{2764}\u{200d}\u{1fa79}","mending_heart"],["\u{2764}","heart"],["\u{1f4af}","100"],["\u{1f4a2}","anger"],["\u{1f4a5}","boom"],["\u{1f4ab}","dizzy"],["\u{1f4a6}","sweat_drops"],["\u{1f4a8}","dash"],["\u{1f573}","hole"],["\u{1f4a3}","bomb"],["\u{1f4ac}","speech_balloon"],["\u{1f441}\u{200d}\u{1f5e8}","eye_speech_bubble"],["\u{1f5e8}","left_speech_bubble"],["\u{1f5ef}","right_anger_bubble"],["\u{1f4ad}","thought_balloon"],["\u{1f4a4}","zzz"],["\u{1f44b}","wave"],["\u{1f91a}","raised_back_of_hand"],["\u{1f590}","hand_splayed"],["\u{270b}","raised_hand"],["\u{1f596}","vulcan_salute"],["\u{1faf1}","rightwards_hand"],["\u{1faf2}","leftwards_hand"],["\u{1faf3}","palm_down_hand"],["\u{1faf4}","palm_up_hand"],["\u{1f44c}","ok_hand"],["\u{1f90c}","pinched_fingers"],["\u{1f90f}","pinching_hand"],["\u{270c}","victory_hand"],["\u{1f91e}","crossed_fingers"],["\u{1faf0}","hand_with_index_finger_and_thumb_crossed"],["\u{1f91f}","love_you_gesture"],["\u{1f918}","sign_of_the_horns"],["\u{1f919}","call_me_hand"],["\u{1f448}","backhand_index_pointing_left"],["\u{1f449}","backhand_index_pointing_right"],["\u{1f446}","backhand_index_pointing_up"],["\u{1f595}","middle_finger"],["\u{1f447}","backhand_index_pointing_down"],["\u{261d}","index_pointing_up"],["\u{1faf5}","index_pointing_at_the_viewer"],["\u{1f44d}","thumbs_up"],["\u{1f44e}","thumbs_down"],["\u{270a}","raised_fist"],["\u{1f44a}","oncoming_fist"],["\u{1f91b}","left_facing_fist"],["\u{1f91c}","right_facing_fist"],["\u{1f44f}","clapping_hands"],["\u{1f64c}","raising_hands"],["\u{1faf6}","heart_hands"],["\u{1f450}","open_hands"],["\u{1f932}","palms_up_together"],["\u{1f91d}","handshake"],["\u{1f64f}","folded_hands"],["\u{270d}","writing_hand"],["\u{1f485}","nail_care"],["\u{1f933}","selfie"],["\u{1f4aa}","muscle"],["\u{1f9be}","mechanical_arm"],["\u{1f9bf}","mechanical_leg"],["\u{1f9b5}","leg"],["\u{1f9b6}","foot"],["\u{1f442}","ear"],["\u{1f9bb}","ear_with_hearing_aid"],["\u{1f443}","nose"],["\u{1f9e0}","brain"],["\u{1fac0}","anatomical_heart"],["\u{1fac1}","lungs"],["\u{1f9b7}","tooth"],["\u{1f9b4}","bone"],["\u{1f440}","eyes"],["\u{1f441}","eye"],["\u{1f445}","tongue"],["\u{1f444}","lips"],["\u{1fae6}","biting_lip"],["\u{1f9e1}","heart"],["\u{1f49b}","heart"],["\u{1f49a}","heart"],["\u{1f499}","heart"],["\u{1f49c}","heart"],["\u{1f5a4}","heart"],["\u{1f90d}","heart"],["\u{1f90e}","heart"],["\u{1fa77}","heart"],["\u{1fa75}","heart"],["\u{1fa76}","heart"],["\u{1f642}\u{200d}\u{2194}","slight_smile"],["\u{1f642}\u{200d}\u{2195}","slight_smile"],["\u{1fae8}","dizzy_face"]];
+  let emojiUnicode = null;
+  // Variation selectors and skin tones have no sprite; the base emoji does.
+  const EMOJI_DECORATION = /[\u{fe0e}\u{fe0f}\u{1f3fb}-\u{1f3ff}]/gu;
+  const EMOJI_ANY = /[\u{2600}-\u{27bf}\u{1f000}-\u{1faff}]/u;
+  function emojiFromUnicode(text) {
+    if (!EMOJI_ANY.test(text)) return text;
+    if (!emojiUnicode) {
+      const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, ch => "\\" + ch);
+      emojiUnicode = { map: new Map(EMOJI_UNICODE), pattern: new RegExp(EMOJI_UNICODE.map(([seq]) => seq)
+        .sort((a, b) => b.length - a.length).map(escape).join("|"), "gu") };
+    }
+    const { map, pattern } = emojiUnicode;
+    return text.replace(EMOJI_DECORATION, "").replace(pattern, seq => `:${map.get(seq)}:`);
+  }
   function emojiIndex(definition, columns) { return (definition.Row - 1) * columns + definition.Column - 1; }
   function emojiFormat(message) {
     // PC sends this markup too. Resolve its name against the verified atlas.
-    let plain = String(message).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
+    let plain = emojiFromUnicode(String(message)).replace(/<link=["']emoji\+([a-z0-9_]+)["']>[^]*?<\/link>/gi, (_, name) => `:${name}:`);
     plain = uiPlain(plain);
     plain = plain.split(" ").map(word => emojiByAscii.has(word) ? `:${emojiByAscii.get(word)}:` : word).join(" ");
     return plain.replace(/:([a-z0-9_]+):/gi, (whole, name) => {
@@ -64,6 +82,8 @@ const emojiByName = new Map(), emojiByAscii = new Map();
       }
       asset.field("spriteInfoList").value = list;
       emojiDefinitions = definitions.map(item => emojiByName.get(item.Name));
+      emojiGroups = definition.Groups.map(group => ({ name: String(group.Name || ""),
+        entries: group.Sprites.map(item => emojiByName.get(item.Name)) }));
       emojiAsset = asset; emojiTexture = texture;
       // Report 23: the GL context is rebuilt after the background and a
       // texture made at runtime comes back blank; decode it again.
@@ -454,56 +474,232 @@ function chatScaleApply(record) {
   // BEGIN android-ui: chat-window
 const chatWindows = new Map();
   const chatSetupDiagnosed = new Set();
-  function chatInputInsert(record, name) {
+  // The message goes out as typed, so PC players would get keyboard emoji
+  // the game font cannot draw. Rewrite them to the PC :name: codes as they
+  // are typed; the caret stays after the replaced text.
+  let chatEmojiReports = 0;
+  function chatReplaceKeyboardEmoji(record) {
     const input = record.input.target;
     const text = String(call(input, "get_text")?.content || "");
+    if (text === record.lastText) return;
+    const fixed = emojiFromUnicode(text);
+    record.lastText = fixed;
+    if (fixed === text) return;
+    const caret = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
+    const after = emojiFromUnicode(text.slice(caret));
+    call(input, "set_text", Il2Cpp.string(fixed));
+    record.caret = Math.max(0, fixed.length - after.length);
+    const move = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
+    if (move) move.invoke(record.caret);
+    if (chatEmojiReports++ < 4) log(`emoji: keyboard emoji replaced (${text.length} -> ${fixed.length} chars)`);
+  }
+  function chatCaretTo(record, index) {
+    record.caret = index;
+    const input = record.input.target;
+    const caret = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
+    if (caret) caret.invoke(index);
+  }
+  function chatInputText(record) { return String(call(record.input.target, "get_text")?.content || ""); }
+  // With the panel open the keyboard stays hidden: insert without focusing
+  // the field, which would bring the keyboard back over the panel.
+  function chatInputInsert(record, name) {
+    const text = chatInputText(record);
     const index = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
     const insertion = `:${name}: `;
-    call(input, "set_text", Il2Cpp.string(text.slice(0, index) + insertion + text.slice(index)));
-    record.caret = index + insertion.length;
-    const caret = input.tryMethod("set_stringPosition", 1) || input.tryMethod("set_caretPosition", 1);
-    if (caret) caret.invoke(record.caret);
-    call(input, "ActivateInputField");
+    const value = text.slice(0, index) + insertion + text.slice(index);
+    call(record.input.target, "set_text", Il2Cpp.string(value));
+    record.lastText = value;
+    chatCaretTo(record, index + insertion.length);
   }
-  function chatBuildPicker(record) {
-    if (record.picker) return true;
+  // Backspace removes a whole :name: code (and its space) at once.
+  function chatInputErase(record) {
+    const text = chatInputText(record);
+    const index = Math.max(0, Math.min(text.length, record.caret == null ? text.length : record.caret));
+    if (!index) return;
+    const before = text.slice(0, index);
+    const code = /:([a-z0-9_]+): ?$/.exec(before);
+    const cut = code && emojiByName.has(code[1]) ? code[0].length : Array.from(before).pop().length;
+    const value = before.slice(0, before.length - cut) + text.slice(index);
+    call(record.input.target, "set_text", Il2Cpp.string(value));
+    record.lastText = value;
+    chatCaretTo(record, index - cut);
+  }
+  // A messenger-style panel: the smiley swaps the phone keyboard for the PC
+  // sprites in the keyboard's place; ABC, or a tap on the field, brings the
+  // keyboard back. The panel keeps the last keyboard height.
+  let chatKeyboardHeight = 0;
+  function chatKeyboardWatch(record) {
+    if ((record.keyboardChecks = (record.keyboardChecks || 0) + 1) % 15 !== 1) return;
+    try {
+      const keyboard = ucls("UnityEngine.TouchScreenKeyboard");
+      if (!Boolean(keyboard.method("get_visible", 0).invoke())) return;
+      const pixels = Number(keyboard.method("get_area", 0).invoke().field("m_Height").value);
+      if (!(pixels > 50)) return;
+      const units = pixels / Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
+      if (Math.abs(units - chatKeyboardHeight) > 2) { chatKeyboardHeight = units; log(`emoji panel: keyboard height ${Math.round(pixels)} px`); }
+    } catch (_) {}
+  }
+  const PANEL_BAR = 56;
+  let chatPanelMethodsLogged = false;
+  function chatPanelHeight(record) {
+    const area = call(uiRect(call(record.panelParent.target, "get_gameObject")), "get_rect");
+    const parent = Number(area.field("m_Height").value);
+    return Math.round(Math.max(parent * 0.3, Math.min(parent * 0.6, chatKeyboardHeight || parent * 0.42)));
+  }
+  function chatBuildPanel(record) {
+    if (record.panel) return true;
     if (!initializeEmojis()) return false;
-    const go = uiNew("RebornEmojiPicker", record.window.target);
-    uiPlace(go, 1, 0, 1, 0, -16, 84, 284, 250);
+    const started = Date.now();
+    const parent = call(record.self.target, "get_transform");
+    record.panelParent = parent.ref(false);
+    const go = uiNew("RebornEmojiPanel", parent), rect = uiRect(go);
+    record.panel = go.ref(false);
     call(uiAdd(go, "UnityEngine.UI.LayoutElement"), "set_ignoreLayout", true);
-    const bg = uiAdd(go, "UnityEngine.UI.Image"); call(bg, "set_color", rgba(0.08, 0.08, 0.08, 0.98));
+    call(rect, "set_anchorMin", vec2(0, 0)); call(rect, "set_anchorMax", vec2(1, 0)); call(rect, "set_pivot", vec2(0.5, 0));
+    call(rect, "set_anchoredPosition", vec2(0, 0)); call(rect, "set_sizeDelta", vec2(0, chatPanelHeight(record)));
+    const bg = uiAdd(go, "UnityEngine.UI.Image"); call(bg, "set_color", rgba(0.07, 0.07, 0.08, 0.98));
     const root = call(go, "get_transform");
-    record.picker = go.ref(false); record.page = 0; record.cells = [];
-    for (let i = 0; i < 48; i++) {
-      const cell = uiNew(`Emoji${i}`, root);
-      uiPlace(cell, 0, 1, 0, 1, 6 + (i % 8) * 34, -6 - Math.floor(i / 8) * 34, 30, 30);
-      const icon = uiAdd(cell, "UnityEngine.UI.RawImage"); call(icon, "set_texture", emojiTexture);
-      uiButton(cell, icon, () => {
-        const entry = emojiDefinitions[record.page * 48 + i];
-        if (!entry) return;
-        chatInputInsert(record, entry.Name); call(record.picker.target, "SetActive", false);
+    const width = Number(call(rect, "get_rect").field("m_Width").value);
+
+    // Bar: one tab per group (its first sprite), then erase and ABC.
+    const tab = (name, x, w, content, action) => {
+      const button = uiNew(name, root); uiPlace(button, 0, 1, 0, 1, x, -6, w, PANEL_BAR - 12);
+      const back = uiAdd(button, "UnityEngine.UI.Image"); call(back, "set_color", rgba(0.16, 0.16, 0.18, 1));
+      const labelGO = uiNew("Label", call(button, "get_transform")); uiStretch(uiRect(labelGO));
+      const label = uiText(labelGO, "", 28);
+      call(label, "set_spriteAsset", emojiAsset); call(label, "set_richText", true); call(label, "set_text", Il2Cpp.string(content));
+      uiButton(button, back, action);
+    };
+    const offsets = [];
+    emojiGroups.forEach((group, i) => tab(`Group${i}`, 8 + i * 76, 68, `<sprite=${group.entries[0].index}>`, () => chatPanelScroll(record, offsets[i])));
+    tab("Erase", width - 8 - 76 - 8 - 96, 96, "<size=60%>DEL</size>", () => chatInputErase(record));
+    // The game sends only on the keyboard's Enter; with the keyboard hidden
+    // the panel sends through the same FriendsChatWin.SendChatMessage.
+    const send = record.self.target.class.methods.find(m => m.name === "SendChatMessage" && !m.isStatic);
+    if (send) {
+      log(`emoji panel: send is SendChatMessage(${send.parameters.map(p => p.type.name).join(", ")})`);
+      // It is the input's submit handler: it takes the text and leaves the
+      // field to the caller.
+      const plain = send.parameterCount === 1 && send.parameters[0].type.name === "System.String";
+      if (plain || send.parameterCount === 0) tab("Send", width - 8 - 76 - 8 - 96 - 8 - 120, 120, "<size=60%>SEND</size>", () => {
+        const text = chatInputText(record);
+        if (!text.trim()) return;
+        const self = record.self.target;
+        if (plain) self.method("SendChatMessage", 1).invoke(Il2Cpp.string(text)); else self.method("SendChatMessage", 0).invoke();
+        const clear = self.tryMethod("ClearInputText", 0);
+        if (clear) clear.invoke(); else call(record.input.target, "set_text", Il2Cpp.string(""));
+        record.lastText = chatInputText(record); chatCaretTo(record, 0);
+        log("emoji panel: message sent from the panel");
       });
-      record.cells.push({ object: cell.ref(false), image: icon.ref(false) });
     }
-    uiLabeledButton("Previous", root, "<", -196, -216, 68, () => chatPickerPage(record, -1));
-    uiLabeledButton("Next", root, ">", -112, -216, 68, () => chatPickerPage(record, 1));
-    uiLabeledButton("Close", root, "X", -8, -216, 68, () => call(record.picker.target, "SetActive", false));
-    chatPickerPage(record, 0);
+    tab("Keyboard", width - 8 - 76, 76, "<size=60%>ABC</size>", () => chatPanelShow(record, false, true));
+
+    // Scrolling grid with a heading per group.
+    const viewport = uiNew("Viewport", root), viewRect = uiRect(viewport);
+    call(viewRect, "set_anchorMin", vec2(0, 0)); call(viewRect, "set_anchorMax", vec2(1, 1));
+    call(viewRect, "set_offsetMin", vec2(0, 0)); call(viewRect, "set_offsetMax", vec2(0, -PANEL_BAR));
+    const hit = uiAdd(viewport, "UnityEngine.UI.Image"); call(hit, "set_color", rgba(0, 0, 0, 0));
+    uiAdd(viewport, "UnityEngine.UI.RectMask2D");
+    const content = uiNew("Content", call(viewport, "get_transform")), contentRect = uiRect(content);
+    call(contentRect, "set_anchorMin", vec2(0, 1)); call(contentRect, "set_anchorMax", vec2(1, 1)); call(contentRect, "set_pivot", vec2(0.5, 1));
+    const columns = Math.max(6, Math.floor((width - 16) / 64)), cell = (width - 16) / columns;
+    const contentTransform = call(content, "get_transform");
+    let y = 0;
+    emojiGroups.forEach((group, g) => {
+      offsets[g] = y;
+      const heading = uiNew(`Heading${g}`, contentTransform); uiPlace(heading, 0, 1, 0, 1, 14, -y, width - 28, 32);
+      const label = uiText(heading, uiPlain(group.name), 18);
+      call(label, "set_alignment", uiEnum("TMPro.TextAlignmentOptions", "Left")); call(label, "set_color", rgba(0.7, 0.7, 0.72, 1));
+      y += 34;
+      group.entries.forEach((entry, i) => {
+        const item = uiNew(entry.Name, contentTransform);
+        const pad = Math.round(cell * 0.14);
+        uiPlace(item, 0, 1, 0, 1, 8 + (i % columns) * cell + pad, -(y + Math.floor(i / columns) * cell + pad), cell - 2 * pad, cell - 2 * pad);
+        const icon = uiAdd(item, "UnityEngine.UI.RawImage"); call(icon, "set_texture", emojiTexture);
+        call(icon, "set_uvRect", unityStruct("UnityEngine.Rect", { m_XMin: entry.u, m_YMin: entry.v, m_Width: entry.du, m_Height: entry.dv }));
+        const button = uiButton(item, icon, () => chatInputInsert(record, entry.Name));
+        const transition = button.tryMethod("set_transition", 1);
+        if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
+      });
+      y += Math.ceil(group.entries.length / columns) * cell + 8;
+    });
+    call(contentRect, "set_sizeDelta", vec2(0, y));
+    const scroll = uiAdd(viewport, "UnityEngine.UI.ScrollRect");
+    call(scroll, "set_content", contentRect); call(scroll, "set_viewport", viewRect);
+    call(scroll, "set_horizontal", false); call(scroll, "set_vertical", true);
+    record.panelScroll = scroll.ref(false); record.panelContent = contentRect.ref(false);
     call(go, "SetActive", false);
+    const area = call(uiRect(call(parent, "get_gameObject")), "get_rect"), screen = chatScreen();
+    log(`emoji panel: built ${emojiDefinitions.length} sprites, ${columns} columns, ${Date.now() - started} ms; ` +
+      `host ${Math.round(Number(area.field("m_Width").value))}x${Math.round(Number(area.field("m_Height").value))} ` +
+      `screen ${screen.width}x${screen.height} scale ${Number(call(record.canvas.target, "get_scaleFactor")).toFixed(2)}`);
+    if (!chatPanelMethodsLogged) {
+      chatPanelMethodsLogged = true;
+      log(`emoji panel: chat window methods ${record.self.target.class.methods.map(m => m.name).join(",")}`);
+      let hide = "?";
+      try { hide = String(call(record.input.target, "get_shouldHideMobileInput")); } catch (_) {}
+      const where = uiXY(call(record.rect.target, "get_anchoredPosition")), size = call(record.rect.target, "get_rect");
+      log(`emoji panel: input ${record.input.target.class.name} hideMobileInput=${hide}; window at ${Math.round(where.x)},${Math.round(where.y)} ` +
+        `size ${Math.round(Number(size.field("m_Width").value))}x${Math.round(Number(size.field("m_Height").value))}`);
+    }
     return true;
   }
-  function chatPickerPage(record, delta) {
-    const pages = Math.ceil(emojiDefinitions.length / 48);
-    record.page = (record.page + delta + pages) % pages;
-    for (let i = 0; i < record.cells.length; i++) {
-      const entry = emojiDefinitions[record.page * 48 + i], cell = record.cells[i];
-      call(cell.object.target, "SetActive", !!entry);
-      if (!entry) continue;
-      call(cell.image.target, "set_uvRect", unityStruct("UnityEngine.Rect", {
-        m_XMin: entry.u, m_YMin: entry.v, m_Width: entry.du, m_Height: entry.dv
-      }));
+  function chatPanelScroll(record, offset) {
+    call(record.panelScroll.target, "StopMovement");
+    call(record.panelContent.target, "set_anchoredPosition", vec2(0, offset || 0));
+  }
+  function chatPanelShow(record, show, keyboard = false) {
+    if (show && !chatBuildPanel(record)) return;
+    record.panelOpen = show;
+    if (record.pickerLabel) call(record.pickerLabel.target, "set_text", Il2Cpp.string(show ? "<size=45%>ABC</size>" : "<sprite=8>"));
+    if (!record.panel) return;
+    const panel = record.panel.target;
+    if (show) {
+      const height = chatPanelHeight(record);
+      call(uiRect(panel), "set_sizeDelta", vec2(0, height));
+      call(panel, "SetActive", true);
+      try { chatPanelLift(record, height); } catch (error) { log(`emoji panel: lift failed: ${error}`); }
+      call(call(panel, "get_transform"), "SetAsLastSibling");
+      record.panelOpenedAt = Date.now();
+      const input = record.input.target;
+      const off = input.tryMethod("DeactivateInputField", 0) || input.tryMethod("DeactivateInputField", 1);
+      if (off) { if (off.parameterCount) off.invoke(false); else off.invoke(); }
+    } else {
+      call(panel, "SetActive", false);
+      chatPanelDrop(record);
+      if (keyboard) call(record.input.target, "ActivateInputField");
     }
-    log(`emoji: picker page ${record.page + 1}/${pages}`);
+  }
+  // The panel takes the bottom of the screen, where the chat input usually
+  // is: raise the window until its input clears the panel, and put it back
+  // when the panel closes.
+  function chatPanelLift(record, height) {
+    const scale = Math.max(0.01, Number(call(record.canvas.target, "get_scaleFactor")));
+    const camera = call(record.canvas.target, "get_worldCamera");
+    const inputRect = uiRect(call(record.input.target, "get_gameObject"));
+    // RectTransformUtility.WorldToScreenPoint is stripped from this build;
+    // the camera's own method does the same (an overlay canvas has none and
+    // its world position is already in screen pixels).
+    const world = call(call(inputRect, "get_transform"), "get_position");
+    const project = isNull(camera) ? null : camera.tryMethod("WorldToScreenPoint", 1);
+    const center = uiXY(project ? project.invoke(world) : world);
+    const pixels = Number(call(inputRect, "get_rect").field("m_Height").value) * scale * (record.factor || 1);
+    const pivot = Number(call(inputRect, "get_pivot").field("y").value);
+    const bottom = center.y - pivot * pixels;
+    const lift = (height * scale + 12 - bottom) / scale;
+    if (!(lift > 0)) return;
+    const rect = record.rect.target, at = record.desired || uiXY(call(rect, "get_anchoredPosition"));
+    record.panelLift = { from: { x: at.x, y: at.y }, to: { x: at.x, y: at.y + lift } };
+    record.desired = record.panelLift.to;
+    chatApplyPosition(record);
+    log(`emoji panel: chat raised by ${Math.round(lift)} for the panel`);
+  }
+  function chatPanelDrop(record) {
+    const lift = record.panelLift;
+    if (!lift) return;
+    record.panelLift = null;
+    // Moved while the panel was open: keep where the player put it.
+    if (record.desired === lift.to) { record.desired = lift.from; chatApplyPosition(record); }
   }
   function chatFind(root, path) {
     const value = call(root, "Find", Il2Cpp.string(path));
@@ -517,9 +713,13 @@ const chatWindows = new Map();
     // blocked the setup of the new one.
     const kept = chatWindows.get(key);
     if (kept) {
-      if (unityAlive(kept.window.target) && unityAlive(kept.input.target)) return;
+      if (unityAlive(kept.window.target) && unityAlive(kept.input.target)) {
+        if (kept.panelOpen) try { chatPanelShow(kept, false); } catch (_) {}
+        return;
+      }
       chatWindows.delete(key);
-      for (const name of ["window", "rect", "input", "canvas", "controls", "handle"]) try { kept[name]?.free(); } catch (_) {}
+      for (const name of ["window", "rect", "input", "canvas", "controls", "handle", "pickerLabel", "pickerButton",
+        "panel", "panelParent", "panelScroll", "panelContent"]) try { kept[name]?.free(); } catch (_) {}
     }
     let controls = null, pickerCreated = null, createdRecord = null;
     try {
@@ -543,7 +743,7 @@ const chatWindows = new Map();
       }
       const record = { self: self.weakRef(false), window: window.ref(false), rect: rect.ref(false),
         input: input.ref(false), canvas: canvas.ref(false), controls: (controls || windowGO).ref(false),
-        dragging: false, caret: null, errors: 0, picker: null, desired: null, handle: handle.ref(false) };
+        dragging: false, caret: null, errors: 0, panel: null, panelOpen: false, desired: null, handle: handle.ref(false) };
       createdRecord = record;
       // Same smiley (sprite index 8), 46x46 size and input-relative placement as PC.
       const picker = uiNew("EmojiPickerButton", inputTransform);
@@ -561,12 +761,8 @@ const chatWindows = new Map();
         call(label, "set_text", Il2Cpp.string("<sprite=8>"));
       } else call(label, "set_text", Il2Cpp.string(":)"));
       // No colour transition on an invisible hit target; the sprite is the label.
-      const pickerButton = uiButton(picker, hit, () => {
-        if (!chatBuildPicker(record)) return;
-        const panel = record.picker.target;
-        call(panel, "SetActive", !Boolean(call(panel, "get_activeSelf")));
-        if (Boolean(call(panel, "get_activeSelf"))) call(call(panel, "get_transform"), "SetAsLastSibling");
-      });
+      record.pickerLabel = label.ref(false);
+      const pickerButton = uiButton(picker, hit, () => chatPanelShow(record, !record.panelOpen, true));
       const transition = pickerButton.tryMethod("set_transition", 1);
       if (transition) transition.invoke(enumBox(transition.parameters[0].type.class, 0));
       record.pickerButton = uiRect(picker).ref(false);
@@ -635,6 +831,9 @@ const chatWindows = new Map();
       if (Boolean(call(input, "get_isFocused"))) {
         if (record.caretMethod === undefined) record.caretMethod = input.tryMethod("get_stringPosition", 0) || input.tryMethod("get_caretPosition", 0) || null;
         if (record.caretMethod) record.caret = Number(record.caretMethod.invoke());
+        chatReplaceKeyboardEmoji(record);
+        chatKeyboardWatch(record);
+        if (record.panelOpen && Date.now() - record.panelOpenedAt > 400) chatPanelShow(record, false);
       }
       const unityInput = ucls("UnityEngine.Input");
       let point, held, down;
@@ -678,9 +877,6 @@ const chatWindows = new Map();
       if (!held) record.armed = false;
       // The chosen position and scale are restored after native Update in the
       // canvas render hook, once per frame.
-      if (down && record.picker && Boolean(call(record.picker.target, "get_activeSelf")) &&
-          !chatContains(uiRect(record.picker.target), point, camera) && !chatContains(record.pickerButton.target, point, camera))
-        call(record.picker.target, "SetActive", false);
       record.errors = 0;
     } catch (error) { record.errors++; record.dragging = false; log(`chat UI: update failed: ${error}`); }
   }

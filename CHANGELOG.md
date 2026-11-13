@@ -11,6 +11,17 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.295 — Test
+
+- Chat: the smiley swaps the keyboard for an emoji panel, like in
+  messengers: all Reborn emojis by group, **SEND**, **DEL** (removes a whole
+  emoji) and **ABC** to bring the keyboard back. The chat window moves up
+  while the panel is open.
+- Emojis typed on the phone keyboard become Reborn emojis (🙂 is sent as
+  `:slight_smile:`), so PC players see the picture instead of an empty
+  square; skin tones and coloured hearts use the nearest Reborn emoji.
+  Received keyboard emojis are drawn the same way.
+
 ## v2.290 — Test
 
 - Chat emojis no longer depend on the APK: a phone whose APK lacks them, or

@@ -7,16 +7,16 @@
   // What this patch brings, one line per language, shown with "update
   // applied". Rewrite it with every patch (CHANGELOG.md has the full list).
   const PATCH_NOTES = {
-    en: "New: chat emojis arrive by themselves when the APK lacks them; future Reborn emoji updates need no new APK.",
-    ru: "Новое: эмодзи в чате скачиваются сами, если их нет в APK; новые эмодзи Reborn больше не потребуют нового APK.",
-    de: "Neu: Chat-Emojis werden selbst geladen, wenn sie in der APK fehlen; neue Reborn-Emojis brauchen keine neue APK mehr.",
-    es: "Novedades: los emojis del chat se descargan solos si faltan en el APK; los nuevos emojis de Reborn ya no necesitarán un APK nuevo.",
-    fr: "Nouveau : les emojis du chat se téléchargent seuls s’ils manquent dans l’APK ; les nouveaux emojis Reborn ne demanderont plus de nouvel APK.",
-    it: "Novità: le emoji della chat si scaricano da sole se mancano nell’APK; le nuove emoji di Reborn non richiederanno un nuovo APK.",
-    pl: "Nowe: emoji czatu pobierają się same, jeśli brakuje ich w APK; nowe emoji Reborn nie będą wymagać nowego APK.",
-    pt: "Novo: os emojis do chat são baixados sozinhos se faltarem no APK; novos emojis do Reborn não vão exigir um APK novo.",
-    tr: "Yeni: APK’da yoksa sohbet emojileri kendiliğinden indirilir; yeni Reborn emojileri artık yeni APK gerektirmez.",
-    zh: "新内容：APK 中缺少聊天表情时会自动下载；以后 Reborn 的新表情无需新的 APK。"
+    en: "New: the chat smiley opens an emoji panel in place of the keyboard (SEND, DEL, ABC to go back); keyboard emojis go out as Reborn emojis that PC players see too.",
+    ru: "Новое: смайлик в чате открывает панель эмодзи вместо клавиатуры (SEND — отправить, DEL — стереть, ABC — назад); эмодзи с клавиатуры уходят как эмодзи Reborn и видны игрокам на ПК.",
+    de: "Neu: Der Smiley im Chat öffnet statt der Tastatur ein Emoji-Feld (SEND senden, DEL löschen, ABC zurück); Tastatur-Emojis gehen als Reborn-Emojis raus, die auch PC-Spieler sehen.",
+    es: "Novedades: el emoticono del chat abre un panel de emojis en lugar del teclado (SEND enviar, DEL borrar, ABC volver); los emojis del teclado se envían como emojis de Reborn que también ven los jugadores de PC.",
+    fr: "Nouveau : le smiley du chat ouvre un panneau d’emojis à la place du clavier (SEND envoyer, DEL effacer, ABC revenir) ; les emojis du clavier partent en emojis Reborn, visibles aussi des joueurs PC.",
+    it: "Novità: lo smile della chat apre un pannello di emoji al posto della tastiera (SEND invia, DEL cancella, ABC torna); le emoji della tastiera partono come emoji Reborn, visibili anche ai giocatori PC.",
+    pl: "Nowe: buźka w czacie otwiera panel emoji zamiast klawiatury (SEND wyślij, DEL usuń, ABC powrót); emoji z klawiatury są wysyłane jako emoji Reborn, widoczne też dla graczy na PC.",
+    pt: "Novo: o smiley do chat abre um painel de emojis no lugar do teclado (SEND enviar, DEL apagar, ABC voltar); os emojis do teclado vão como emojis do Reborn, que os jogadores de PC também veem.",
+    tr: "Yeni: sohbetteki gülen yüz klavye yerine bir emoji paneli açar (SEND gönder, DEL sil, ABC geri); klavye emojileri PC oyuncularının da gördüğü Reborn emojileri olarak gider.",
+    zh: "新内容：聊天中的笑脸按钮会在键盘位置打开表情面板（SEND 发送、DEL 删除、ABC 返回键盘）；键盘表情会以 Reborn 表情发送，PC 玩家也能看到。"
   };
   function createUpdateNotices(updater, io) {
     let downloadStarted = false, lastStatus = "";
