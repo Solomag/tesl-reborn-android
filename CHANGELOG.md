@@ -11,6 +11,15 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.296 — Test
+
+- Loader for the optional Reborn Deck Tracker module (RDT, released from
+  Solomag/RDT-Android). Off by default: only
+  `tesl-reborn-rdt.json` with `{"enabled": true}` turns it on. The module is
+  checked with an ed25519 signature, its revision, size and SHA-256 before it
+  runs, and a broken module cannot stop the game.
+- docs/rdt-m0-methods.md: the game methods and fields the tracker needs.
+
 ## v2.295 — Test
 
 - Chat: the smiley swaps the keyboard for an emoji panel, like in

@@ -4134,6 +4134,570 @@ function zipEntry(zip, name) {
   }
   return null;
 }
+var tweetnaclVerify = (function() {
+  "use strict";
+  var u64 = function(h, l) {
+    this.hi = h | 0 >>> 0;
+    this.lo = l | 0 >>> 0;
+  };
+  var gf = function(init) {
+    var i, r = new Float64Array(16);
+    if (init) for (i = 0; i < init.length; i++) r[i] = init[i];
+    return r;
+  };
+  var _0 = new Uint8Array(16);
+  var _9 = new Uint8Array(32);
+  _9[0] = 9;
+  var gf0 = gf(), gf1 = gf([1]), _121665 = gf([56129, 1]), D = gf([30883, 4953, 19914, 30187, 55467, 16705, 2637, 112, 59544, 30585, 16505, 36039, 65139, 11119, 27886, 20995]), D2 = gf([61785, 9906, 39828, 60374, 45398, 33411, 5274, 224, 53552, 61171, 33010, 6542, 64743, 22239, 55772, 9222]), X = gf([54554, 36645, 11616, 51542, 42930, 38181, 51040, 26924, 56412, 64982, 57905, 49316, 21502, 52590, 14035, 8553]), Y = gf([26200, 26214, 26214, 26214, 26214, 26214, 26214, 26214, 26214, 26214, 26214, 26214, 26214, 26214, 26214, 26214]), I = gf([41136, 18958, 6951, 50414, 58488, 44335, 6150, 12099, 55207, 15867, 153, 11085, 57099, 20417, 9344, 11139]);
+  function L32(x, c) {
+    return x << c | x >>> 32 - c;
+  }
+  function ld32(x, i) {
+    var u = x[i + 3] & 255;
+    u = u << 8 | x[i + 2] & 255;
+    u = u << 8 | x[i + 1] & 255;
+    return u << 8 | x[i + 0] & 255;
+  }
+  function dl64(x, i) {
+    var h = x[i] << 24 | x[i + 1] << 16 | x[i + 2] << 8 | x[i + 3];
+    var l = x[i + 4] << 24 | x[i + 5] << 16 | x[i + 6] << 8 | x[i + 7];
+    return new u64(h, l);
+  }
+  function st32(x, j, u) {
+    var i;
+    for (i = 0; i < 4; i++) {
+      x[j + i] = u & 255;
+      u >>>= 8;
+    }
+  }
+  function ts64(x, i, u) {
+    x[i] = u.hi >> 24 & 255;
+    x[i + 1] = u.hi >> 16 & 255;
+    x[i + 2] = u.hi >> 8 & 255;
+    x[i + 3] = u.hi & 255;
+    x[i + 4] = u.lo >> 24 & 255;
+    x[i + 5] = u.lo >> 16 & 255;
+    x[i + 6] = u.lo >> 8 & 255;
+    x[i + 7] = u.lo & 255;
+  }
+  function vn(x, xi, y, yi, n) {
+    var i, d = 0;
+    for (i = 0; i < n; i++) d |= x[xi + i] ^ y[yi + i];
+    return (1 & d - 1 >>> 8) - 1;
+  }
+  function crypto_verify_16(x, xi, y, yi) {
+    return vn(x, xi, y, yi, 16);
+  }
+  function crypto_verify_32(x, xi, y, yi) {
+    return vn(x, xi, y, yi, 32);
+  }
+  function set25519(r, a) {
+    var i;
+    for (i = 0; i < 16; i++) r[i] = a[i] | 0;
+  }
+  function car25519(o) {
+    var c;
+    var i;
+    for (i = 0; i < 16; i++) {
+      o[i] += 65536;
+      c = Math.floor(o[i] / 65536);
+      o[(i + 1) * (i < 15 ? 1 : 0)] += c - 1 + 37 * (c - 1) * (i === 15 ? 1 : 0);
+      o[i] -= c * 65536;
+    }
+  }
+  function sel25519(p, q, b) {
+    var t, c = ~(b - 1);
+    for (var i = 0; i < 16; i++) {
+      t = c & (p[i] ^ q[i]);
+      p[i] ^= t;
+      q[i] ^= t;
+    }
+  }
+  function pack25519(o, n) {
+    var i, j, b;
+    var m = gf(), t = gf();
+    for (i = 0; i < 16; i++) t[i] = n[i];
+    car25519(t);
+    car25519(t);
+    car25519(t);
+    for (j = 0; j < 2; j++) {
+      m[0] = t[0] - 65517;
+      for (i = 1; i < 15; i++) {
+        m[i] = t[i] - 65535 - (m[i - 1] >> 16 & 1);
+        m[i - 1] &= 65535;
+      }
+      m[15] = t[15] - 32767 - (m[14] >> 16 & 1);
+      b = m[15] >> 16 & 1;
+      m[14] &= 65535;
+      sel25519(t, m, 1 - b);
+    }
+    for (i = 0; i < 16; i++) {
+      o[2 * i] = t[i] & 255;
+      o[2 * i + 1] = t[i] >> 8;
+    }
+  }
+  function neq25519(a, b) {
+    var c = new Uint8Array(32), d = new Uint8Array(32);
+    pack25519(c, a);
+    pack25519(d, b);
+    return crypto_verify_32(c, 0, d, 0);
+  }
+  function par25519(a) {
+    var d = new Uint8Array(32);
+    pack25519(d, a);
+    return d[0] & 1;
+  }
+  function unpack25519(o, n) {
+    var i;
+    for (i = 0; i < 16; i++) o[i] = n[2 * i] + (n[2 * i + 1] << 8);
+    o[15] &= 32767;
+  }
+  function A(o, a, b) {
+    var i;
+    for (i = 0; i < 16; i++) o[i] = a[i] + b[i] | 0;
+  }
+  function Z(o, a, b) {
+    var i;
+    for (i = 0; i < 16; i++) o[i] = a[i] - b[i] | 0;
+  }
+  function M(o, a, b) {
+    var i, j, t = new Float64Array(31);
+    for (i = 0; i < 31; i++) t[i] = 0;
+    for (i = 0; i < 16; i++) {
+      for (j = 0; j < 16; j++) {
+        t[i + j] += a[i] * b[j];
+      }
+    }
+    for (i = 0; i < 15; i++) {
+      t[i] += 38 * t[i + 16];
+    }
+    for (i = 0; i < 16; i++) o[i] = t[i];
+    car25519(o);
+    car25519(o);
+  }
+  function S(o, a) {
+    M(o, a, a);
+  }
+  function inv25519(o, i) {
+    var c = gf();
+    var a;
+    for (a = 0; a < 16; a++) c[a] = i[a];
+    for (a = 253; a >= 0; a--) {
+      S(c, c);
+      if (a !== 2 && a !== 4) M(c, c, i);
+    }
+    for (a = 0; a < 16; a++) o[a] = c[a];
+  }
+  function pow2523(o, i) {
+    var c = gf();
+    var a;
+    for (a = 0; a < 16; a++) c[a] = i[a];
+    for (a = 250; a >= 0; a--) {
+      S(c, c);
+      if (a !== 1) M(c, c, i);
+    }
+    for (a = 0; a < 16; a++) o[a] = c[a];
+  }
+  function add64() {
+    var a = 0, b = 0, c = 0, d = 0, m16 = 65535, l, h, i;
+    for (i = 0; i < arguments.length; i++) {
+      l = arguments[i].lo;
+      h = arguments[i].hi;
+      a += l & m16;
+      b += l >>> 16;
+      c += h & m16;
+      d += h >>> 16;
+    }
+    b += a >>> 16;
+    c += b >>> 16;
+    d += c >>> 16;
+    return new u64(c & m16 | d << 16, a & m16 | b << 16);
+  }
+  function shr64(x, c) {
+    return new u64(x.hi >>> c, x.lo >>> c | x.hi << 32 - c);
+  }
+  function xor64() {
+    var l = 0, h = 0, i;
+    for (i = 0; i < arguments.length; i++) {
+      l ^= arguments[i].lo;
+      h ^= arguments[i].hi;
+    }
+    return new u64(h, l);
+  }
+  function R(x, c) {
+    var h, l, c1 = 32 - c;
+    if (c < 32) {
+      h = x.hi >>> c | x.lo << c1;
+      l = x.lo >>> c | x.hi << c1;
+    } else if (c < 64) {
+      h = x.lo >>> c | x.hi << c1;
+      l = x.hi >>> c | x.lo << c1;
+    }
+    return new u64(h, l);
+  }
+  function Ch(x, y, z) {
+    var h = x.hi & y.hi ^ ~x.hi & z.hi, l = x.lo & y.lo ^ ~x.lo & z.lo;
+    return new u64(h, l);
+  }
+  function Maj(x, y, z) {
+    var h = x.hi & y.hi ^ x.hi & z.hi ^ y.hi & z.hi, l = x.lo & y.lo ^ x.lo & z.lo ^ y.lo & z.lo;
+    return new u64(h, l);
+  }
+  function Sigma0(x) {
+    return xor64(R(x, 28), R(x, 34), R(x, 39));
+  }
+  function Sigma1(x) {
+    return xor64(R(x, 14), R(x, 18), R(x, 41));
+  }
+  function sigma0(x) {
+    return xor64(R(x, 1), R(x, 8), shr64(x, 7));
+  }
+  function sigma1(x) {
+    return xor64(R(x, 19), R(x, 61), shr64(x, 6));
+  }
+  var K = [
+    new u64(1116352408, 3609767458),
+    new u64(1899447441, 602891725),
+    new u64(3049323471, 3964484399),
+    new u64(3921009573, 2173295548),
+    new u64(961987163, 4081628472),
+    new u64(1508970993, 3053834265),
+    new u64(2453635748, 2937671579),
+    new u64(2870763221, 3664609560),
+    new u64(3624381080, 2734883394),
+    new u64(310598401, 1164996542),
+    new u64(607225278, 1323610764),
+    new u64(1426881987, 3590304994),
+    new u64(1925078388, 4068182383),
+    new u64(2162078206, 991336113),
+    new u64(2614888103, 633803317),
+    new u64(3248222580, 3479774868),
+    new u64(3835390401, 2666613458),
+    new u64(4022224774, 944711139),
+    new u64(264347078, 2341262773),
+    new u64(604807628, 2007800933),
+    new u64(770255983, 1495990901),
+    new u64(1249150122, 1856431235),
+    new u64(1555081692, 3175218132),
+    new u64(1996064986, 2198950837),
+    new u64(2554220882, 3999719339),
+    new u64(2821834349, 766784016),
+    new u64(2952996808, 2566594879),
+    new u64(3210313671, 3203337956),
+    new u64(3336571891, 1034457026),
+    new u64(3584528711, 2466948901),
+    new u64(113926993, 3758326383),
+    new u64(338241895, 168717936),
+    new u64(666307205, 1188179964),
+    new u64(773529912, 1546045734),
+    new u64(1294757372, 1522805485),
+    new u64(1396182291, 2643833823),
+    new u64(1695183700, 2343527390),
+    new u64(1986661051, 1014477480),
+    new u64(2177026350, 1206759142),
+    new u64(2456956037, 344077627),
+    new u64(2730485921, 1290863460),
+    new u64(2820302411, 3158454273),
+    new u64(3259730800, 3505952657),
+    new u64(3345764771, 106217008),
+    new u64(3516065817, 3606008344),
+    new u64(3600352804, 1432725776),
+    new u64(4094571909, 1467031594),
+    new u64(275423344, 851169720),
+    new u64(430227734, 3100823752),
+    new u64(506948616, 1363258195),
+    new u64(659060556, 3750685593),
+    new u64(883997877, 3785050280),
+    new u64(958139571, 3318307427),
+    new u64(1322822218, 3812723403),
+    new u64(1537002063, 2003034995),
+    new u64(1747873779, 3602036899),
+    new u64(1955562222, 1575990012),
+    new u64(2024104815, 1125592928),
+    new u64(2227730452, 2716904306),
+    new u64(2361852424, 442776044),
+    new u64(2428436474, 593698344),
+    new u64(2756734187, 3733110249),
+    new u64(3204031479, 2999351573),
+    new u64(3329325298, 3815920427),
+    new u64(3391569614, 3928383900),
+    new u64(3515267271, 566280711),
+    new u64(3940187606, 3454069534),
+    new u64(4118630271, 4000239992),
+    new u64(116418474, 1914138554),
+    new u64(174292421, 2731055270),
+    new u64(289380356, 3203993006),
+    new u64(460393269, 320620315),
+    new u64(685471733, 587496836),
+    new u64(852142971, 1086792851),
+    new u64(1017036298, 365543100),
+    new u64(1126000580, 2618297676),
+    new u64(1288033470, 3409855158),
+    new u64(1501505948, 4234509866),
+    new u64(1607167915, 987167468),
+    new u64(1816402316, 1246189591)
+  ];
+  function crypto_hashblocks(x, m, n) {
+    var z = [], b = [], a = [], w = [], t, i, j;
+    for (i = 0; i < 8; i++) z[i] = a[i] = dl64(x, 8 * i);
+    var pos = 0;
+    while (n >= 128) {
+      for (i = 0; i < 16; i++) w[i] = dl64(m, 8 * i + pos);
+      for (i = 0; i < 80; i++) {
+        for (j = 0; j < 8; j++) b[j] = a[j];
+        t = add64(a[7], Sigma1(a[4]), Ch(a[4], a[5], a[6]), K[i], w[i % 16]);
+        b[7] = add64(t, Sigma0(a[0]), Maj(a[0], a[1], a[2]));
+        b[3] = add64(b[3], t);
+        for (j = 0; j < 8; j++) a[(j + 1) % 8] = b[j];
+        if (i % 16 === 15) {
+          for (j = 0; j < 16; j++) {
+            w[j] = add64(w[j], w[(j + 9) % 16], sigma0(w[(j + 1) % 16]), sigma1(w[(j + 14) % 16]));
+          }
+        }
+      }
+      for (i = 0; i < 8; i++) {
+        a[i] = add64(a[i], z[i]);
+        z[i] = a[i];
+      }
+      pos += 128;
+      n -= 128;
+    }
+    for (i = 0; i < 8; i++) ts64(x, 8 * i, z[i]);
+    return n;
+  }
+  var iv = new Uint8Array([
+    106,
+    9,
+    230,
+    103,
+    243,
+    188,
+    201,
+    8,
+    187,
+    103,
+    174,
+    133,
+    132,
+    202,
+    167,
+    59,
+    60,
+    110,
+    243,
+    114,
+    254,
+    148,
+    248,
+    43,
+    165,
+    79,
+    245,
+    58,
+    95,
+    29,
+    54,
+    241,
+    81,
+    14,
+    82,
+    127,
+    173,
+    230,
+    130,
+    209,
+    155,
+    5,
+    104,
+    140,
+    43,
+    62,
+    108,
+    31,
+    31,
+    131,
+    217,
+    171,
+    251,
+    65,
+    189,
+    107,
+    91,
+    224,
+    205,
+    25,
+    19,
+    126,
+    33,
+    121
+  ]);
+  function crypto_hash(out, m, n) {
+    var h = new Uint8Array(64), x = new Uint8Array(256);
+    var i, b = n;
+    for (i = 0; i < 64; i++) h[i] = iv[i];
+    crypto_hashblocks(h, m, n);
+    n %= 128;
+    for (i = 0; i < 256; i++) x[i] = 0;
+    for (i = 0; i < n; i++) x[i] = m[b - n + i];
+    x[n] = 128;
+    n = 256 - 128 * (n < 112 ? 1 : 0);
+    x[n - 9] = 0;
+    ts64(x, n - 8, new u64(b / 536870912 | 0, b << 3));
+    crypto_hashblocks(h, x, n);
+    for (i = 0; i < 64; i++) out[i] = h[i];
+    return 0;
+  }
+  function add(p, q) {
+    var a = gf(), b = gf(), c = gf(), d = gf(), e = gf(), f = gf(), g = gf(), h = gf(), t = gf();
+    Z(a, p[1], p[0]);
+    Z(t, q[1], q[0]);
+    M(a, a, t);
+    A(b, p[0], p[1]);
+    A(t, q[0], q[1]);
+    M(b, b, t);
+    M(c, p[3], q[3]);
+    M(c, c, D2);
+    M(d, p[2], q[2]);
+    A(d, d, d);
+    Z(e, b, a);
+    Z(f, d, c);
+    A(g, d, c);
+    A(h, b, a);
+    M(p[0], e, f);
+    M(p[1], h, g);
+    M(p[2], g, f);
+    M(p[3], e, h);
+  }
+  function cswap(p, q, b) {
+    var i;
+    for (i = 0; i < 4; i++) {
+      sel25519(p[i], q[i], b);
+    }
+  }
+  function pack(r, p) {
+    var tx = gf(), ty = gf(), zi = gf();
+    inv25519(zi, p[2]);
+    M(tx, p[0], zi);
+    M(ty, p[1], zi);
+    pack25519(r, ty);
+    r[31] ^= par25519(tx) << 7;
+  }
+  function scalarmult(p, q, s) {
+    var b, i;
+    set25519(p[0], gf0);
+    set25519(p[1], gf1);
+    set25519(p[2], gf1);
+    set25519(p[3], gf0);
+    for (i = 255; i >= 0; --i) {
+      b = s[i / 8 | 0] >> (i & 7) & 1;
+      cswap(p, q, b);
+      add(q, p);
+      add(p, p);
+      cswap(p, q, b);
+    }
+  }
+  function scalarbase(p, s) {
+    var q = [gf(), gf(), gf(), gf()];
+    set25519(q[0], X);
+    set25519(q[1], Y);
+    set25519(q[2], gf1);
+    M(q[3], X, Y);
+    scalarmult(p, q, s);
+  }
+  var L = new Float64Array([237, 211, 245, 92, 26, 99, 18, 88, 214, 156, 247, 162, 222, 249, 222, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16]);
+  function modL(r, x) {
+    var carry, i, j, k;
+    for (i = 63; i >= 32; --i) {
+      carry = 0;
+      for (j = i - 32, k = i - 12; j < k; ++j) {
+        x[j] += carry - 16 * x[i] * L[j - (i - 32)];
+        carry = Math.floor((x[j] + 128) / 256);
+        x[j] -= carry * 256;
+      }
+      x[j] += carry;
+      x[i] = 0;
+    }
+    carry = 0;
+    for (j = 0; j < 32; j++) {
+      x[j] += carry - (x[31] >> 4) * L[j];
+      carry = x[j] >> 8;
+      x[j] &= 255;
+    }
+    for (j = 0; j < 32; j++) x[j] -= carry * L[j];
+    for (i = 0; i < 32; i++) {
+      x[i + 1] += x[i] >> 8;
+      r[i] = x[i] & 255;
+    }
+  }
+  function reduce(r) {
+    var x = new Float64Array(64), i;
+    for (i = 0; i < 64; i++) x[i] = r[i];
+    for (i = 0; i < 64; i++) r[i] = 0;
+    modL(r, x);
+  }
+  function unpackneg(r, p) {
+    var t = gf(), chk = gf(), num = gf(), den = gf(), den2 = gf(), den4 = gf(), den6 = gf();
+    set25519(r[2], gf1);
+    unpack25519(r[1], p);
+    S(num, r[1]);
+    M(den, num, D);
+    Z(num, num, r[2]);
+    A(den, r[2], den);
+    S(den2, den);
+    S(den4, den2);
+    M(den6, den4, den2);
+    M(t, den6, num);
+    M(t, t, den);
+    pow2523(t, t);
+    M(t, t, num);
+    M(t, t, den);
+    M(t, t, den);
+    M(r[0], t, den);
+    S(chk, r[0]);
+    M(chk, chk, den);
+    if (neq25519(chk, num)) M(r[0], r[0], I);
+    S(chk, r[0]);
+    M(chk, chk, den);
+    if (neq25519(chk, num)) return -1;
+    if (par25519(r[0]) === p[31] >> 7) Z(r[0], gf0, r[0]);
+    M(r[3], r[0], r[1]);
+    return 0;
+  }
+  function crypto_sign_open(m, sm, n, pk) {
+    var i;
+    var t = new Uint8Array(32), h = new Uint8Array(64);
+    var p = [gf(), gf(), gf(), gf()], q = [gf(), gf(), gf(), gf()];
+    if (n < 64) return -1;
+    if (unpackneg(q, pk)) return -1;
+    for (i = 0; i < n; i++) m[i] = sm[i];
+    for (i = 0; i < 32; i++) m[i + 32] = pk[i];
+    crypto_hash(h, m, n);
+    reduce(h);
+    scalarmult(p, q, h);
+    scalarbase(q, sm.subarray(32));
+    add(p, q);
+    pack(t, p);
+    n -= 64;
+    if (crypto_verify_32(sm, 0, t, 0)) {
+      for (i = 0; i < n; i++) m[i] = 0;
+      return -1;
+    }
+    for (i = 0; i < n; i++) m[i] = sm[i + 64];
+    return n;
+  }
+  return function verify(msg, sig, publicKey) {
+    if (!(msg instanceof Uint8Array) || !(sig instanceof Uint8Array) || !(publicKey instanceof Uint8Array))
+      throw new TypeError("unexpected type, use Uint8Array");
+    if (sig.length !== 64) throw new Error("bad signature size");
+    if (publicKey.length !== 32) throw new Error("bad public key size");
+    var sm = new Uint8Array(64 + msg.length);
+    var m = new Uint8Array(64 + msg.length);
+    var i;
+    for (i = 0; i < 64; i++) sm[i] = sig[i];
+    for (i = 0; i < msg.length; i++) sm[i + 64] = msg[i];
+    return crypto_sign_open(m, sm, sm.length, publicKey) >= 0;
+  };
+})();
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
   const resourceTrace = [], resourceTraceStarted = Date.now();
@@ -13111,4 +13675,183 @@ ${stack}`);
     }
   });
   log("setup finished");
+  const RDT = {
+    manifestUrl: "https://raw.githubusercontent.com/Solomag/RDT-Android/main/release/manifest.json",
+    // The public half of the RDT release key (tools/keygen.mjs in
+    // RDT-Android); the private half is the RDT_SIGNING_KEY Actions secret.
+    publicKey: "8e8414717e295a6fdafbe517c40cbea6d2b1fc73ed0bd910927e8edfa7d74700",
+    marker: "// RDT-ANDROID-MODULE v1",
+    maxBytes: 4 * 1024 * 1024
+  };
+  function rdtHex(text) {
+    if (typeof text !== "string" || text.length % 2 || /[^0-9a-f]/i.test(text)) return null;
+    const bytes = new Uint8Array(text.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(text.substr(i * 2, 2), 16);
+    return bytes;
+  }
+  function rdtUtf8(text) {
+    const bytes = [];
+    for (const ch of String(text)) {
+      const c = ch.codePointAt(0);
+      if (c < 128) bytes.push(c);
+      else if (c < 2048) bytes.push(192 | c >> 6, 128 | c & 63);
+      else if (c < 65536) bytes.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+      else bytes.push(240 | c >> 18, 128 | c >> 12 & 63, 128 | c >> 6 & 63, 128 | c & 63);
+    }
+    return new Uint8Array(bytes);
+  }
+  function rdtCheckManifest(manifest, publicKey, cachedRevision, coreRevision, verify) {
+    if (!manifest || typeof manifest !== "object") return "manifest is not an object";
+    const { revision, minCore, bytes, sha256, sig, url } = manifest;
+    if (!Number.isSafeInteger(revision) || revision < 1) return "bad revision";
+    if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) return "bad sha256";
+    const key = rdtHex(publicKey), signature = rdtHex(sig);
+    if (!key || key.length !== 32) return "no release key";
+    if (!signature || signature.length !== 64) return "bad signature";
+    let valid = false;
+    try {
+      valid = verify(rdtUtf8(`${sha256}:${revision}`), signature, key);
+    } catch (_) {
+    }
+    if (!valid) return "signature does not match";
+    if (revision < cachedRevision) return `revision ${revision} is older than the cached ${cachedRevision}`;
+    if (!Number.isSafeInteger(minCore) || minCore > coreRevision) return `needs core ${minCore}, this is ${coreRevision}`;
+    if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > RDT.maxBytes) return "bad size";
+    if (typeof url !== "string" || !url.startsWith("https://")) return "url is not HTTPS";
+    return "";
+  }
+  function rdtCheckPayload(data, manifest, sha256) {
+    if (!data || data.byteLength !== manifest.bytes) return `size ${data ? data.byteLength : 0} instead of ${manifest.bytes}`;
+    if (sha256(data) !== manifest.sha256) return "sha256 does not match";
+    const head = new Uint8Array(data, 0, Math.min(data.byteLength, RDT.marker.length));
+    if (String.fromCharCode(...head) !== RDT.marker) return "not an RDT module";
+    return "";
+  }
+  section("rdt module loader", () => {
+    const optionFile = `${persistentPath()}/tesl-reborn-rdt.json`;
+    let enabled = false;
+    try {
+      enabled = JSON.parse(readTextFile(optionFile) || "{}")?.enabled === true;
+    } catch (_) {
+    }
+    if (!enabled) return;
+    const dir = `${privateDir()}/rdt`, cacheFile = `${dir}/rdt.js`, stateFile = `${dir}/state.json`, settingsFile = `${dir}/settings.json`;
+    makeDirectory(dir);
+    const readJson = (path) => {
+      try {
+        return JSON.parse(readTextFile(path) || "{}") || {};
+      } catch (_) {
+        return {};
+      }
+    };
+    const coreRevision = Number(globalThis.TeslRebornUpdater?.current()?.revision) || 0;
+    let ran = false;
+    const settings = readJson(settingsFile);
+    globalThis.teslPort = {
+      version: `${APK_LEVEL}.${coreRevision}`,
+      core: coreRevision,
+      log: (message) => log(`rdt: ${message}`),
+      dataDir: dir,
+      settings: {
+        get: (key) => settings[key],
+        set: (key, value) => {
+          if (!String(key).startsWith("rdt.")) throw Error("RDT settings keys start with rdt.");
+          settings[key] = value;
+          writeTextFile(settingsFile, JSON.stringify(settings));
+        }
+      },
+      // Runs fn on the Unity main thread, on a later frame.
+      frameGate: (name, fn) => schedule(0, () => {
+        try {
+          fn();
+        } catch (error) {
+          log(`rdt: ${name} failed: ${error}`);
+        }
+      }, `rdt ${name}`),
+      httpGetBytes: (url) => new Promise((resolve, reject) => httpGetBytes(url, (status, bytes) => bytes ? resolve(new Uint8Array(bytes)) : reject(Error(`HTTP ${status}`)))),
+      hookAttach,
+      cls,
+      ucls,
+      call,
+      img,
+      ui: { uiNew, uiAdd, uiRect, uiPlace, uiStretch, uiText, uiButton, uiLabeledButton }
+    };
+    function run(code, origin) {
+      if (ran) return;
+      ran = true;
+      try {
+        Script.evaluate("/rdt/rdt.js", code);
+        log(`rdt: module started (${origin})`);
+      } catch (error) {
+        log(`rdt: module failed (${origin}): ${error?.stack || error}`);
+      }
+    }
+    const updater = readJson(`${persistentPath()}/tesl-reborn-updater.json`);
+    const inbox = `${persistentPath()}/tesl-reborn-inbox/rdt.js`;
+    if (updater.allowLocalUpdates === true) {
+      const code = readTextFile(inbox);
+      if (code) {
+        if (code.startsWith(RDT.marker)) run(code, "inbox");
+        else log("rdt: inbox rdt.js has no module marker");
+      }
+    }
+    const state = readJson(stateFile);
+    const cached = readTextFile(cacheFile);
+    if (!ran && cached && state.sha256 && Checksum.compute("sha256", cached) === state.sha256) run(cached, `cached revision ${state.revision}`);
+    else if (!ran && cached) log("rdt: cached module does not match its record; not run");
+    if (!RDT.publicKey) {
+      log("rdt: no release key pinned yet; channel skipped");
+      return;
+    }
+    httpGet(RDT.manifestUrl, false, (status, body) => {
+      if (status !== 200) {
+        log(`rdt: manifest HTTP ${status}`);
+        return;
+      }
+      setTimeout(() => {
+        let manifest = null;
+        try {
+          manifest = JSON.parse(body);
+        } catch (_) {
+        }
+        const cachedRevision = cached && state.sha256 ? Number(state.revision) || 0 : 0;
+        const refused = rdtCheckManifest(manifest, RDT.publicKey, cachedRevision, coreRevision, tweetnaclVerify);
+        if (refused) {
+          log(`rdt: manifest refused: ${refused}`);
+          return;
+        }
+        if (manifest.revision === cachedRevision && manifest.sha256 === state.sha256) {
+          log(`rdt: revision ${cachedRevision} is current`);
+          return;
+        }
+        httpGetBytes(manifest.url, (code, bytes) => {
+          if (!bytes) {
+            log(`rdt: download HTTP ${code}`);
+            return;
+          }
+          setTimeout(() => {
+            const problem = rdtCheckPayload(bytes, manifest, (data) => Checksum.compute("sha256", data));
+            if (problem) {
+              log(`rdt: payload refused: ${problem}`);
+              return;
+            }
+            const part = `${cacheFile}.part`, out = new File(part, "wb");
+            try {
+              out.write(bytes);
+              out.flush();
+            } finally {
+              out.close();
+            }
+            if (!atomicRename(part, cacheFile)) {
+              log("rdt: could not save the module");
+              return;
+            }
+            writeTextFile(stateFile, JSON.stringify({ revision: manifest.revision, sha256: manifest.sha256, at: (/* @__PURE__ */ new Date()).toISOString() }));
+            log(`rdt: revision ${manifest.revision} saved`);
+            if (!ran) schedule(0, () => run(readTextFile(cacheFile), `revision ${manifest.revision}`), "rdt start");
+          }, 0);
+        });
+      }, 0);
+    });
+  });
 });
