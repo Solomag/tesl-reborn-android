@@ -11,6 +11,10 @@ publish a patch. This tool does the finding.
 
     python tools/plugin_watch.py diff 1.3.1-beta 1.3.2-beta [--report r.md]
     python tools/plugin_watch.py diff old.zip new.zip
+
+    python tools/plugin_watch.py audit 1.3.1-beta
+        Every Harmony patch of one release against the hook: where it is
+        handled, or that the plugin's patch is empty.
         What changed between two releases (versions are downloaded from
         tesl-reborn.com, ZIPs are read as they are):
         - files of the archive (data, images, BepInEx itself);
@@ -197,7 +201,7 @@ def dll_summary(data):
             pass
         return f"token {table:#x}"
 
-    methods, strings = {}, set()
+    methods, strings, empty_methods = {}, set(), set()
     for rid, row in enumerate(md.MethodDef, start=1):
         key = f"{method_owner.get(rid, '?')}::{value(row.Name)}"
         if key in methods:
@@ -218,6 +222,8 @@ def dll_summary(data):
         except (ValueError, struct.error):
             stream = ["raw " + code.hex()]
         strings.update(line.split(" ", 2)[2] for line in stream if line.startswith("72 str "))
+        if stream == ["2a"]:  # a lone ret: a patch method that does nothing
+            empty_methods.add(key)
         methods[key] = hashlib.sha256("\n".join(stream).encode()).hexdigest()[:16]
 
     patches = {}
@@ -237,14 +243,21 @@ def dll_summary(data):
             patches.setdefault(owner, []).append(".".join(args))
     assembly = md.Assembly[0]
     version = f"{assembly.MajorVersion}.{assembly.MinorVersion}.{assembly.BuildNumber}"
-    return {"version": version, "methods": methods, "strings": strings, "patches": patches}
+    # Patch classes whose every method (constructors aside) is empty.
+    empty = set()
+    for owner in {key.split("::")[0] for key in patches}:
+        own = [k for k in methods if k.split("::")[0] == owner and not k.split("::")[1].startswith((".ctor", ".cctor"))]
+        if own and all(k in empty_methods for k in own):
+            empty.add(owner)
+    return {"version": version, "methods": methods, "strings": strings, "patches": patches, "empty": empty}
 
 
 # --- the report --------------------------------------------------------------
 
 def hook_lines(words):
     """hook/*.ts lines that name any of these identifiers."""
-    pattern = re.compile(r"\b(" + "|".join(map(re.escape, sorted(words, key=len, reverse=True))) + r")\b") if words else None
+    # Also as a property accessor: IsCachingDisabled is get_IsCachingDisabled.
+    pattern = re.compile(r"(?:\b|(?<=_))(" + "|".join(map(re.escape, sorted(words, key=len, reverse=True))) + r")\b") if words else None
     hits = []
     if pattern:
         for path in sorted((ROOT / "hook").glob("*.ts")):
@@ -252,6 +265,51 @@ def hook_lines(words):
                 if pattern.search(line):
                     hits.append(f"hook/{path.name}:{number}")
     return hits
+
+
+# Names too common to say where a patch is handled: Unity messages,
+# namespaces, everyday method names.
+COMMON = {"Awake", "Start", "Show", "Hide", "Update", "OnEnable", "OnDisable", "OnDestroy", "SetData", "UpdateUi",
+          "Execute", "OnResponse", "SparkleServices", "SPTESL", "BestHTTP", "TMPro", "UnityEngine"}
+
+
+def specific(targets):
+    """The names of these targets that point at one place in the hook."""
+    return {part for target in targets for part in target.split(".") if len(part) > 3 and part not in COMMON}
+
+
+def patch_classes(summary):
+    """Each Harmony patch class with all its targets (class and method level)."""
+    classes = {}
+    for owner, targets in summary["patches"].items():
+        classes.setdefault(owner.split("::")[0], []).extend(targets)
+    return classes
+
+
+def audit(name, data):
+    """Every patch of one release against the hook."""
+    archive_file = zipfile.ZipFile(io.BytesIO(data))
+    if DLL not in archive_file.namelist():
+        raise ValueError(f"{name}: no {DLL}")
+    summary = dll_summary(archive_file.read(DLL))
+    lines = [f"# Reborn plugin {name} (assembly {summary['version']}) against the hook", "",
+             "| Patch | Targets | In the hook |", "|---|---|---|"]
+    missing = 0
+    for owner, targets in sorted(patch_classes(summary).items()):
+        words = specific(targets)
+        if owner in summary["empty"]:
+            found = "empty in the plugin: nothing to port"
+        else:
+            hits = hook_lines(words)
+            absent = sorted(w for w in words if not hook_lines({w}))
+            found = ", ".join(sorted({h.rsplit(":", 1)[0] for h in hits})) or "**not found**"
+            if absent:
+                found += " (no " + ", ".join(f"`{w}`" for w in absent) + ")"
+                missing += 1
+        lines.append(f"| `{owner.split('.')[-1]}` | {', '.join(f'`{t}`' for t in targets)} | {found} |")
+    lines += ["", f"{missing} patch(es) name something the hook does not mention." if missing
+              else "Every patch has a counterpart in the hook or is empty."]
+    return "\n".join(lines) + "\n"
 
 
 def compare(old_name, old, new_name, new):
@@ -285,6 +343,8 @@ def compare(old_name, old, new_name, new):
             before, after = targets_a.get(owner), targets_b.get(owner)
             mark = "new" if before is None else "removed" if after is None else "retargeted" if before != after else (
                 "code changed" if owner.split("::")[0] in touched else "")
+            if mark and owner.split("::")[0] in sb["empty"]:
+                mark += ", empty: nothing to port"
             if mark:
                 marked += 1
                 lines.append(f"- `{owner}` → {', '.join(f'`{t}`' for t in (after or before))} — **{mark}**")
@@ -306,8 +366,7 @@ def compare(old_name, old, new_name, new):
         words = set()
         for owner in p_all:
             if owner.split("::")[0] in touched or targets_a.get(owner) != targets_b.get(owner):
-                for target in (targets_b.get(owner) or targets_a.get(owner) or []):
-                    words.update(part for part in target.split(".") if len(part) > 3)
+                words.update(specific(targets_b.get(owner) or targets_a.get(owner) or []))
         hits = hook_lines(words)
         lines.append("### In the hook")
         lines.append(f"Identifiers: {', '.join(f'`{w}`' for w in sorted(words)) or 'none'}")
@@ -344,6 +403,8 @@ def main(argv=None):
     diff.add_argument("old")
     diff.add_argument("new")
     diff.add_argument("--report", type=Path, help="also write the report to this file")
+    check = sub.add_parser("audit", help="every patch of one release against the hook")
+    check.add_argument("release")
     parser.add_argument("--cache", default=str(Path(tempfile.gettempdir()) / "tesl-reborn-plugins"))
     args = parser.parse_args(argv)
     if args.command == "latest":
@@ -356,6 +417,10 @@ def main(argv=None):
         if latest != pinned:
             print(f"NEW_PLUGIN: {latest}")
             return 3
+        return 0
+    if args.command == "audit":
+        name, data = archive(args.release, args.cache)
+        sys.stdout.buffer.write(audit(name, data).encode("utf-8"))
         return 0
     old_name, old = archive(args.old, args.cache)
     new_name, new = archive(args.new, args.cache)

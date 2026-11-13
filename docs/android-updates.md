@@ -115,6 +115,10 @@ ordinary patch, without a new APK, data or Builder:
    methods whose code changed (metadata tokens compared by name, so moved
    strings and calls are not changes), string literals, JSON/text diffs, and
    the hook lines that handle the changed patch targets.
+   `python tools/plugin_watch.py audit <version>` lists every patch of one
+   release with the hook file that handles it, or marks it empty in the
+   plugin; for 1.3.1 only `FriendsPatch` has no counterpart (on PC it only
+   logs).
 3. **Port** those changes into hook/*.ts, set `PLUGIN_VERSION` (the server sees
    it as `X-TeslRebornPlugin-Version`), and publish a patch.
 4. **Emojis:** if the report lists new emoji files, update `EMOJI_SOURCE` and

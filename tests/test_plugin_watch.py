@@ -51,6 +51,9 @@ class PluginWatchTest(unittest.TestCase):
         hits = watch.hook_lines({"EndGameState"})
         self.assertTrue(any(hit.startswith("hook/") for hit in hits), "the port patches EndGameState")
         self.assertEqual(watch.hook_lines(set()), [])
+        self.assertTrue(watch.hook_lines({"IsCachingDisabled"}), "a property is found as its get_ accessor")
+        self.assertEqual(watch.specific(["SparkleServices.Friends.Update", "Awake"]), {"Friends"},
+                         "namespaces and Unity messages say nothing about where a patch is")
 
     def test_data_and_emoji_changes_are_reported(self):
         folder = "BepInEx/plugins/TeslRebornPlugin/data/"
