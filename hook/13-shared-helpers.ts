@@ -357,7 +357,8 @@
             if (isNull(resp)) { log(`GET ${url} failed: no response`); cb(-1, null); return; }
             const status = Number(call(resp, "get_StatusCode"));
             const data = call(resp, "get_Data");
-            const bytes = status === 200 && !isNull(data) && data.length > 0 ? data.elements.handle.readByteArray(data.length) : null;
+            // 304: BestHTTP answered from its cache, with the body.
+            const bytes = (status === 200 || status === 304) && !isNull(data) && data.length > 0 ? data.elements.handle.readByteArray(data.length) : null;
             log(`GET ${url} completed: HTTP ${status}, ${bytes ? bytes.byteLength : 0} bytes`);
             cb(status, bytes);
           } catch (e) { log(`GET ${url} callback failed: ${e}`); cb(-1, null); }

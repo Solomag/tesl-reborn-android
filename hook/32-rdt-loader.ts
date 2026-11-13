@@ -149,3 +149,109 @@
     });
   });
 // END android-ui: rdt-loader
+
+  // BEGIN android-ui: rdt-toggle
+  // "Deck tracker" in the game's own Settings window: a copy of the
+  // "double tap to end turn" row, so it looks and navigates like the game's
+  // switches. It only writes tesl-reborn-rdt.json; the loader reads it at
+  // start, so the label asks for a restart while the choice differs from
+  // what is running.
+  const RDT_LABELS = {
+    en_us: ["Deck tracker (RDT)", "Deck tracker: restart the game"],
+    ru_ru: ["Трекер колоды (RDT)", "Трекер колоды: перезапустите игру"],
+    de_de: ["Deck-Tracker (RDT)", "Deck-Tracker: Spiel neu starten"],
+    es_es: ["Rastreador de mazo (RDT)", "Rastreador: reinicia el juego"],
+    es_mx: ["Rastreador de mazo (RDT)", "Rastreador: reinicia el juego"],
+    fr_fr: ["Suivi du deck (RDT)", "Suivi du deck : relancez le jeu"],
+    it_it: ["Tracker del mazzo (RDT)", "Tracker: riavvia il gioco"],
+    pl_pl: ["Tracker talii (RDT)", "Tracker talii: uruchom grę ponownie"],
+    pt_br: ["Rastreador de baralho (RDT)", "Rastreador: reinicie o jogo"],
+    tr_tr: ["Deste takipçisi (RDT)", "Deste takipçisi: oyunu yeniden başlatın"],
+    zh_cn: ["卡组追踪器 (RDT)", "卡组追踪器：请重启游戏"],
+  };
+  function rdtLabel(enabled, running) {
+    const texts = RDT_LABELS[textOverlay() || resourceLanguage()] || RDT_LABELS.en_us;
+    return enabled === running ? texts[0] : texts[1];
+  }
+  section("rdt settings toggle", () => {
+    const optionFile = `${persistentPath()}/tesl-reborn-rdt.json`;
+    const readEnabled = () => { try { return JSON.parse(readTextFile(optionFile) || "{}")?.enabled === true; } catch (_) { return false; } };
+    const running = readEnabled();
+    const settingsWin = cls(img, "SettingsWin");
+    const enable = settingsWin.tryMethod("OnEnable", 0);
+    if (!enable || enable.virtualAddress.isNull()) throw Error("SettingsWin.OnEnable not found");
+    const toggleClass = ucls("UnityEngine.UI.Toggle");
+    let reported = false;
+    function install(self) {
+      const source = self.field("_doubleTapConfirmToggle").value;
+      if (!unityAlive(source)) throw Error("no double-tap toggle");
+      // The row is the toggle's ancestor whose parent lays rows out.
+      let row = call(source, "get_transform"), container = call(row, "get_parent");
+      for (let depth = 0; depth < 4 && !isNull(container); depth++) {
+        const layout = container.method("GetComponent").overload("System.Type").invoke(ucls("UnityEngine.UI.VerticalLayoutGroup").type.object);
+        if (!isNull(layout)) break;
+        row = container; container = call(row, "get_parent");
+      }
+      if (isNull(container)) throw Error("no row container above the toggle");
+      for (let i = 0, n = Number(call(container, "get_childCount")); i < n; i++)
+        if (String(call(call(container, "GetChild", i), "get_name")?.content) === "RebornRdtRow") return;
+      const copy = ucls("UnityEngine.Object").method("Instantiate").overload("UnityEngine.Object", "UnityEngine.Transform", "System.Boolean")
+        .invoke(call(row, "get_gameObject"), container, false);
+      call(copy, "set_name", Il2Cpp.string("RebornRdtRow"));
+      const copyTransform = call(copy, "get_transform");
+      call(copyTransform, "SetSiblingIndex", Number(call(row, "GetSiblingIndex")) + 1);
+      // Localization components would put "Allow spectators" back.
+      const behaviours = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.MonoBehaviour").type.object, true);
+      for (let i = 0; i < behaviours.length; i++) {
+        const behaviour = behaviours.get(i);
+        if (/^Locali[sz]e/.test(behaviour.class.name)) call(behaviour, "set_enabled", false);
+      }
+      const labels = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("TMPro.TMP_Text").type.object, true);
+      let label = null, longest = -1;
+      for (let i = 0; i < labels.length; i++) {
+        const text = String(call(labels.get(i), "get_text")?.content || "");
+        if (text.length > longest) { longest = text.length; label = labels.get(i); }
+      }
+      const toggles = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(toggleClass.type.object, true);
+      if (!toggles.length) throw Error("copied row has no toggle");
+      const toggle = toggles.get(0);
+      // A fresh event: the copy must not keep the double-tap setting's listeners.
+      const eventClass = toggleClass.nestedClasses.find(c => c.name === "ToggleEvent");
+      const fresh = eventClass.alloc(); fresh.method(".ctor", 0).invoke();
+      toggle.field("onValueChanged").value = fresh;
+      let enabled = readEnabled();
+      call(toggle, "set_isOn", enabled);
+      const show = () => { if (label) call(label, "set_text", Il2Cpp.string(rdtLabel(enabled, running))); };
+      show();
+      const keepToggle = toggle.ref(false);
+      const changed = value => {
+        if (value === enabled) return;
+        enabled = value;
+        writeTextFile(optionFile, JSON.stringify({ enabled }));
+        log(`rdt: tracker ${enabled ? "on" : "off"} from Settings (applies on restart)`);
+        show();
+      };
+      try {
+        const action = ucls("UnityEngine.Events.UnityAction`1").inflate(Il2Cpp.corlib.class("System.Boolean"));
+        call(fresh, "AddListener", Il2Cpp.delegate(action, value => { try { changed(Boolean(value)); } catch (error) { log(`rdt: toggle failed: ${error}`); } }));
+      } catch (error) {
+        // No generic delegate: read the switch while the window lives.
+        log(`rdt: toggle listener unavailable (${error}); polling`);
+        const poll = () => {
+          if (!unityAlive(keepToggle.target)) { keepToggle.free(); return; }
+          changed(Boolean(call(keepToggle.target, "get_isOn")));
+          schedule(300, poll, "rdt toggle");
+        };
+        schedule(300, poll, "rdt toggle");
+      }
+      if (!reported) { reported = true; log(`rdt: Settings toggle added (${enabled ? "on" : "off"})`); uiLogTree(copyTransform, "rdt toggle row"); }
+    }
+    hookAttach(enable.virtualAddress, {
+      onEnter(args) { this.self = args[0]; },
+      onLeave() {
+        const retained = new Il2Cpp.Object(this.self).ref(false);
+        schedule(0, () => { try { install(retained.target); } catch (error) { log(`rdt: Settings toggle failed: ${error}`); } finally { retained.free(); } }, "rdt settings toggle");
+      }
+    });
+  });
+// END android-ui: rdt-toggle

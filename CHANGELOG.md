@@ -11,6 +11,16 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.301 — Test
+
+- Settings → Preferences has a **Deck tracker (RDT)** switch under Game
+  settings, styled like the game's own switches. It asks for a restart while
+  the choice differs from what is running. It still uses
+  `tesl-reborn-rdt.json`.
+- File downloads accept a 304 answered from the game's HTTP cache. Before
+  this, the RDT module was not fetched again after its local copy was
+  removed.
+
 ## v2.297 — Test
 
 - RDT: the module's own hooks are reported under "rdt module" in the hook

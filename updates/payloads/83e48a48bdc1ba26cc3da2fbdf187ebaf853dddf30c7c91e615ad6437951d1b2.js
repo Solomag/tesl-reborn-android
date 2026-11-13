@@ -5522,7 +5522,7 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
             }
             const status = Number(call(resp, "get_StatusCode"));
             const data = call(resp, "get_Data");
-            const bytes = status === 200 && !isNull(data) && data.length > 0 ? data.elements.handle.readByteArray(data.length) : null;
+            const bytes = (status === 200 || status === 304) && !isNull(data) && data.length > 0 ? data.elements.handle.readByteArray(data.length) : null;
             log(`GET ${url} completed: HTTP ${status}, ${bytes ? bytes.byteLength : 0} bytes`);
             cb(status, bytes);
           } catch (e) {
@@ -13856,6 +13856,135 @@ ${stack}`);
           }, 0);
         });
       }, 0);
+    });
+  });
+  const RDT_LABELS = {
+    en_us: ["Deck tracker (RDT)", "Deck tracker: restart the game"],
+    ru_ru: ["\u0422\u0440\u0435\u043A\u0435\u0440 \u043A\u043E\u043B\u043E\u0434\u044B (RDT)", "\u0422\u0440\u0435\u043A\u0435\u0440 \u043A\u043E\u043B\u043E\u0434\u044B: \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u0435 \u0438\u0433\u0440\u0443"],
+    de_de: ["Deck-Tracker (RDT)", "Deck-Tracker: Spiel neu starten"],
+    es_es: ["Rastreador de mazo (RDT)", "Rastreador: reinicia el juego"],
+    es_mx: ["Rastreador de mazo (RDT)", "Rastreador: reinicia el juego"],
+    fr_fr: ["Suivi du deck (RDT)", "Suivi du deck : relancez le jeu"],
+    it_it: ["Tracker del mazzo (RDT)", "Tracker: riavvia il gioco"],
+    pl_pl: ["Tracker talii (RDT)", "Tracker talii: uruchom gr\u0119 ponownie"],
+    pt_br: ["Rastreador de baralho (RDT)", "Rastreador: reinicie o jogo"],
+    tr_tr: ["Deste takip\xE7isi (RDT)", "Deste takip\xE7isi: oyunu yeniden ba\u015Flat\u0131n"],
+    zh_cn: ["\u5361\u7EC4\u8FFD\u8E2A\u5668 (RDT)", "\u5361\u7EC4\u8FFD\u8E2A\u5668\uFF1A\u8BF7\u91CD\u542F\u6E38\u620F"]
+  };
+  function rdtLabel(enabled, running) {
+    const texts = RDT_LABELS[textOverlay() || resourceLanguage()] || RDT_LABELS.en_us;
+    return enabled === running ? texts[0] : texts[1];
+  }
+  section("rdt settings toggle", () => {
+    const optionFile = `${persistentPath()}/tesl-reborn-rdt.json`;
+    const readEnabled = () => {
+      try {
+        return JSON.parse(readTextFile(optionFile) || "{}")?.enabled === true;
+      } catch (_) {
+        return false;
+      }
+    };
+    const running = readEnabled();
+    const settingsWin = cls(img, "SettingsWin");
+    const enable = settingsWin.tryMethod("OnEnable", 0);
+    if (!enable || enable.virtualAddress.isNull()) throw Error("SettingsWin.OnEnable not found");
+    const toggleClass = ucls("UnityEngine.UI.Toggle");
+    let reported = false;
+    function install(self) {
+      const source = self.field("_doubleTapConfirmToggle").value;
+      if (!unityAlive(source)) throw Error("no double-tap toggle");
+      let row = call(source, "get_transform"), container = call(row, "get_parent");
+      for (let depth = 0; depth < 4 && !isNull(container); depth++) {
+        const layout = container.method("GetComponent").overload("System.Type").invoke(ucls("UnityEngine.UI.VerticalLayoutGroup").type.object);
+        if (!isNull(layout)) break;
+        row = container;
+        container = call(row, "get_parent");
+      }
+      if (isNull(container)) throw Error("no row container above the toggle");
+      for (let i = 0, n = Number(call(container, "get_childCount")); i < n; i++)
+        if (String(call(call(container, "GetChild", i), "get_name")?.content) === "RebornRdtRow") return;
+      const copy = ucls("UnityEngine.Object").method("Instantiate").overload("UnityEngine.Object", "UnityEngine.Transform", "System.Boolean").invoke(call(row, "get_gameObject"), container, false);
+      call(copy, "set_name", Il2Cpp.string("RebornRdtRow"));
+      const copyTransform = call(copy, "get_transform");
+      call(copyTransform, "SetSiblingIndex", Number(call(row, "GetSiblingIndex")) + 1);
+      const behaviours = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.MonoBehaviour").type.object, true);
+      for (let i = 0; i < behaviours.length; i++) {
+        const behaviour = behaviours.get(i);
+        if (/^Locali[sz]e/.test(behaviour.class.name)) call(behaviour, "set_enabled", false);
+      }
+      const labels = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("TMPro.TMP_Text").type.object, true);
+      let label = null, longest = -1;
+      for (let i = 0; i < labels.length; i++) {
+        const text = String(call(labels.get(i), "get_text")?.content || "");
+        if (text.length > longest) {
+          longest = text.length;
+          label = labels.get(i);
+        }
+      }
+      const toggles = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(toggleClass.type.object, true);
+      if (!toggles.length) throw Error("copied row has no toggle");
+      const toggle = toggles.get(0);
+      const eventClass = toggleClass.nestedClasses.find((c) => c.name === "ToggleEvent");
+      const fresh = eventClass.alloc();
+      fresh.method(".ctor", 0).invoke();
+      toggle.field("onValueChanged").value = fresh;
+      let enabled = readEnabled();
+      call(toggle, "set_isOn", enabled);
+      const show = () => {
+        if (label) call(label, "set_text", Il2Cpp.string(rdtLabel(enabled, running)));
+      };
+      show();
+      const keepToggle = toggle.ref(false);
+      const changed = (value) => {
+        if (value === enabled) return;
+        enabled = value;
+        writeTextFile(optionFile, JSON.stringify({ enabled }));
+        log(`rdt: tracker ${enabled ? "on" : "off"} from Settings (applies on restart)`);
+        show();
+      };
+      try {
+        const action = ucls("UnityEngine.Events.UnityAction`1").inflate(Il2Cpp.corlib.class("System.Boolean"));
+        call(fresh, "AddListener", Il2Cpp.delegate(action, (value) => {
+          try {
+            changed(Boolean(value));
+          } catch (error) {
+            log(`rdt: toggle failed: ${error}`);
+          }
+        }));
+      } catch (error) {
+        log(`rdt: toggle listener unavailable (${error}); polling`);
+        const poll = () => {
+          if (!unityAlive(keepToggle.target)) {
+            keepToggle.free();
+            return;
+          }
+          changed(Boolean(call(keepToggle.target, "get_isOn")));
+          schedule(300, poll, "rdt toggle");
+        };
+        schedule(300, poll, "rdt toggle");
+      }
+      if (!reported) {
+        reported = true;
+        log(`rdt: Settings toggle added (${enabled ? "on" : "off"})`);
+        uiLogTree(copyTransform, "rdt toggle row");
+      }
+    }
+    hookAttach(enable.virtualAddress, {
+      onEnter(args) {
+        this.self = args[0];
+      },
+      onLeave() {
+        const retained = new Il2Cpp.Object(this.self).ref(false);
+        schedule(0, () => {
+          try {
+            install(retained.target);
+          } catch (error) {
+            log(`rdt: Settings toggle failed: ${error}`);
+          } finally {
+            retained.free();
+          }
+        }, "rdt settings toggle");
+      }
     });
   });
 });
