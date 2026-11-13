@@ -42,6 +42,22 @@ class PluginWatchTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             watch.normalized_il(bytes([0x24]), names.get)
 
+    def test_debug_and_release_builds_of_the_same_code_match(self):
+        # GetPath of plugin 1.2.0 (Debug) and 1.2.2 (Release), as normalized.
+        debug = ["0", "28 System.Reflection.Assembly::GetExecutingAssembly", "6f System.Reflection.Assembly::get_Location",
+                 "28 System.IO.Path::GetDirectoryName", "a", "2b 00", "6", "2a"]
+        release = ["28 System.Reflection.Assembly::GetExecutingAssembly", "6f System.Reflection.Assembly::get_Location",
+                   "28 System.IO.Path::GetDirectoryName", "2a"]
+        self.assertEqual(watch.essential(debug), watch.essential(release))
+        self.assertEqual(watch.essential(["2", "28 System.Attribute::.ctor", "0", "2a"]),
+                         watch.essential(["2", "28 System.Attribute::.ctor", "2a"]))
+        self.assertNotEqual(watch.essential(["28 A::B", "2a"]), watch.essential(["28 A::C", "2a"]), "another call is a change")
+
+    def test_the_dll_is_found_where_each_release_keeps_it(self):
+        self.assertEqual(watch.find_dll(["BepInEx/plugins/TeslRebornPlugin.dll", "x.txt"]), "BepInEx/plugins/TeslRebornPlugin.dll")
+        self.assertEqual(watch.find_dll([watch.DLL, "BepInEx/plugins/TeslRebornPlugin/data/titles.json"]), watch.DLL)
+        self.assertIsNone(watch.find_dll(["readme.txt"]))
+
     def test_harmony_patch_arguments(self):
         ser = lambda text: bytes([len(text)]) + text
         blob = b"\x01\x00" + ser(b"EndGameState, Assembly-CSharp, V") + ser(b"OnEnable") + b"\x00\x00"

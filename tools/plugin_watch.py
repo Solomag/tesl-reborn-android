@@ -100,6 +100,49 @@ PREFIXED = {0x00: 0, 0x01: 0, 0x02: 0, 0x03: 0, 0x04: 0, 0x05: 0, 0x06: "t", 0x0
             0x16: "t", 0x17: 0, 0x18: 0, 0x19: 1, 0x1A: 0, 0x1C: "t", 0x1D: 0, 0x1E: 0}
 
 
+SHORT_BRANCH = {f"{op:x}" for op in range(0x2B, 0x38)}
+LONG_BRANCH = {f"{op:x}" for op in range(0x38, 0x45)}
+STLOC, LDLOC, LDLOCA = {"a", "b", "c", "d", "13", "fe0e"}, {"6", "7", "8", "9", "11", "fe0c"}, {"12", "fe0d"}
+
+
+def essential(stream):
+    """What a method does, the same whether built Debug or Release: no nops,
+    no branch to the next instruction, no store-then-load of a temporary, no
+    branch distances or local slot numbers (a Debug build has more locals
+    and other jumps)."""
+    out = []
+    for line in stream:
+        op, _, operand = line.partition(" ")
+        if op == "0":
+            continue
+        if op in SHORT_BRANCH or op in LONG_BRANCH:
+            if operand.strip("0") == "" and op in ("2b", "38"):
+                continue  # br to the next instruction
+            short = op if op in SHORT_BRANCH else f"{int(op, 16) - 0x0D:x}"
+            out.append("br" if short == "2b" else "branch " + short)
+            continue
+        if op in ("dd", "de"):
+            out.append("leave")
+            continue
+        if op in STLOC:
+            out.append("stloc")
+            continue
+        if op in LDLOC:
+            if out and out[-1] == "stloc":
+                out.pop()  # Debug: the value went through a temporary
+                continue
+            out.append("ldloc")
+            continue
+        if op in LDLOCA:
+            out.append("ldloca")
+            continue
+        out.append(line)
+    # A Debug ret goes through a temporary and a jump to the shared ret.
+    while len(out) >= 2 and out[-1] == "2a" and out[-2] in ("br", "ldloc"):
+        del out[-2]
+    return out
+
+
 def normalized_il(code, resolve):
     """The instruction stream with every token replaced by what it names."""
     out, at = [], 0
@@ -167,9 +210,20 @@ def dll_summary(data):
     md = pe.net.mdtables
     value = lambda item: getattr(item, "value", item)
     types = list(md.TypeDef)
+    # Nested types by their enclosing type (Plugin/<>c), so the compiler's
+    # many <>c and <>c__DisplayClass types keep apart and stable.
+    enclosing = {}
+    for row in md.NestedClass or []:
+        enclosing[row.NestedClass.row_index] = row.EnclosingClass.row_index
+
+    def full_name(rid, depth=0):
+        row = types[rid - 1]
+        own = (value(row.TypeNamespace) + "." if value(row.TypeNamespace) else "") + value(row.TypeName)
+        return f"{full_name(enclosing[rid], depth + 1)}/{own}" if rid in enclosing and depth < 8 else own
+
     method_owner = {}
-    for index, row in enumerate(types):
-        name = (value(row.TypeNamespace) + "." if value(row.TypeNamespace) else "") + value(row.TypeName)
+    for index, row in enumerate(types, start=1):
+        name = full_name(index)
         for ref in row.MethodList:
             method_owner[ref.row_index] = name
 
@@ -202,10 +256,14 @@ def dll_summary(data):
         return f"token {table:#x}"
 
     methods, strings, empty_methods = {}, set(), set()
+    instructions = nops = 0
     for rid, row in enumerate(md.MethodDef, start=1):
         key = f"{method_owner.get(rid, '?')}::{value(row.Name)}"
-        if key in methods:
-            key += f"#{rid}"
+        if key in methods:  # overloads: numbered in declaration order
+            n = 2
+            while f"{key}#{n}" in methods:
+                n += 1
+            key += f"#{n}"
         if not row.Rva:
             methods[key] = "abstract"
             continue
@@ -222,6 +280,9 @@ def dll_summary(data):
         except (ValueError, struct.error):
             stream = ["raw " + code.hex()]
         strings.update(line.split(" ", 2)[2] for line in stream if line.startswith("72 str "))
+        instructions += len(stream)
+        nops += stream.count("0")
+        stream = essential(stream)
         if stream == ["2a"]:  # a lone ret: a patch method that does nothing
             empty_methods.add(key)
         methods[key] = hashlib.sha256("\n".join(stream).encode()).hexdigest()[:16]
@@ -249,7 +310,17 @@ def dll_summary(data):
         own = [k for k in methods if k.split("::")[0] == owner and not k.split("::")[1].startswith((".ctor", ".cctor"))]
         if own and all(k in empty_methods for k in own):
             empty.add(owner)
-    return {"version": version, "methods": methods, "strings": strings, "patches": patches, "empty": empty}
+    # A Debug build is full of nops; a Release build has none.
+    debug = instructions > 0 and nops / instructions > 0.02
+    return {"version": version, "methods": methods, "strings": strings, "patches": patches, "empty": empty,
+            "debug": debug}
+
+
+def find_dll(files):
+    """TeslRebornPlugin.dll wherever the archive keeps it (plugins/ in 1.0,
+    plugins/TeslRebornPlugin/ since 1.2)."""
+    names = [name for name in files if name.rsplit("/", 1)[-1] == "TeslRebornPlugin.dll"]
+    return min(names, key=len) if names else None
 
 
 # --- the report --------------------------------------------------------------
@@ -289,9 +360,10 @@ def patch_classes(summary):
 def audit(name, data):
     """Every patch of one release against the hook."""
     archive_file = zipfile.ZipFile(io.BytesIO(data))
-    if DLL not in archive_file.namelist():
-        raise ValueError(f"{name}: no {DLL}")
-    summary = dll_summary(archive_file.read(DLL))
+    dll = find_dll(archive_file.namelist())
+    if not dll:
+        raise ValueError(f"{name}: no TeslRebornPlugin.dll")
+    summary = dll_summary(archive_file.read(dll))
     lines = [f"# Reborn plugin {name} (assembly {summary['version']}) against the hook", "",
              "| Patch | Targets | In the hook |", "|---|---|---|"]
     missing = 0
@@ -328,15 +400,23 @@ def compare(old_name, old, new_name, new):
             lines += [f"- `{n}` ({len((fb if title != 'Removed' else fa)[n]):,} bytes)" for n in names]
     lines.append("")
 
-    if DLL in fa and DLL in fb and fa[DLL] != fb[DLL]:
-        sa, sb = dll_summary(fa[DLL]), dll_summary(fb[DLL])
-        lines += ["## TeslRebornPlugin.dll", f"Assembly {sa['version']} → {sb['version']}.", ""]
+    dll_a, dll_b = find_dll(fa), find_dll(fb)
+    if dll_a and dll_b and fa[dll_a] != fb[dll_b]:
+        sa, sb = dll_summary(fa[dll_a]), dll_summary(fb[dll_b])
+        lines += ["## TeslRebornPlugin.dll", f"Assembly {sa['version']} → {sb['version']}."
+                  + (f" Moved from `{dll_a}` to `{dll_b}`." if dll_a != dll_b else ""), ""]
+        if sa["debug"] != sb["debug"]:
+            build = lambda s: "Debug" if s["debug"] else "Release"
+            lines += [f"> {old_name} is a {build(sa)} build, {new_name} a {build(sb)} build: the compiler's own "
+                      "differences are smoothed over, but some methods may still show as changed without a "
+                      "real change. Read their code before porting.", ""]
         ma, mb = sa["methods"], sb["methods"]
         m_added, m_removed = sorted(set(mb) - set(ma)), sorted(set(ma) - set(mb))
         m_changed = sorted(k for k in set(ma) & set(mb) if ma[k] != mb[k])
         targets_a, targets_b = sa["patches"], sb["patches"]
         p_all = sorted(set(targets_a) | set(targets_b))
-        touched = {k.split("::")[0] for k in m_added + m_removed + m_changed}
+        # A lambda or iterator of a patch (Patch/<>c) counts for the patch.
+        touched = {k.split("::")[0].split("/")[0] for k in m_added + m_removed + m_changed}
         lines.append("### Harmony patches")
         marked = 0
         for owner in p_all:
