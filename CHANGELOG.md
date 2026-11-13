@@ -11,6 +11,13 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.304 — Test
+
+- Settings → Preferences: a second deck tracker switch, **Deck tracker:
+  count left only** (RDT shows "2" instead of "2/3"). It is saved in
+  rdt/settings.json and takes effect without a restart. The two section
+  headers are slightly shorter so both tracker rows fit.
+
 ## v2.301 — Test
 
 - Settings → Preferences has a **Deck tracker (RDT)** switch under Game

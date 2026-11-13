@@ -59,31 +59,40 @@
   // BEGIN android-ui: rdt-loader
   // Off unless tesl-reborn-rdt.json says {"enabled": true}; off means
   // nothing is downloaded or run. A change applies on the next start.
+  // RDT's own settings (keys "rdt.*") live in <private files>/rdt/settings.json.
+  // One copy in memory, shared by teslPort.settings and the Settings rows, so
+  // a switch flipped in Settings is seen by the module at its next read.
+  let rdtSettingsCache = null;
+  const rdtSettingsFile = () => `${privateDir()}/rdt/settings.json`;
+  function rdtSettings() {
+    if (!rdtSettingsCache) {
+      try { rdtSettingsCache = JSON.parse(readTextFile(rdtSettingsFile()) || "{}") || {}; } catch (_) { rdtSettingsCache = {}; }
+    }
+    return rdtSettingsCache;
+  }
+  function rdtSettingSet(key, value) {
+    if (!String(key).startsWith("rdt.")) throw Error("RDT settings keys start with rdt.");
+    rdtSettings()[key] = value;
+    makeDirectory(`${privateDir()}/rdt`);
+    writeTextFile(rdtSettingsFile(), JSON.stringify(rdtSettings()));
+  }
   section("rdt module loader", () => {
     const optionFile = `${persistentPath()}/tesl-reborn-rdt.json`;
     let enabled = false;
     try { enabled = JSON.parse(readTextFile(optionFile) || "{}")?.enabled === true; } catch (_) {}
     if (!enabled) return;
-    const dir = `${privateDir()}/rdt`, cacheFile = `${dir}/rdt.js`, stateFile = `${dir}/state.json`, settingsFile = `${dir}/settings.json`;
+    const dir = `${privateDir()}/rdt`, cacheFile = `${dir}/rdt.js`, stateFile = `${dir}/state.json`;
     makeDirectory(dir);
     const readJson = path => { try { return JSON.parse(readTextFile(path) || "{}") || {}; } catch (_) { return {}; } };
     const coreRevision = Number(globalThis.TeslRebornUpdater?.current()?.revision) || 0;
     let ran = false;
 
-    const settings = readJson(settingsFile);
     globalThis.teslPort = {
       version: `${APK_LEVEL}.${coreRevision}`,
       core: coreRevision,
       log: message => log(`rdt: ${message}`),
       dataDir: dir,
-      settings: {
-        get: key => settings[key],
-        set: (key, value) => {
-          if (!String(key).startsWith("rdt.")) throw Error("RDT settings keys start with rdt.");
-          settings[key] = value;
-          writeTextFile(settingsFile, JSON.stringify(settings));
-        },
-      },
+      settings: { get: key => rdtSettings()[key], set: rdtSettingSet },
       // Runs fn on the Unity main thread, on a later frame.
       frameGate: (name, fn) => schedule(0, () => { try { fn(); } catch (error) { log(`rdt: ${name} failed: ${error}`); } }, `rdt ${name}`),
       httpGetBytes: url => new Promise((resolve, reject) =>
@@ -169,6 +178,13 @@
     tr_tr: ["Deste takipçisi (RDT)", "Deste takipçisi: oyunu yeniden başlatın"],
     zh_cn: ["卡组追踪器 (RDT)", "卡组追踪器：请重启游戏"],
   };
+  const RDT_COUNT_LABELS = {
+    en_us: "Deck tracker: count left only", ru_ru: "Трекер: только остаток карт", de_de: "Tracker: nur verbleibende Karten",
+    es_es: "Rastreador: solo cartas restantes", es_mx: "Rastreador: solo cartas restantes", fr_fr: "Suivi : cartes restantes seulement",
+    it_it: "Tracker: solo carte rimaste", pl_pl: "Tracker: tylko pozostałe karty", pt_br: "Rastreador: só cartas restantes",
+    tr_tr: "Takipçi: yalnızca kalan kartlar", zh_cn: "追踪器：仅显示剩余数量",
+  };
+  function rdtCountLabel() { return RDT_COUNT_LABELS[textOverlay() || resourceLanguage()] || RDT_COUNT_LABELS.en_us; }
   function rdtLabel(enabled, running) {
     const texts = RDT_LABELS[textOverlay() || resourceLanguage()] || RDT_LABELS.en_us;
     return enabled === running ? texts[0] : texts[1];
@@ -182,6 +198,59 @@
     if (!enable || enable.virtualAddress.isNull()) throw Error("SettingsWin.OnEnable not found");
     const toggleClass = ucls("UnityEngine.UI.Toggle");
     let reported = false;
+    // A copy of `row` placed at `index` in `container`: its own label, its own
+    // switch, none of the original's listeners or localization.
+    function addRow(row, container, index, name, initial, label, changed) {
+      const copy = ucls("UnityEngine.Object").method("Instantiate").overload("UnityEngine.Object", "UnityEngine.Transform", "System.Boolean")
+        .invoke(call(row, "get_gameObject"), container, false);
+      call(copy, "set_name", Il2Cpp.string(name));
+      const copyTransform = call(copy, "get_transform");
+      call(copyTransform, "SetSiblingIndex", index);
+      // Localization components would put "Double Tap to End Turn" back.
+      const behaviours = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.MonoBehaviour").type.object, true);
+      for (let i = 0; i < behaviours.length; i++) {
+        const behaviour = behaviours.get(i);
+        if (/^Locali[sz]e/.test(behaviour.class.name)) call(behaviour, "set_enabled", false);
+      }
+      const labels = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("TMPro.TMP_Text").type.object, true);
+      let text = null, longest = -1;
+      for (let i = 0; i < labels.length; i++) {
+        const value = String(call(labels.get(i), "get_text")?.content || "");
+        if (value.length > longest) { longest = value.length; text = labels.get(i); }
+      }
+      const toggles = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(toggleClass.type.object, true);
+      if (!toggles.length) throw Error("copied row has no toggle");
+      const toggle = toggles.get(0);
+      // A fresh event: the copy must not keep the double-tap setting's listeners.
+      const eventClass = toggleClass.nestedClasses.find(c => c.name === "ToggleEvent");
+      const fresh = eventClass.alloc(); fresh.method(".ctor", 0).invoke();
+      toggle.field("onValueChanged").value = fresh;
+      let state = initial;
+      call(toggle, "set_isOn", state);
+      const show = () => { if (text) call(text, "set_text", Il2Cpp.string(label(state))); };
+      show();
+      const onValue = value => {
+        if (value === state) return;
+        state = value;
+        changed(value);
+        show();
+      };
+      const keepToggle = toggle.ref(false);
+      try {
+        const action = ucls("UnityEngine.Events.UnityAction`1").inflate(Il2Cpp.corlib.class("System.Boolean"));
+        call(fresh, "AddListener", Il2Cpp.delegate(action, value => { try { onValue(Boolean(value)); } catch (error) { log(`rdt: toggle failed: ${error}`); } }));
+      } catch (error) {
+        // No generic delegate: read the switch while the window lives.
+        log(`rdt: toggle listener unavailable (${error}); polling`);
+        const poll = () => {
+          if (!unityAlive(keepToggle.target)) { keepToggle.free(); return; }
+          onValue(Boolean(call(keepToggle.target, "get_isOn")));
+          schedule(300, poll, "rdt toggle");
+        };
+        schedule(300, poll, "rdt toggle");
+      }
+      return copyTransform;
+    }
     function install(self) {
       const source = self.field("_doubleTapConfirmToggle").value;
       if (!unityAlive(source)) throw Error("no double-tap toggle");
@@ -195,56 +264,64 @@
       if (isNull(container)) throw Error("no row container above the toggle");
       for (let i = 0, n = Number(call(container, "get_childCount")); i < n; i++)
         if (String(call(call(container, "GetChild", i), "get_name")?.content) === "RebornRdtRow") return;
-      const copy = ucls("UnityEngine.Object").method("Instantiate").overload("UnityEngine.Object", "UnityEngine.Transform", "System.Boolean")
-        .invoke(call(row, "get_gameObject"), container, false);
-      call(copy, "set_name", Il2Cpp.string("RebornRdtRow"));
-      const copyTransform = call(copy, "get_transform");
-      call(copyTransform, "SetSiblingIndex", Number(call(row, "GetSiblingIndex")) + 1);
-      // Localization components would put "Allow spectators" back.
-      const behaviours = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("UnityEngine.MonoBehaviour").type.object, true);
-      for (let i = 0; i < behaviours.length; i++) {
-        const behaviour = behaviours.get(i);
-        if (/^Locali[sz]e/.test(behaviour.class.name)) call(behaviour, "set_enabled", false);
-      }
-      const labels = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(ucls("TMPro.TMP_Text").type.object, true);
-      let label = null, longest = -1;
-      for (let i = 0; i < labels.length; i++) {
-        const text = String(call(labels.get(i), "get_text")?.content || "");
-        if (text.length > longest) { longest = text.length; label = labels.get(i); }
-      }
-      const toggles = copy.method("GetComponentsInChildren").overload("System.Type", "System.Boolean").invoke(toggleClass.type.object, true);
-      if (!toggles.length) throw Error("copied row has no toggle");
-      const toggle = toggles.get(0);
-      // A fresh event: the copy must not keep the double-tap setting's listeners.
-      const eventClass = toggleClass.nestedClasses.find(c => c.name === "ToggleEvent");
-      const fresh = eventClass.alloc(); fresh.method(".ctor", 0).invoke();
-      toggle.field("onValueChanged").value = fresh;
-      let enabled = readEnabled();
-      call(toggle, "set_isOn", enabled);
-      const show = () => { if (label) call(label, "set_text", Il2Cpp.string(rdtLabel(enabled, running))); };
-      show();
-      const keepToggle = toggle.ref(false);
-      const changed = value => {
-        if (value === enabled) return;
-        enabled = value;
-        writeTextFile(optionFile, JSON.stringify({ enabled }));
-        log(`rdt: tracker ${enabled ? "on" : "off"} from Settings (applies on restart)`);
-        show();
-      };
+      const at = Number(call(row, "GetSiblingIndex"));
+      const enabled = readEnabled();
+      const tracker = addRow(row, container, at + 1, "RebornRdtRow", enabled, value => rdtLabel(value, running), value => {
+        writeTextFile(optionFile, JSON.stringify({ enabled: value }));
+        log(`rdt: tracker ${value ? "on" : "off"} from Settings (applies on restart)`);
+      });
+      const countLeftOnly = rdtSettings()["rdt.countLeftOnly"] === true;
+      addRow(row, container, at + 2, "RebornRdtCountRow", countLeftOnly, () => rdtCountLabel(), value => {
+        rdtSettingSet("rdt.countLeftOnly", value);
+        log(`rdt: count ${value ? "left only" : "left / total"} from Settings`);
+      });
+      // The Preferences panel has a fixed height (672: two 120 headers and
+      // the game's rows of 80); the two rows added make it 48 too tall. The
+      // section headers, mostly empty space, give up what is missing.
       try {
-        const action = ucls("UnityEngine.Events.UnityAction`1").inflate(Il2Cpp.corlib.class("System.Boolean"));
-        call(fresh, "AddListener", Il2Cpp.delegate(action, value => { try { changed(Boolean(value)); } catch (error) { log(`rdt: toggle failed: ${error}`); } }));
-      } catch (error) {
-        // No generic delegate: read the switch while the window lives.
-        log(`rdt: toggle listener unavailable (${error}); polling`);
-        const poll = () => {
-          if (!unityAlive(keepToggle.target)) { keepToggle.free(); return; }
-          changed(Boolean(call(keepToggle.target, "get_isOn")));
-          schedule(300, poll, "rdt toggle");
-        };
-        schedule(300, poll, "rdt toggle");
+        const heightOf = node => Number(call(uiRect(call(node, "get_gameObject")), "get_rect").field("m_Height").value);
+        const headers = [];
+        let total = 0;
+        for (let i = 0, n = Number(call(container, "get_childCount")); i < n; i++) {
+          const child = call(container, "GetChild", i);
+          if (!Boolean(call(call(child, "get_gameObject"), "get_activeSelf"))) continue;
+          total += heightOf(child);
+          if (/^Header/.test(String(call(child, "get_name")?.content))) headers.push(child);
+        }
+        const over = total - heightOf(container);
+        if (over > 0 && headers.length) {
+          const cut = Math.ceil(over / headers.length);
+          for (const header of headers) {
+            const go = call(header, "get_gameObject"), height = Math.max(40, heightOf(header) - cut);
+            let element = go.method("GetComponent").overload("System.Type").invoke(ucls("UnityEngine.UI.LayoutElement").type.object);
+            if (isNull(element)) element = uiAdd(go, "UnityEngine.UI.LayoutElement");
+            call(element, "set_minHeight", height); call(element, "set_preferredHeight", height);
+            const rect = uiRect(go), size = call(rect, "get_sizeDelta");
+            call(rect, "set_sizeDelta", vec2(Number(size.field("x").value), height));
+          }
+          ucls("UnityEngine.UI.LayoutRebuilder").method("ForceRebuildLayoutImmediate", 1).invoke(uiRect(call(container, "get_gameObject")));
+          if (!reported) log(`rdt: Settings headers shortened by ${cut} to fit ${over} more`);
+        }
+      } catch (error) { log(`rdt: Settings fit failed: ${error}`); }
+      if (!reported) {
+        reported = true;
+        log(`rdt: Settings rows added (tracker ${enabled ? "on" : "off"}, count ${countLeftOnly ? "left only" : "left / total"})`);
+        try {
+          const height = node => Number(call(uiRect(call(node, "get_gameObject")), "get_rect").field("m_Height").value).toFixed(0);
+          const layout = container.method("GetComponent").overload("System.Type").invoke(ucls("UnityEngine.UI.VerticalLayoutGroup").type.object);
+          const rows = [];
+          for (let i = 0, n = Number(call(container, "get_childCount")); i < n; i++) {
+            const child = call(container, "GetChild", i);
+            rows.push(`${call(child, "get_name")?.content}:${height(child)}${Boolean(call(call(child, "get_gameObject"), "get_activeSelf")) ? "" : "(off)"}`);
+          }
+          const chain = [];
+          for (let node = container, depth = 0; !isNull(node) && depth < 5; node = call(node, "get_parent"), depth++) {
+            const scroll = node.method("GetComponent").overload("System.Type").invoke(ucls("UnityEngine.UI.ScrollRect").type.object);
+            chain.push(`${call(node, "get_name")?.content}:${height(node)}${isNull(scroll) ? "" : "(scroll)"}`);
+          }
+          log(`rdt: Settings layout spacing ${call(layout, "get_spacing")}, rows ${rows.join(" ")}; parents ${chain.join(" < ")}`);
+        } catch (error) { log(`rdt: Settings layout unreadable: ${error}`); }
       }
-      if (!reported) { reported = true; log(`rdt: Settings toggle added (${enabled ? "on" : "off"})`); uiLogTree(copyTransform, "rdt toggle row"); }
     }
     hookAttach(enable.virtualAddress, {
       onEnter(args) { this.self = args[0]; },
