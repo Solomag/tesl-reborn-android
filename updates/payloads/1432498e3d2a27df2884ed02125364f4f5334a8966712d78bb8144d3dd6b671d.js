@@ -13779,11 +13779,15 @@ ${stack}`);
     function run(code, origin) {
       if (ran) return;
       ran = true;
+      const outer = currentSection;
+      currentSection = "rdt module";
       try {
         Script.evaluate("/rdt/rdt.js", code);
         log(`rdt: module started (${origin})`);
       } catch (error) {
         log(`rdt: module failed (${origin}): ${error?.stack || error}`);
+      } finally {
+        currentSection = outer;
       }
     }
     const updater = readJson(`${persistentPath()}/tesl-reborn-updater.json`);

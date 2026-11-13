@@ -95,10 +95,14 @@
     function run(code, origin) {
       if (ran) return;
       ran = true;
+      // The module's hooks are timed under their own name in the cost report.
+      const outer = currentSection;
+      currentSection = "rdt module";
       try {
         Script.evaluate("/rdt/rdt.js", code);
         log(`rdt: module started (${origin})`);
       } catch (error) { log(`rdt: module failed (${origin}): ${error?.stack || error}`); }
+      finally { currentSection = outer; }
     }
 
     // Development: an rdt.js in the update inbox runs instead of the

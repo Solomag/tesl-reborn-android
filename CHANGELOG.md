@@ -11,6 +11,12 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.297 — Test
+
+- RDT: the module's own hooks are reported under "rdt module" in the hook
+  cost log. Checked on a phone with the first published RDT release: it is
+  downloaded, verified and cached, and runs from the cache on the next start.
+
 ## v2.296 — Test
 
 - Loader for the optional Reborn Deck Tracker module (RDT, released from
