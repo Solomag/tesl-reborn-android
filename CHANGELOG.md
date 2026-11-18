@@ -11,6 +11,13 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.315 — Test
+
+- Fixed a crash while the lobby loads on some newer phones (seen on a
+  MEIZU 21 with Android 16; Unity logged "Using memoryadresses from more
+  that 16GB of memory"). Unity's memory bookkeeping only had room for five
+  4 GB address ranges; the patch keeps any further ranges in its own table.
+
 ## v2.304 — Test
 
 - Settings → Preferences: a second deck tracker switch, **Deck tracker:

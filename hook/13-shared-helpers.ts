@@ -109,6 +109,13 @@
   // On for everyone after report 108; {"safeInvoke": false} in the
   // experiments file turns it off on a phone.
   try { experiment("safeInvoke"); if (experiments.safeInvoke !== false) installSafeInvoke(); } catch (error) { log(`safe invoke unavailable: ${error}`); }
+  // Installed first thing (see hook/06-unity-allocator.ts, report 142).
+  section("unity allocator: more than five 4 GB windows", () => {
+    if (experiment("allocatorOff")) throw Error("off (experiment allocatorOff)");
+    const why = unityAllocatorWindows.install();
+    if (why) throw Error(why);
+    if (experiment("allocatorSideTable")) unityAllocatorWindows.testSideTable();
+  });
 
   // Reports 97-106: "setjmp cookie mismatch" aborts. Every managed call
   // the hook makes went straight to the method's code through a Frida
