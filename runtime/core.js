@@ -5702,6 +5702,40 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
       }
     });
   }
+  const MIRROR_HOSTS = ["cdn.jsdelivr.net", "fastly.jsdelivr.net", "gcore.jsdelivr.net"];
+  function mirrorUrls(url) {
+    const m = /^https:\/\/raw\.githubusercontent\.com\/([\w.-]+)\/([\w.-]+)\/([\w.-]+)\/([\w./-]+)$/.exec(String(url));
+    if (!m || m[4].split("/").includes("..")) return [];
+    return MIRROR_HOSTS.map((host) => `https://${host}/gh/${m[1]}/${m[2]}@${m[3]}/${m[4]}`);
+  }
+  let mirrorFirst = false;
+  function withMirrors(get, note = (message) => {
+  }) {
+    return (url, cb) => {
+      const mirrors = mirrorUrls(url);
+      const order = mirrorFirst ? [...mirrors, url] : [url, ...mirrors];
+      let failure = null;
+      const attempt = (i) => get(order[i], (status, body) => {
+        if ((status === 200 || status === 304) && body != null && body !== "") {
+          if (order[i] !== url) note(`fetched from mirror ${order[i]}`);
+          cb(status, body);
+          return;
+        }
+        if (order[i] === url) {
+          failure = [status, body];
+          if (mirrors.length && !mirrorFirst) {
+            mirrorFirst = true;
+            note(`GitHub failed (HTTP ${status}); trying mirrors`);
+          }
+        } else if (!failure) failure = [status, body];
+        if (i + 1 < order.length) attempt(i + 1);
+        else cb(failure[0], failure[1]);
+      });
+      attempt(0);
+    };
+  }
+  const updateGet = withMirrors((url, cb) => httpGet(url, false, cb, true), (message) => log(`updater: ${message}`));
+  const mirroredGetBytes = withMirrors(httpGetBytes, (message) => log(`rdt: ${message}`));
   section("rewards refresh", () => {
     const pubSub = cls(img, "SparkleServices.PubSub");
     const createPush = pubSub.method("CreatePushNotification");
@@ -13411,11 +13445,13 @@ Android ${Number.isSafeInteger(revision) ? patchVersion(revision) : "embedded"}$
     schedule(1e3, () => {
       const prelaunch = read(`${persistentPath()}/tesl-reborn-prelaunch-status.json`);
       const age = Date.now() - Number(prelaunch?.checkedAt);
-      if (Number.isFinite(age) && age >= 0 && age < 6e4) {
+      const failed = ["unavailable", "timeout"].includes(String(prelaunch?.status)) || experiment("updateMirrorFirst");
+      if (!failed && Number.isFinite(age) && age >= 0 && age < 6e4) {
         log("updater: prelaunch gate handled this start");
         return;
       }
-      notices.check((url, callback) => httpGet(url, false, callback, true));
+      if (failed) log(`updater: the launcher check ended "${prelaunch.status}"; checking here`);
+      notices.check(updateGet);
     });
   }
   function rememberShopSnapshot(previous, report) {
@@ -13799,6 +13835,10 @@ ${stack}`);
     const uriClass = ucls("System.Uri");
     log(`HTTP URI assembly: ${uriClass.image.name}`);
     log("Android feature hooks are active; server data and UI results are checked separately");
+    if (experiment("updateMirrorFirst")) {
+      mirrorFirst = true;
+      log("updater: mirrors first (experiment)");
+    }
     const updater = globalThis.TeslRebornUpdater;
     if (updater) {
       let healthySince = 0;
@@ -13832,7 +13872,7 @@ ${stack}`);
         installUpdateNotices(updater);
       } catch (error) {
         log(`update notices unavailable: ${error}`);
-        schedule(1e3, () => updater.check((url, cb) => httpGet(url, false, cb, true)));
+        schedule(1e3, () => updater.check(updateGet));
       }
     }
   });
@@ -13979,7 +14019,7 @@ ${stack}`);
       log("rdt: no release key pinned yet; channel skipped");
       return;
     }
-    httpGet(RDT.manifestUrl, false, (status, body) => {
+    withMirrors((url, cb) => httpGet(url, false, cb), (message) => log(`rdt: ${message}`))(RDT.manifestUrl, (status, body) => {
       if (status !== 200) {
         log(`rdt: manifest HTTP ${status}`);
         return;
@@ -14000,7 +14040,7 @@ ${stack}`);
           log(`rdt: revision ${cachedRevision} is current`);
           return;
         }
-        httpGetBytes(manifest.url, (code, bytes) => {
+        mirroredGetBytes(manifest.url, (code, bytes) => {
           if (!bytes) {
             log(`rdt: download HTTP ${code}`);
             return;

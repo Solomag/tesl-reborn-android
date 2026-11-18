@@ -132,7 +132,7 @@
     // Once per start: a newer release is saved for the next one (or run
     // now when nothing has run yet).
     if (!RDT.publicKey) { log("rdt: no release key pinned yet; channel skipped"); return; }
-    httpGet(RDT.manifestUrl, false, (status, body) => {
+    withMirrors((url, cb) => httpGet(url, false, cb), message => log(`rdt: ${message}`))(RDT.manifestUrl, (status, body) => {
       if (status !== 200) { log(`rdt: manifest HTTP ${status}`); return; }
       setTimeout(() => {
         let manifest = null;
@@ -141,7 +141,7 @@
         const refused = rdtCheckManifest(manifest, RDT.publicKey, cachedRevision, coreRevision, tweetnaclVerify);
         if (refused) { log(`rdt: manifest refused: ${refused}`); return; }
         if (manifest.revision === cachedRevision && manifest.sha256 === state.sha256) { log(`rdt: revision ${cachedRevision} is current`); return; }
-        httpGetBytes(manifest.url, (code, bytes) => {
+        mirroredGetBytes(manifest.url, (code, bytes) => {
           if (!bytes) { log(`rdt: download HTTP ${code}`); return; }
           setTimeout(() => {
             const problem = rdtCheckPayload(bytes, manifest, data => Checksum.compute("sha256", data));

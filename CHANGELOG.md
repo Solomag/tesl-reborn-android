@@ -11,6 +11,14 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.316 — Test
+
+- Updates where GitHub is blocked (mainland China): when a patch or the
+  deck tracker can't be fetched from GitHub, the game fetches the same
+  files from the jsDelivr mirror; they are checked as before. If the
+  launcher's own update check fails, the game now checks again itself.
+- The next **new APK** will use the mirror in the launcher's check too.
+
 ## v2.315 — Test
 
 - Fixed a crash while the lobby loads on some newer phones (seen on a

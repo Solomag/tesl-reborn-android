@@ -378,6 +378,47 @@
     });
   }
 
+  // BEGIN android-ui: update-mirror
+  // GitHub is cut off in mainland China (report 142: "Connection reset" and
+  // "socket has been shut down" on every update check), so a release file on
+  // raw.githubusercontent.com is also fetched from jsDelivr's copies of the
+  // same branch. Nothing else changes: the loader still checks the manifest
+  // URLs and the patch's sha256, the RDT channel its signature.
+  const MIRROR_HOSTS = ["cdn.jsdelivr.net", "fastly.jsdelivr.net", "gcore.jsdelivr.net"];
+  function mirrorUrls(url) {
+    const m = /^https:\/\/raw\.githubusercontent\.com\/([\w.-]+)\/([\w.-]+)\/([\w.-]+)\/([\w./-]+)$/.exec(String(url));
+    if (!m || m[4].split("/").includes("..")) return [];
+    return MIRROR_HOSTS.map(host => `https://${host}/gh/${m[1]}/${m[2]}@${m[3]}/${m[4]}`);
+  }
+  // get(url, cb(status, body)) with the same signature, which tries the
+  // mirrors when GitHub fails. After one GitHub failure the mirrors go first
+  // for the rest of the session: a blocked request can take long to fail.
+  let mirrorFirst = false;
+  function withMirrors(get, note = message => {}) {
+    return (url, cb) => {
+      const mirrors = mirrorUrls(url);
+      const order = mirrorFirst ? [...mirrors, url] : [url, ...mirrors];
+      let failure = null;
+      const attempt = i => get(order[i], (status, body) => {
+        if ((status === 200 || status === 304) && body != null && body !== "") {
+          if (order[i] !== url) note(`fetched from mirror ${order[i]}`);
+          cb(status, body);
+          return;
+        }
+        if (order[i] === url) {
+          failure = [status, body];
+          if (mirrors.length && !mirrorFirst) { mirrorFirst = true; note(`GitHub failed (HTTP ${status}); trying mirrors`); }
+        } else if (!failure) failure = [status, body];
+        if (i + 1 < order.length) attempt(i + 1);
+        else cb(failure[0], failure[1]);
+      });
+      attempt(0);
+    };
+  }
+  // END android-ui: update-mirror
+  const updateGet = withMirrors((url, cb) => httpGet(url, false, cb, true), message => log(`updater: ${message}`));
+  const mirroredGetBytes = withMirrors(httpGetBytes, message => log(`rdt: ${message}`));
+
     section("rewards refresh", () => {
     const pubSub = cls(img, "SparkleServices.PubSub");
     const createPush = pubSub.method("CreatePushNotification");

@@ -765,8 +765,12 @@
     schedule(1000, () => {
       const prelaunch=read(`${persistentPath()}/tesl-reborn-prelaunch-status.json`);
       const age=Date.now()-Number(prelaunch?.checkedAt);
-      if(Number.isFinite(age) && age>=0 && age<60000) {log("updater: prelaunch gate handled this start");return;}
-      notices.check((url, callback) => httpGet(url, false, callback, true));
+      // A launcher check that failed (an APK without the GitHub mirror, in
+      // mainland China) leaves it to this one, which has the mirror.
+      const failed=["unavailable","timeout"].includes(String(prelaunch?.status)) || experiment("updateMirrorFirst");
+      if(!failed && Number.isFinite(age) && age>=0 && age<60000) {log("updater: prelaunch gate handled this start");return;}
+      if(failed) log(`updater: the launcher check ended "${prelaunch.status}"; checking here`);
+      notices.check(updateGet);
     });
   }
   // END android-ui: update-notices

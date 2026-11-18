@@ -27,8 +27,40 @@ public final class PrelaunchUpdater {
         throw new IOException("Update check cancelled or timed out");
     }
   }
+  /**
+   * jsDelivr copies of a file on raw.githubusercontent.com (GitHub is cut off in mainland China);
+   * empty for any other URL. The payload is still checked against the manifest's sha256.
+   */
+  static List<String> mirrors(String value) {
+    java.util.regex.Matcher m = java.util.regex.Pattern
+      .compile("https://raw\\.githubusercontent\\.com/([\\w.-]+)/([\\w.-]+)/([\\w.-]+)/([\\w./-]+)").matcher(value == null ? "" : value);
+    List<String> out = new ArrayList<>();
+    if (!m.matches() || Arrays.asList(m.group(4).split("/")).contains("..")) return out;
+    for (String host : new String[]{"cdn.jsdelivr.net", "fastly.jsdelivr.net", "gcore.jsdelivr.net"})
+      out.add("https://" + host + "/gh/" + m.group(1) + "/" + m.group(2) + "@" + m.group(3) + "/" + m.group(4));
+    return out;
+  }
   public static final class Https implements Transport {
+    /** After one GitHub failure the mirrors go first: a blocked request can take long to fail. */
+    private static volatile boolean mirrorFirst;
     public byte[] get(String value, int limit, Cancellation cancel) throws Exception {
+      origin(value);
+      List<String> mirrors = mirrors(value), order = new ArrayList<>();
+      if (mirrorFirst) order.addAll(mirrors);
+      order.add(value);
+      if (!mirrorFirst) order.addAll(mirrors);
+      Exception failure = null;
+      for (String url : order) {
+        try { return fetch(url, limit, cancel); }
+        catch (Exception e) {
+          cancel.check();
+          if (url.equals(value)) { failure = e; if (!mirrors.isEmpty()) mirrorFirst = true; }
+          else if (failure == null) failure = e;
+        }
+      }
+      throw failure;
+    }
+    private static byte[] fetch(String value, int limit, Cancellation cancel) throws Exception {
       origin(value); cancel.check();
       HttpURLConnection c = (HttpURLConnection) new URL(value).openConnection();
       cancel.connection = c;

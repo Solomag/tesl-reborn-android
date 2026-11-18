@@ -65,6 +65,8 @@
     const uriClass = ucls("System.Uri");
     log(`HTTP URI assembly: ${uriClass.image.name}`);
     log("Android feature hooks are active; server data and UI results are checked separately");
+    // Test channel: behave as if GitHub were blocked (mirrors first).
+    if (experiment("updateMirrorFirst")) { mirrorFirst = true; log("updater: mirrors first (experiment)"); }
     const updater = globalThis.TeslRebornUpdater;
     if (updater) {
       // A new patch is kept only after the game has drawn frames for 15 s
@@ -93,7 +95,7 @@
       try { installUpdateNotices(updater); }
       catch (error) {
         log(`update notices unavailable: ${error}`);
-        schedule(1000, () => updater.check((url, cb) => httpGet(url, false, cb, true)));
+        schedule(1000, () => updater.check(updateGet));
       }
     }
   });

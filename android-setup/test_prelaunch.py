@@ -53,6 +53,11 @@ public class PrelaunchTest {
   if(PrelaunchUpdater.offer(success,config(),meta(49),transport(manifest(),code),new PrelaunchUpdater.Cancellation()).newer())throw new AssertionError("Offer ignored the staged core");
   if(!PrelaunchUpdater.offer(rejected,config(),meta(49),transport(manifest(),code),new PrelaunchUpdater.Cancellation()).status.equals("rejected"))throw new AssertionError("Offer proposed a rejected core");
   if(!PrelaunchUpdater.offer(recovery,config(),meta(49),(u,l,c)->{throw new AssertionError("Recovery fetched update");},new PrelaunchUpdater.Cancellation()).status.equals("recovery-first"))throw new AssertionError("Offer during recovery");
+  // GitHub release files also come from jsDelivr (mainland China); nothing else is rewritten.
+  java.util.List<String> m=PrelaunchUpdater.mirrors("https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/core-315.js");
+  if(m.size()!=3||!m.get(0).equals("https://cdn.jsdelivr.net/gh/ssorgatem/tesl-reborn-android@android-ui-and-update-loader/updates/test/core-315.js"))throw new AssertionError("Mirror URL "+m);
+  for(String value:new String[]{"https://example.test/a.json","https://raw.githubusercontent.com/a/b/c/../d.json","https://raw.githubusercontent.com.evil.test/a/b/c/d.json","https://raw.githubusercontent.com/a/b/c"})
+   if(!PrelaunchUpdater.mirrors(value).isEmpty())throw new AssertionError("Mirrored "+value);
   PackInstaller.writeJson(new File(root,"embedded.json"),meta(49));
   try(FileOutputStream out=new FileOutputStream(new File(root,"embedded.js"))){out.write(code);}
   System.out.println("PASS JVM prelaunch: staging, hashes, HTTPS/origin, schema, cancellation, disabled/safe mode, live-process guard, rollback and revision floors");

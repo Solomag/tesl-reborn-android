@@ -138,12 +138,23 @@ assert(!calls.some(([o,m])=>/Quit|Pause|SetSelectedGameObject/.test(m)));
 const scheduled=[],transport=[];
 r.persistentPath=()=>'/files';r.readTextFile=()=>'';r.writeTextFile=()=>true;r.atomicRename=()=>true;
 r.img={};r.cls=()=>({method:()=>({virtualAddress:'ServicesManager.Update'})});
-r.Interceptor={attach:()=>{}};r.schedule=(delay,fn)=>scheduled.push({delay,fn});
+r.Interceptor={attach:()=>{}};r.schedule=(delay,fn)=>scheduled.push({delay,fn});r.experiment=()=>false;
 r.httpGet=(url,auth,callback,update)=>transport.push({url,auth,update});
+// The check goes through the GitHub mirror wrapper (hook/13-shared-helpers.ts).
+vm.runInContext(transformSync(require('./source.cjs')('update-mirror')+';var updateGet=withMirrors((url,cb)=>httpGet(url,false,cb,true));',{loader:'ts'}).code,r);
 f=fixture();r.installUpdateNotices(f.boot().updater);
 assert.equal(scheduled.length,2);const check=scheduled.find(s=>s.delay===1000);assert(check,'the update check runs a second after start');
 check.fn();assert.equal(transport.length,1);
 assert.equal(transport[0].auth,false);assert.equal(transport[0].update,true);
+// The launcher checked a moment ago: skipped here, unless that check failed
+// (an APK without the mirror, GitHub blocked): then this one runs.
+for(const [status,runs] of [['up-to-date',false],['staged',false],['unavailable',true],['timeout',true]]){
+  const before=transport.length;scheduled.length=0;
+  r.readTextFile=p=>p.endsWith('prelaunch-status.json')?JSON.stringify({status,checkedAt:clock-5000}):'';
+  r.installUpdateNotices(fixture().boot().updater);scheduled.find(s=>s.delay===1000).fn();
+  assert.equal(transport.length>before,runs,`launcher status ${status}`);
+}
+r.readTextFile=()=>'';scheduled.length=0;r.installUpdateNotices(f.boot().updater);
 // An APK older than the patches expect (no apkLevel: an APK before it) is asked
 // to be replaced; a current one is not.
 {
