@@ -91,8 +91,11 @@
   function refreshDeckTileLabels() {
     for (const [key, record] of Array.from(deckTiles)) {
       try {
+        // A tile of a closed deck list: the managed object outlives the
+        // Unity one, and OnDestroy is not always seen (MEIZU 21 log, 19.11.2026:
+        // 66 NullReferenceExceptions in SetActive).
         const tile = record.tile.target;
-        if (isNull(tile)) { forgetDeckTile(key); continue; }
+        if (!unityAlive(tile)) { forgetDeckTile(key); continue; }
         updateDeckTileLabel(tile);
       } catch (error) {
         forgetDeckTile(key);
@@ -200,7 +203,7 @@
       if (!createDeckTileLabel(tile)) return;
       const container = record.container.target;
       const label = record.label.target;
-      if (isNull(container) || isNull(label)) { forgetDeckTile(key); return; }
+      if (!unityAlive(container) || !unityAlive(label)) { forgetDeckTile(key); return; }
       call(container, "SetActive", false);
       const deckId = Number(call(tile, "GetDeckId"));
       const stats = deckStats.get(deckId);
