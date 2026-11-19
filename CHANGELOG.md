@@ -11,12 +11,12 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
-## v2.317 — Test
+## v2.317 — Test and Stable
 
 - Deck win/loss labels no longer fill the log with errors after the deck
   list is closed (the labels themselves looked fine).
 
-## v2.316 — Test
+## v2.316
 
 - Updates where GitHub is blocked (mainland China): when a patch or the
   deck tracker can't be fetched from GitHub, the game fetches the same
@@ -24,21 +24,21 @@ goes up when a new APK is needed), the second the patch. A Builder is
   launcher's own update check fails, the game now checks again itself.
 - The next **new APK** will use the mirror in the launcher's check too.
 
-## v2.315 — Test
+## v2.315
 
 - Fixed a crash while the lobby loads on some newer phones (seen on a
   MEIZU 21 with Android 16; Unity logged "Using memoryadresses from more
   that 16GB of memory"). Unity's memory bookkeeping only had room for five
   4 GB address ranges; the patch keeps any further ranges in its own table.
 
-## v2.304 — Test
+## v2.304
 
 - Settings → Preferences: a second deck tracker switch, **Deck tracker:
   count left only** (RDT shows "2" instead of "2/3"). It is saved in
   rdt/settings.json and takes effect without a restart. The two section
   headers are slightly shorter so both tracker rows fit.
 
-## v2.301 — Test
+## v2.301
 
 - Settings → Preferences has a **Deck tracker (RDT)** switch under Game
   settings, styled like the game's own switches. It asks for a restart while
@@ -48,13 +48,13 @@ goes up when a new APK is needed), the second the patch. A Builder is
   this, the RDT module was not fetched again after its local copy was
   removed.
 
-## v2.297 — Test
+## v2.297
 
 - RDT: the module's own hooks are reported under "rdt module" in the hook
   cost log. Checked on a phone with the first published RDT release: it is
   downloaded, verified and cached, and runs from the cache on the next start.
 
-## v2.296 — Test
+## v2.296
 
 - Loader for the optional Reborn Deck Tracker module (RDT, released from
   Solomag/RDT-Android). Off by default: only
@@ -63,7 +63,7 @@ goes up when a new APK is needed), the second the patch. A Builder is
   runs, and a broken module cannot stop the game.
 - docs/rdt-m0-methods.md: the game methods and fields the tracker needs.
 
-## v2.295 — Test
+## v2.295
 
 - Chat: the smiley swaps the keyboard for an emoji panel, like in
   messengers: all Reborn emojis by group, **SEND**, **DEL** (removes a whole
@@ -74,7 +74,7 @@ goes up when a new APK is needed), the second the patch. A Builder is
   square; skin tones and coloured hearts use the nearest Reborn emoji.
   Received keyboard emojis are drawn the same way.
 
-## v2.290 — Test
+## v2.290
 
 - Chat emojis no longer depend on the APK: a phone whose APK lacks them, or
   has those of an older Reborn plugin, takes them from the official plugin
@@ -87,7 +87,7 @@ goes up when a new APK is needed), the second the patch. A Builder is
   `builder.cli`, output to `--log`); `tools/fresh-apk.ps1` fetches the
   current Builders and builds a fresh APK with each.
 
-## v2.288 — Test and Stable
+## v2.288
 
 - Versions read as **v2.288** (APK level, patch) in the game, the update
   notice and the setup screens *(setup screens: new APK)*, and Builders
