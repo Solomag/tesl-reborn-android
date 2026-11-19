@@ -4,8 +4,8 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 316,
-  "version": "android-316-update-mirror",
+  "revision": 317,
+  "version": "android-317-deck-labels",
   "bytes": 617913,
   "sha256": "a44187b685403ea88c90c996de8aad0da21829fdf07f20276ffaee5b16c8aea2",
   "resources": [

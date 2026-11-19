@@ -6344,7 +6344,7 @@ void onLeave (GumInvocationContext * ic) {
     for (const [key, record] of Array.from(deckTiles)) {
       try {
         const tile = record.tile.target;
-        if (isNull(tile)) {
+        if (!unityAlive(tile)) {
           forgetDeckTile(key);
           continue;
         }
@@ -6465,7 +6465,7 @@ void onLeave (GumInvocationContext * ic) {
       if (!createDeckTileLabel(tile)) return;
       const container = record.container.target;
       const label = record.label.target;
-      if (isNull(container) || isNull(label)) {
+      if (!unityAlive(container) || !unityAlive(label)) {
         forgetDeckTile(key);
         return;
       }

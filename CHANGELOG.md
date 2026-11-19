@@ -11,6 +11,11 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
+## v2.317 — Test
+
+- Deck win/loss labels no longer fill the log with errors after the deck
+  list is closed (the labels themselves looked fine).
+
 ## v2.316 — Test
 
 - Updates where GitHub is blocked (mainland China): when a patch or the
