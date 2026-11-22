@@ -64,7 +64,9 @@ final class UnityLoopWatch {
     if (!loopRunning) {
       if (!unityFocus && windowFocus) plan.append("focus ");
       // Without window focus Unity rightly waits for it (a dialog, the
-      // notification shade); unlike the hook, nothing is sent then.
+      // notification shade): unlike the hook, no resume is sent then. The
+      // loop's flag is cleared only by a pause, so a running Unity with its
+      // loop stopped is restarted with or without focus.
       if (unityRunning) plan.append("loop");
       else if (windowFocus) plan.append("resume");
     }
@@ -129,10 +131,14 @@ final class UnityLoopWatch {
         }
         done.append(done.length() == 0 ? "" : " ").append(step);
       }
-      note(activity, new JSONObject().put("at", revivedAt).put("done", done.toString())
-          .put("state", "loop running " + loopRunning + ", surface " + loopSurface + "; unity running "
-              + unityRunning + ", focus " + unityFocus + "; window focus " + windowFocus
-              + ", surface valid " + surfaceValid));
+      try {
+        note(activity, new JSONObject().put("at", revivedAt).put("done", done.toString())
+            .put("state", "loop running " + loopRunning + ", surface " + loopSurface + "; unity running "
+                + unityRunning + ", focus " + unityFocus + "; window focus " + windowFocus
+                + ", surface valid " + surfaceValid));
+      } catch (Exception unwritten) {
+        // Storage away for a moment: the watch goes on.
+      }
     } catch (Throwable error) {
       // Another game build: the hook's own watch is left to it.
       broken = true;
