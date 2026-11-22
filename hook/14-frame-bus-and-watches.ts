@@ -335,6 +335,12 @@ void onLeave (GumInvocationContext * ic) {
   // ago the last frame ran and what the game threads are doing (state, system
   // call, kernel wait). Nothing is logged while frames keep coming, except
   // every tenth second.
+  section("unity player loop", () => {
+    const why = unityPlayerLoop.install();
+    if (why) throw Error(why);
+    for (const kind of ["Surface", "Resume"] as const) if (experiment(`loopStall${kind}`)) unityPlayerLoop.testStall(kind);
+  });
+
   section("resume watch", () => {
     const read = (path: string) => { try { return String((File as any).readAllText(path)).trim(); } catch (_) { return ""; } };
     const describe = (id: number) => {
@@ -381,11 +387,11 @@ void onLeave (GumInvocationContext * ic) {
     // process. Written only while frames come, every two seconds at most.
     const framesFile = `${persistentPath()}/tesl-reborn-frames.json`;
     let framesWritten = 0;
-    let hung = false, seenAdj = "";
+    let hung = false, seenAdj = "", revived = false, onScreenAt = Date.now();
     setInterval(() => {
       try {
         const adj = read("/proc/self/oom_score_adj"), lastFrame = globalThis.__teslLastFrameAt;
-        if (adj !== seenAdj) { seenAdj = adj; if (hung || adj === "0") log(`hang watch: oom_score_adj ${adj}`); }
+        if (adj !== seenAdj) { seenAdj = adj; onScreenAt = Date.now(); if (hung || adj === "0") log(`hang watch: oom_score_adj ${adj}`); }
         if (!lastFrame) return;
         const gap = Date.now() - lastFrame;
         if (lastFrame !== framesWritten && gap < 3000) {
@@ -394,6 +400,14 @@ void onLeave (GumInvocationContext * ic) {
           (File as any).writeAllText(framesFile + ".tmp", JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
           if (!atomicRename(framesFile + ".tmp", framesFile)) (File as any).writeAllText(framesFile, JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
         }
+        // Reports 143-144: on screen with no frame for 4 s, Unity's loop is
+        // asked what it waits for, once per hang, and what Android's state
+        // says it should have is set back (hook/07-unity-player-loop.ts). The
+        // restart below stays for hangs this does not end.
+        if (revived && gap < 3000) { revived = false; log("hang watch: frames came back after the revive"); }
+        // A return draws its first frame within a second or so: on screen
+        // for 4 s as well, so a return in progress is left alone.
+        if (adj === "0" && gap > 4000 && Date.now() - onScreenAt > 4000 && !revived) { revived = true; log(`hang watch: no frame for ${Math.round(gap / 1000)} s on screen; ${unityPlayerLoop.revive()}`); }
         if (hung && gap < 5000) {
           hung = false; log("hang watch: frames are back"); mark(true);
         } else if (adj === "0" && gap > 12000) {

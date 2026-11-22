@@ -4854,6 +4854,213 @@ int page_contains (void * self, void * pointer) {
     }
   };
 })();
+function unityLoopPlan(s) {
+  if (s.unityPaused || s.finishing !== false) return [];
+  const plan = [];
+  if (!s.loopSurface && s.surfaceValid) plan.push("surface");
+  if (!s.loopRunning) {
+    if (!s.unityFocus && s.windowFocus === true) plan.push("focus");
+    plan.push(s.unityRunning ? "loop" : "resume");
+  }
+  return plan;
+}
+const unityPlayerLoop = /* @__PURE__ */ (() => {
+  const TABLE = 15109056;
+  const ROWS = ["nativeDone", "nativePause", "nativeRecreateGfxState", "nativeRender", "nativeResume", "nativeLowMemory", "nativeFocusChanged"];
+  const recent = [];
+  let vm = null, player = null;
+  const none = (p) => !p || p.isNull();
+  const keep = [];
+  const functions = /* @__PURE__ */ new Map();
+  const note = (event) => {
+    recent.push(`${(/* @__PURE__ */ new Date()).toISOString().slice(11, 19)} ${event}`);
+    if (recent.length > 8) recent.shift();
+    log(`unity player: ${event}`);
+  };
+  const table = (self, index, ret, args) => {
+    const at = self.readPointer().add(index * Process.pointerSize).readPointer(), key = `${at}`;
+    let f = functions.get(key);
+    if (!f) {
+      f = new NativeFunction(at, ret, ["pointer", ...args]);
+      functions.set(key, f);
+    }
+    return (...rest) => f(self, ...rest);
+  };
+  const capture = (env, thiz) => {
+    if (!none(player) || thiz.isNull()) return;
+    const out = Memory.alloc(Process.pointerSize);
+    if (table(env, 219, "int", ["pointer"])(out) !== 0) return;
+    vm = out.readPointer();
+    player = table(env, 21, "pointer", ["pointer"])(thiz);
+  };
+  function install() {
+    const unity = Process.findModuleByName("libunity.so");
+    if (!unity) return "libunity.so not loaded";
+    const at = {};
+    for (let i = 0; i < ROWS.length; i++) {
+      const row = unity.base.add(TABLE + i * 3 * Process.pointerSize);
+      let name = "";
+      try {
+        name = row.readPointer().readCString() || "";
+      } catch (_) {
+      }
+      if (name !== ROWS[i]) return `another libunity build (row ${i}: ${name || "?"})`;
+      at[name] = row.add(2 * Process.pointerSize).readPointer();
+    }
+    const render = Interceptor.attach(at.nativeRender, {
+      onEnter(args) {
+        if (none(player)) {
+          capture(args[0], args[1]);
+          if (!none(player)) setTimeout(() => render.detach(), 0);
+        }
+      }
+    });
+    const watch = (name, event) => keep.push(Interceptor.attach(at[name], { onEnter(args) {
+      capture(args[0], args[1]);
+      note(event(args));
+    } }));
+    watch("nativePause", () => "pause");
+    watch("nativeResume", () => "resume");
+    watch("nativeDone", () => "done");
+    watch("nativeLowMemory", () => "low memory");
+    watch("nativeFocusChanged", (args) => `focus ${args[2].toInt32() & 255 ? "gained" : "lost"}`);
+    watch("nativeRecreateGfxState", (args) => `surface ${args[3].isNull() ? "gone" : "attached"}${args[2].toInt32() ? ` (display ${args[2].toInt32()})` : ""}`);
+    keep.push(render);
+    return "";
+  }
+  function withJni(fn) {
+    if (none(vm) || none(player)) return null;
+    const out = Memory.alloc(Process.pointerSize);
+    if (table(vm, 6, "int", ["pointer", "int"])(out, 65542) !== 0 && table(vm, 7, "int", ["pointer", "pointer"])(out, NULL) !== 0) return null;
+    const env = out.readPointer();
+    const f = (index, ret, args) => table(env, index, ret, args);
+    const pending = f(228, "uint8", []), clear = f(17, "void", []);
+    const checked = (value, what) => {
+      if (pending()) {
+        clear();
+        throw Error(what);
+      }
+      return value;
+    };
+    const classOf = (o) => f(31, "pointer", ["pointer"])(o);
+    const field = (o, name, sig) => checked(f(94, "pointer", ["pointer", "pointer", "pointer"])(classOf(o), Memory.allocUtf8String(name), Memory.allocUtf8String(sig)), `no field ${name}`);
+    const values = (args) => {
+      const block = Memory.alloc(8 * Math.max(1, args.length));
+      args.forEach((a, i) => {
+        if (typeof a === "number") block.add(8 * i).writeS64(a);
+        else block.add(8 * i).writePointer(a);
+      });
+      return block;
+    };
+    const call2 = (index, ret) => (o, name, sig, args = []) => {
+      const cls2 = classOf(o);
+      const id = checked(f(33, "pointer", ["pointer", "pointer", "pointer"])(cls2, Memory.allocUtf8String(name), Memory.allocUtf8String(sig)), `no method ${name}${sig}`);
+      return checked(f(index, ret, ["pointer", "pointer", "pointer", "pointer"])(o, cls2, id, values(args)), `${name} threw`);
+    };
+    const j = {
+      player,
+      object: (o, name, sig) => f(95, "pointer", ["pointer", "pointer"])(o, field(o, name, sig)),
+      bool: (o, name) => f(96, "uint8", ["pointer", "pointer"])(o, field(o, name, "Z")) !== 0,
+      int: (o, name) => f(100, "int", ["pointer", "pointer"])(o, field(o, name, "I")),
+      setBool: (o, name, value) => f(105, "void", ["pointer", "pointer", "uint8"])(o, field(o, name, "Z"), value ? 1 : 0),
+      callObject: call2(66, "pointer"),
+      callBool: (o, name, sig, args = []) => call2(69, "uint8")(o, name, sig, args) !== 0,
+      callVoid: call2(93, "void")
+    };
+    if (f(19, "int", ["int"])(32) !== 0) return null;
+    try {
+      return fn(j);
+    } finally {
+      if (pending()) clear();
+      f(20, "pointer", ["pointer"])(NULL);
+    }
+  }
+  const THREAD = "Lcom/unity3d/player/UnityPlayer$e;";
+  function inspect(j) {
+    const thread = j.object(j.player, "a", THREAD), state = j.object(j.player, "f", "Lcom/unity3d/player/l;");
+    const activity = j.object(j.player, "p", "Landroid/content/Context;");
+    const view = j.object(j.player, "q", "Landroid/view/SurfaceView;");
+    let surface = NULL, surfaceValid = false;
+    if (!view.isNull()) {
+      const holder = j.callObject(view, "getHolder", "()Landroid/view/SurfaceHolder;");
+      if (!holder.isNull()) surface = j.callObject(holder, "getSurface", "()Landroid/view/Surface;");
+      surfaceValid = !surface.isNull() && j.callBool(surface, "isValid", "()Z");
+    }
+    const activityCall = (name) => {
+      try {
+        return j.callBool(activity, name, "()Z");
+      } catch (_) {
+        return null;
+      }
+    };
+    return {
+      thread,
+      surface,
+      loopRunning: j.bool(thread, "b"),
+      loopSurface: j.bool(thread, "c"),
+      loopFocus: j.int(thread, "d"),
+      unityRunning: j.bool(state, "d"),
+      unityPaused: j.bool(state, "e"),
+      unityFocus: j.bool(state, "c"),
+      windowFocus: activityCall("hasWindowFocus"),
+      finishing: activityCall("isFinishing"),
+      surfaceValid
+    };
+  }
+  const describe = (s) => `loop running ${s.loopRunning}, surface ${s.loopSurface}, focus state ${s.loopFocus}; unity running ${s.unityRunning}, paused ${s.unityPaused}, focus ${s.unityFocus}; window focus ${s.windowFocus}, surface valid ${s.surfaceValid}, finishing ${s.finishing}`;
+  return {
+    install,
+    // Called by the hang watch when no frame came for a while with the game
+    // on screen: says what Unity's loop waits for and sets back what Android's
+    // state says it should have. Never while the activity is paused.
+    revive() {
+      if (none(player)) return "unity player: no reference (no frame was drawn since the start)";
+      try {
+        return withJni((j) => {
+          const s = inspect(j), done = [];
+          const unityRunning = () => j.bool(j.object(j.player, "f", "Lcom/unity3d/player/l;"), "d");
+          for (const step of unityLoopPlan(s)) {
+            if (step === "surface") {
+              j.callBool(j.player, "b", "(ILandroid/view/Surface;)Z", [0, s.surface]);
+              done.push("surface attached again");
+            } else if (step === "focus") {
+              j.callVoid(j.player, "windowFocusChanged", "(Z)V", [1]);
+              done.push("window focus sent again");
+            } else if (step === "resume") {
+              if (!unityRunning()) {
+                j.callVoid(j.player, "f", "()V");
+                done.push("resume sent again");
+              }
+            } else if (step === "loop") {
+              j.callVoid(s.thread, "b", "()V");
+              done.push("loop restarted");
+            }
+          }
+          return `unity player: ${describe(s)}; ${done.length ? done.join(", ") : "nothing to set back"}; recent: ${recent.join(", ") || "-"}`;
+        }) ?? "unity player: no JNI environment";
+      } catch (error) {
+        return `unity player: ${error}`;
+      }
+    },
+    // The test channel's experiments "loopStallSurface" and "loopStallResume":
+    // 45 s after the first frame one of the loop's flags is cleared, as on
+    // the Xiaomi, so the hang watch has a hang to set right.
+    testStall(kind) {
+      const timer = setInterval(() => {
+        if (none(player)) return;
+        clearInterval(timer);
+        setTimeout(() => {
+          try {
+            withJni((j) => j.setBool(j.object(j.player, "a", THREAD), kind === "Surface" ? "c" : "b", false));
+            log(`unity player: experiment cleared the loop's ${kind === "Surface" ? "surface" : "running"} flag`);
+          } catch (error) {
+            log(`unity player: experiment failed: ${error}`);
+          }
+        }, 45e3);
+      }, 1e3);
+    }
+  };
+})();
 Il2Cpp.perform(() => {
   const img = Il2Cpp.domain.assembly("Assembly-CSharp").image;
   const resourceTrace = [], resourceTraceStarted = Date.now();
@@ -6120,6 +6327,11 @@ void onLeave (GumInvocationContext * ic) {
         log(`main loop stalled ${gap}ms` + (loads || tasks ? ` (asset loads ${loads}, tasks ${tasks})` : ""));
     }, 1e3);
   });
+  section("unity player loop", () => {
+    const why = unityPlayerLoop.install();
+    if (why) throw Error(why);
+    for (const kind of ["Surface", "Resume"]) if (experiment(`loopStall${kind}`)) unityPlayerLoop.testStall(kind);
+  });
   section("resume watch", () => {
     const read = (path) => {
       try {
@@ -6168,12 +6380,13 @@ void onLeave (GumInvocationContext * ic) {
     };
     const framesFile = `${persistentPath()}/tesl-reborn-frames.json`;
     let framesWritten = 0;
-    let hung = false, seenAdj = "";
+    let hung = false, seenAdj = "", revived = false, onScreenAt = Date.now();
     setInterval(() => {
       try {
         const adj = read("/proc/self/oom_score_adj"), lastFrame = globalThis.__teslLastFrameAt;
         if (adj !== seenAdj) {
           seenAdj = adj;
+          onScreenAt = Date.now();
           if (hung || adj === "0") log(`hang watch: oom_score_adj ${adj}`);
         }
         if (!lastFrame) return;
@@ -6182,6 +6395,14 @@ void onLeave (GumInvocationContext * ic) {
           framesWritten = lastFrame;
           File.writeAllText(framesFile + ".tmp", JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
           if (!atomicRename(framesFile + ".tmp", framesFile)) File.writeAllText(framesFile, JSON.stringify({ pid: Process.id, lastFrameAt: lastFrame }));
+        }
+        if (revived && gap < 3e3) {
+          revived = false;
+          log("hang watch: frames came back after the revive");
+        }
+        if (adj === "0" && gap > 4e3 && Date.now() - onScreenAt > 4e3 && !revived) {
+          revived = true;
+          log(`hang watch: no frame for ${Math.round(gap / 1e3)} s on screen; ${unityPlayerLoop.revive()}`);
         }
         if (hung && gap < 5e3) {
           hung = false;

@@ -11,7 +11,15 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
-## v2.317 — Test and Stable
+## v2.318 — Test
+
+- The picture no longer stays frozen while the music plays on (seen on a
+  Xiaomi with Android 14, after minimizing the game and once without it):
+  when no frame comes for a few seconds with the game on screen, the game
+  gives Unity back the screen surface or the go-ahead it missed and goes
+  on drawing, instead of waiting for a restart.
+
+## v2.317 — Stable
 
 - Deck win/loss labels no longer fill the log with errors after the deck
   list is closed (the labels themselves looked fine).
