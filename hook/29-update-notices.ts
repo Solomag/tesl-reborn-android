@@ -1,6 +1,6 @@
   // BEGIN android-ui: update-notices
   // The APK level these patches expect (ApkLevel.LEVEL in the setup code).
-  const APK_LEVEL = 2;
+  const APK_LEVEL = 3;
   // What players see as the version: the APK level, then the patch
   // (v2.287). Internally the updater compares only the revision.
   const patchVersion = (revision: number) => `v${APK_LEVEL}.${revision}`;

@@ -11,15 +11,22 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
-## v2.318 — Test
+## v3.319 — Test — new APK
+
+- **New APK:** the frozen-picture fix of v2.318 now also works from the
+  game's own Java code, so the picture comes back within about two
+  seconds. The game asks to build *APK only* in the Builder and install it
+  over the old one (your game data stays).
+- With the new APK, updates from the launcher also fall back to the
+  jsDelivr mirror when GitHub can't be reached (see v2.316).
+
+## v2.318
 
 - The picture no longer stays frozen while the music plays on (seen on a
   Xiaomi with Android 14, after minimizing the game and once without it):
   when no frame comes for a few seconds with the game on screen, the game
   gives Unity back the screen surface or the go-ahead it missed and goes
   on drawing, instead of waiting for a restart.
-- With the next **new APK** the same fix works from the game's own Java
-  code: the picture comes back within about two seconds.
 
 ## v2.317 — Stable
 

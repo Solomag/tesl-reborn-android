@@ -10,7 +10,7 @@ package org.teslreborn.setup;
  *    (teslreborn://language?apply=1&restart=1) to apply a downloaded patch.
  */
 final class ApkLevel {
-  static final int LEVEL = 2;
+  static final int LEVEL = 3;
 
   private ApkLevel() {}
 

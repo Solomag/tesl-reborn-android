@@ -12833,7 +12833,7 @@ ${stats.wins}/${stats.losses} (${winRate(stats.wins, stats.losses)}%)`;
       }
     } });
   });
-  const APK_LEVEL = 2;
+  const APK_LEVEL = 3;
   const patchVersion = (revision) => `v${APK_LEVEL}.${revision}`;
   const PATCH_NOTES = {
     en: "New: the chat smiley opens an emoji panel in place of the keyboard (SEND, DEL, ABC to go back); keyboard emojis go out as Reborn emojis that PC players see too.",
