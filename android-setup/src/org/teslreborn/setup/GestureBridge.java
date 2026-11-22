@@ -48,6 +48,7 @@ public final class GestureBridge {
    * older patch) nothing changes.
    */
   public static void onPause(Activity activity) {
+    UnityLoopWatch.stop();
     pausedAt = System.currentTimeMillis();
     returnCheck++;
     try {
@@ -119,6 +120,7 @@ public final class GestureBridge {
       if (restart(activity)) return;
     }
     watchReturn(activity);
+    UnityLoopWatch.start(activity);
     fillDisplayCutout(activity);
     stickyImmersive(activity);
     requestRefreshRate(activity);

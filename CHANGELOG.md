@@ -18,6 +18,8 @@ goes up when a new APK is needed), the second the patch. A Builder is
   when no frame comes for a few seconds with the game on screen, the game
   gives Unity back the screen surface or the go-ahead it missed and goes
   on drawing, instead of waiting for a restart.
+- With the next **new APK** the same fix works from the game's own Java
+  code: the picture comes back within about two seconds.
 
 ## v2.317 — Stable
 
