@@ -116,11 +116,13 @@
   // On for everyone after report 108; {"safeInvoke": false} in the
   // experiments file turns it off on a phone.
   try { experiment("safeInvoke"); if (experiments.safeInvoke !== false) installSafeInvoke(); } catch (error) { log(`safe invoke unavailable: ${error}`); }
-  // Installed first thing (see hook/06-unity-allocator.ts, report 142).
+  // Installed when the script starts (see hook/06-unity-allocator.ts,
+  // report 142 and the Samsung A25 of 25.11.2026).
   section("unity allocator: more than five 4 GB windows", () => {
     if (experiment("allocatorOff")) throw Error("off (experiment allocatorOff)");
-    const why = unityAllocatorWindows.install();
+    const why = unityAllocatorEarly.install();
     if (why) throw Error(why);
+    log(`unity allocator: installed ${unityAllocatorEarly.when}`);
     if (experiment("allocatorSideTable")) unityAllocatorWindows.testSideTable();
   });
 

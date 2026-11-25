@@ -55,7 +55,7 @@ assert.deepEqual(JSON.parse(disk.get('/private/tesl-login.json')),{username:'Bob
 disk.clear();disk.set('/sdcard/tesl-login.json',JSON.stringify({username:'Bob',password:'pw'}));fail=true;
 assert.equal(store.readSavedLogin().username,'Bob');assert(disk.has('/sdcard/tesl-login.json'));fail=false;
 const delegate={Il2Cpp:{String:function(p){this.handle=p},Object:function(p){this.handle=p}}};vm.createContext(delegate);
-vm.runInContext(extract('function invokeDelegateInt(', '\nfunction nested(')+extract('function invokeDelegatePtr(', '\nIl2Cpp.perform('),delegate);
+vm.runInContext(extract('function invokeDelegateInt(', '\nfunction nested(')+extract('function invokeDelegatePtr(', '\n// Report 142 (MEIZU 21'),delegate);
 let args=[];let boxedValue;
 const enumType={isEnum:true,alloc:()=>({field:()=>({set value(v){boxedValue=v}}),unbox:()=>({enumValue:boxedValue})})};
 delegate.invokeDelegateInt({method:()=>({parameters:[{type:{class:enumType}}],invoke:v=>args.push(v)})},8);assert.equal(args[0].enumValue,8);

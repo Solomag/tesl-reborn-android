@@ -160,3 +160,50 @@ int page_contains (void * self, void * pointer) {
     testSideTable() { if (stats) { stats.add(8).writeS32(0); log("unity allocator: new windows go to the side table (experiment)"); } },
   };
 })();
+
+// A Samsung A25 (Android 16, 25.11.2026) had more than five windows ~0.1 s
+// after the patch attached, before the section in hook/13 replaced the
+// functions: Unity had already used its byte counter as a tree root, and
+// the game hung on the "Legends" screen on almost every start. So the
+// functions are replaced as soon as this script runs when libunity is
+// already loaded, or else right after it is loaded, before Unity allocates.
+// The section in hook/13 reports what happened here.
+const unityAllocatorEarly = (() => {
+  let result: string | null = null, when = "";
+  let off = false;
+  const listeners: any[] = [];
+  try { off = JSON.parse(String((File as any).readAllText("/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files/tesl-reborn-experiments.json"))).allocatorOff === true; } catch (_) {}
+  const attempt = (moment: string) => {
+    if (result !== null) return;
+    try { result = unityAllocatorWindows.install(); } catch (error) { result = String(error); }
+    // The exact moment, to compare with Unity's "Using memoryadresses from
+    // more that 16GB" in logcat (the section's own line is written later).
+    when = `${moment} (${new Date().toISOString()})`;
+    // Whichever way it was installed, the loader hooks are no longer needed.
+    Script.nextTick(() => { for (const listener of listeners.splice(0)) { try { listener.detach(); } catch (_) {} } });
+  };
+  if (!off) {
+    if (Process.findModuleByName("libunity.so")) attempt("when the patch started");
+    else {
+      try {
+        const loader = Process.getModuleByName("libdl.so");
+        for (const name of ["android_dlopen_ext", "dlopen"]) {
+          const at = loader.findExportByName(name);
+          if (!at) continue;
+          listeners.push(Interceptor.attach(at, {
+            onEnter(args) { this.unity = String(args[0].readCString() ?? "").endsWith("libunity.so"); },
+            onLeave() {
+              if (!this.unity || !Process.findModuleByName("libunity.so")) return;
+              attempt("right after libunity loaded");
+            },
+          }));
+        }
+      } catch (_) {}
+    }
+  }
+  return {
+    // "" when installed; installs now if it has not happened yet.
+    install(): string { if (result === null) attempt("with the other hooks"); return result!; },
+    get when() { return when; },
+  };
+})();
