@@ -5605,13 +5605,16 @@ void platform_leave (GumInvocationContext * ic) { if (depth > 0) gum_invocation_
       "reborn.titles.founder.description": "TESL Reborn geli\u015Ftiricilerine verilmi\u015Ftir."
     }
   };
+  let persistentPathCache = "";
   function persistentPath() {
+    if (persistentPathCache) return persistentPathCache;
     try {
       const path = ucls("UnityEngine.Application").method("get_persistentDataPath").invoke();
-      return String(path?.content ?? "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files");
+      const text = path?.content;
+      if (text) return persistentPathCache = String(text);
     } catch (e) {
-      return "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files";
     }
+    return "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files";
   }
   let experiments = null;
   function experiment(name) {

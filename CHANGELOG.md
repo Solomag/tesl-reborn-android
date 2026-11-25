@@ -11,7 +11,13 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
-## v3.319 — Test — new APK
+## v3.320 — Test
+
+- The game no longer hangs on the "Legends" screen on every start after
+  the first (seen on a Samsung Galaxy A25 with Android 16): the patch asks
+  Unity for the game's folder once instead of again while Unity loads.
+
+## v3.319 — new APK
 
 - **New APK:** the frozen-picture fix of v2.318 now also works from the
   game's own Java code, so the picture comes back within about two

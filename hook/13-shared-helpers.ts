@@ -87,11 +87,18 @@
   // ---------------------------------------------------------------------
 
   // The game's own data directory (/sdcard/Android/data/<package>/files).
+  // Asked once: a Samsung A25 (Android 16, 25.11.2026) hung on every start
+  // after the first in the second call, the first one through safe invoke,
+  // while Unity loaded. The directory does not change while the game runs.
+  let persistentPathCache = "";
   function persistentPath(): string {
+    if (persistentPathCache) return persistentPathCache;
     try {
       const path = (ucls("UnityEngine.Application").method("get_persistentDataPath") as any).invoke();
-      return String(path?.content ?? "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files");
-    } catch (e) { return "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files"; }
+      const text = path?.content;
+      if (text) return persistentPathCache = String(text);
+    } catch (e) {}
+    return "/sdcard/Android/data/com.bethsoft.theelderscrollslegends/files";
   }
 
   // Risky changes run only where tesl-reborn-experiments.json switches them on

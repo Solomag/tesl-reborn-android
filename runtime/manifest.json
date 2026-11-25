@@ -4,10 +4,10 @@
   "loaderApi": 1,
   "gameVersionCode": 11009,
   "abi": "arm64-v8a",
-  "revision": 319,
-  "version": "android-319-apk-loop-watch",
-  "bytes": 627690,
-  "sha256": "38c72206371fc7e5395c4b79a33371c97c1203da0e8234ab77874b3dbda21e30",
+  "revision": 320,
+  "version": "android-320-data-folder-once",
+  "bytes": 627766,
+  "sha256": "58439610a71f29deae293328eaad5c6e84c5c70b64ff5e20ab7b9caee2f2a513",
   "resources": [
     {
       "name": "people.json",
@@ -20,5 +20,5 @@
       "bytes": 748977
     }
   ],
-  "sourceSha256": "88470933a8f68ae977e7f4681e4690c5a0f62a0ecbe7a6c26eb44ea65033949a"
+  "sourceSha256": "2dac0d2b4392453b250f67ffe8d218fd371a9ce9b287f5e27a80f6c11ce58cd6"
 }
