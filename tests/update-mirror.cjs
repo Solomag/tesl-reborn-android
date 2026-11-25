@@ -7,12 +7,12 @@ function load() {
   vm.runInContext(transformSync(require('./source.cjs')('update-mirror') + '\nthis.mirrorUrls = mirrorUrls; this.withMirrors = withMirrors;', { loader: 'ts' }).code, c);
   return c;
 }
-const feed = 'https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json';
+const feed = 'https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json';
 let c = load();
 assert.deepEqual([...c.mirrorUrls(feed)], [
-  'https://cdn.jsdelivr.net/gh/ssorgatem/tesl-reborn-android@android-ui-and-update-loader/updates/test/manifest.json',
-  'https://fastly.jsdelivr.net/gh/ssorgatem/tesl-reborn-android@android-ui-and-update-loader/updates/test/manifest.json',
-  'https://gcore.jsdelivr.net/gh/ssorgatem/tesl-reborn-android@android-ui-and-update-loader/updates/test/manifest.json',
+  'https://cdn.jsdelivr.net/gh/Solomag/tesl-reborn-android@android-ui-and-update-loader/updates/test/manifest.json',
+  'https://fastly.jsdelivr.net/gh/Solomag/tesl-reborn-android@android-ui-and-update-loader/updates/test/manifest.json',
+  'https://gcore.jsdelivr.net/gh/Solomag/tesl-reborn-android@android-ui-and-update-loader/updates/test/manifest.json',
 ]);
 assert.equal(c.mirrorUrls('https://raw.githubusercontent.com/Solomag/RDT-Android/main/release/rdt-12.js')[0], 'https://cdn.jsdelivr.net/gh/Solomag/RDT-Android@main/release/rdt-12.js');
 for (const url of ['https://example.test/manifest.json', 'http://raw.githubusercontent.com/a/b/c/d.json', 'https://raw.githubusercontent.com/a/b/c/../d.json',

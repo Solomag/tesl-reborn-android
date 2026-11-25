@@ -16,7 +16,7 @@ game you already have; the project does not distribute game files.
 ## 1. Get the Builder
 
 Download it from the releases of
-[ssorgatem/tesl-reborn-android](https://github.com/ssorgatem/tesl-reborn-android/releases):
+[Solomag/tesl-reborn-android](https://github.com/Solomag/tesl-reborn-android/releases):
 
 | Release | File | For |
 | --- | --- | --- |

@@ -7,7 +7,10 @@ You build the Android game yourself with the **Builder** from copies of the game
 you already have: the PC game and the original Android XAPK. This repository
 contains no game files and none are distributed.
 
-**→ [Installation guide](docs/install.md)** · [What's new](CHANGELOG.md) · [Troubleshooting and bug reports](docs/troubleshooting.md) · [Downloads (Builder)](https://github.com/ssorgatem/tesl-reborn-android/releases)
+The project was started by [ssorgatem](https://github.com/ssorgatem). Thank
+you, ssorgatem, for getting it going and for the inspiration to carry it on.
+
+**→ [Installation guide](docs/install.md)** · [What's new](CHANGELOG.md) · [Troubleshooting and bug reports](docs/troubleshooting.md) · [Downloads (Builder)](https://github.com/Solomag/tesl-reborn-android/releases)
 
 ## Features
 
@@ -185,7 +188,7 @@ adb push ./creds/tesl-login.json \\
   default-method dispatch crash.
 
 Selected maintenance fixes in this branch adapt work from Frederlk's
-[PR #1](https://github.com/ssorgatem/tesl-reborn-android/pull/1): authentication
+[PR #1](https://github.com/Solomag/tesl-reborn-android/pull/1): authentication
 result handling, log redaction, stale build checks and interrupted payload
 recovery. The Android UI, update loader and portable builder use their existing
 build pipeline; the PR's compiled hook and language index table are not copied.

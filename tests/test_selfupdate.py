@@ -16,7 +16,7 @@ class SelfUpdateTest(unittest.TestCase):
     def release(self, data, build=12, **asset):
         entry = dict(name=selfupdate.asset_name(), label=f"{selfupdate.asset_name()} · build {build}",
                      state="uploaded", size=len(data), digest="sha256:" + hashlib.sha256(data).hexdigest(),
-                     browser_download_url="https://github.com/ssorgatem/tesl-reborn-android/releases/download/builder-test/"
+                     browser_download_url="https://github.com/Solomag/tesl-reborn-android/releases/download/builder-test/"
                      + selfupdate.asset_name())
         entry.update(asset)
         other = dict(name="TESL-Reborn-Builder.other", label="build 99", state="uploaded", size=1,
@@ -30,7 +30,7 @@ class SelfUpdateTest(unittest.TestCase):
         offer = selfupdate.check({"channel": "test", "build": 7}, fetch)
         self.assertEqual(offer["build"], 12, "the build comes from this platform's asset label")
         self.assertEqual(offer["sha256"], hashlib.sha256(data).hexdigest(), "GitHub's own digest")
-        self.assertEqual(calls[0], ("https://api.github.com/repos/ssorgatem/tesl-reborn-android/releases/tags/builder-test",
+        self.assertEqual(calls[0], ("https://api.github.com/repos/Solomag/tesl-reborn-android/releases/tags/builder-test",
                                     "application/vnd.github+json"))
         self.assertIsNone(selfupdate.check({"channel": "stable", "build": 12}, fetch), "same build is current")
         self.assertTrue(calls[-1][0].endswith("/releases/tags/builder-stable"))
@@ -40,6 +40,11 @@ class SelfUpdateTest(unittest.TestCase):
         self.assertIsNone(selfupdate.check({"channel": "test", "build": 0}, lambda *a, **k: missing))
         starting = self.release(b"x", state="starter")
         self.assertIsNone(selfupdate.check({"channel": "test", "build": 0}, lambda *a, **k: starting))
+
+    def test_a_download_link_under_the_old_owner_is_accepted(self):
+        old = "https://github.com/ssorgatem/tesl-reborn-android/releases/download/builder-test/" + selfupdate.asset_name()
+        body = self.release(b"x", browser_download_url=old)
+        self.assertEqual(selfupdate.check({"channel": "test", "build": 0}, lambda *a, **k: body)["build"], 12)
 
     def test_check_rejects_a_bad_asset(self):
         for bad in [dict(label="no number"), dict(digest="md5:abc"), dict(size=0),

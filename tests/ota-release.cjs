@@ -23,6 +23,8 @@ for(const channel of fs.readdirSync('updates',{withFileTypes:true}).filter(e=>e.
  const m=JSON.parse(raw);const body=fs.readFileSync(`updates/payloads/${m.sha256}.js`);
  assert.equal(sha(body),m.sha256,channel);assert.equal(body.length,m.bytes,channel);
  assert(branches[channel],`unknown channel ${channel}`);
- assert.equal(m.url,`https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/${branches[channel]}/updates/payloads/${m.sha256}.js`,channel);
+ // Patches published before the repository moved (26.11.2026) name ssorgatem;
+ // GitHub serves both owners.
+ assert(['Solomag','ssorgatem'].some(owner=>m.url===`https://raw.githubusercontent.com/${owner}/tesl-reborn-android/${branches[channel]}/updates/payloads/${m.sha256}.js`),channel);
 }
 console.log('PASS: every channel manifest points at its committed payload on its own branch');

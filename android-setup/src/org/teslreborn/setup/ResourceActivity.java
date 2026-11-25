@@ -372,12 +372,20 @@ public class ResourceActivity extends Activity {
   /**
    * Stable (main of the main repository) or Test (its test branch). The phone
    * keeps the feed it was first given, so this is the only way to move it.
-   * The feed of the old Solomag fork counts as Test (the OTA migrates it).
+   * The repository moved from ssorgatem to Solomag (26.11.2026); GitHub still
+   * serves the old addresses, so a feed or a setup from before the move names
+   * the same channel (sameFeed).
    */
   static final String STABLE_FEED =
-      "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/main/updates/stable/manifest.json";
+      "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/main/updates/stable/manifest.json";
   static final String TEST_FEED =
-      "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+      "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+
+  static boolean sameFeed(String a, String b) {
+    String old = "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/";
+    String now = "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/";
+    return a != null && b != null && a.replace(old, now).equals(b.replace(old, now));
+  }
 
   private void addChannelChoice(LinearLayout box, JSONObject config) {
     // A setup from a Builder without hookChannels still offers both channels.
@@ -398,8 +406,8 @@ public class ResourceActivity extends Activity {
       choice.setPadding(0, 0, UiStyle.dp(this, 24), 0);
       group.addView(choice);
     }
-    if (current.equals(stable)) stableChoice.setChecked(true);
-    else if (current.equals(test) || current.contains("/Solomag/tesl-reborn-android/")) testChoice.setChecked(true);
+    if (sameFeed(current, stable)) stableChoice.setChecked(true);
+    else if (sameFeed(current, test)) testChoice.setChecked(true);
     group.setOnCheckedChangeListener(
         (g, id) -> {
           try {

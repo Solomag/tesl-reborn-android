@@ -1,6 +1,6 @@
 # Каналы обновлений: stable и test
 
-Оба канала живут в основном репозитории `ssorgatem/tesl-reborn-android`:
+Оба канала живут в основном репозитории `Solomag/tesl-reborn-android`:
 
 | Канал | Ветка | Манифест |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ Game Data → Advanced → «Канал обновлений» (Stable / Test); 
 
 ```bash
 python tools/publish_hook.py --revision N --version android-N-… --channel test \
-  --base-url https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates
+  --base-url https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates
 ```
 
 Коммит и push в `android-ui-and-update-loader` основного репозитория.
@@ -42,7 +42,7 @@ python tools/publish_hook.py --revision N --version android-N-… --channel test
 ```bash
 python tools/publish_hook.py --hook updates/payloads/<sha256>.js --revision N \
   --version android-N-… --channel stable \
-  --base-url https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/main/updates
+  --base-url https://raw.githubusercontent.com/Solomag/tesl-reborn-android/main/updates
 git add updates/   # манифест и payload'ы, удалённые publish_hook.py
 git commit -m "Promote patch N to stable"
 git push upstream HEAD:android-ui-and-update-loader
@@ -52,13 +52,18 @@ git push upstream HEAD:main
 Ревизия stable не может быть ниже уже установленной у телефона: при переходе с
 Test на Stable телефон остаётся на своей ревизии, пока stable её не догонит.
 
-## Переезд с форка
+## Переезды репозитория
 
-Тестовый канал раньше был в форке `Solomag/tesl-reborn-android`. У уже
-установленных телефонов записан его адрес. OTA 85 (секция `channel-migration`
-хука) один раз переписывает этот адрес на тестовую ветку основного
-репозитория; в логе — `updater: channel migration migrated …`. OTA 85
-публикуется и в форк, после этого форк для обновлений больше не нужен.
+Тестовый канал сначала был в форке `Solomag/tesl-reborn-android`; OTA 85
+перевела телефоны на основной репозиторий `ssorgatem/tesl-reborn-android`.
+26.11.2026 ssorgatem передал репозиторий, и он снова `Solomag/tesl-reborn-android`.
+GitHub по-прежнему отдаёт файлы и по старым адресам `ssorgatem/…` (raw и
+jsDelivr), так что уже установленные телефоны не ломаются.
+Секция `channel-migration` хука один раз переписывает тестовый адрес
+`ssorgatem/…` на `Solomag/…` (в логе `updater: channel migration migrated …`);
+stable-адрес не трогает: APK до переезда отмечал бы его в настройках как Test.
+Builder до переезда сам не обновляется (ждёт ссылки `ssorgatem/…`, а GitHub
+теперь отдаёт `Solomag/…`) — его скачивают заново один раз.
 
 ## Обновление Builder
 

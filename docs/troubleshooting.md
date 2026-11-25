@@ -8,7 +8,7 @@ Every report needs the diagnostic report, otherwise there is little to go on.
    does not start, the same button is on the game data screen.)
 2. Share the ZIP together with what happened, when (time), and a screenshot if
    something looks wrong.
-3. Send it as a [GitHub issue](https://github.com/ssorgatem/tesl-reborn-android/issues)
+3. Send it as a [GitHub issue](https://github.com/Solomag/tesl-reborn-android/issues)
    (attach the ZIP).
 
 The report contains the game's logs and settings. Passwords and login tokens are

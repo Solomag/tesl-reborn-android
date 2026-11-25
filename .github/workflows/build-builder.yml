@@ -174,7 +174,7 @@ jobs:
     needs: [windows, linux]
     # The Windows Builder is published even when the Linux job failed (its
     # Ubuntu packages could not be installed), and the other way round.
-    if: always() && (needs.windows.result == 'success' || needs.linux.result == 'success') && github.repository == 'ssorgatem/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
+    if: always() && (needs.windows.result == 'success' || needs.linux.result == 'success') && github.repository == 'Solomag/tesl-reborn-android' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-ui-and-update-loader')
     runs-on: ubuntu-22.04
     permissions:
       contents: write

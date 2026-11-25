@@ -13,7 +13,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-REPO = 'ssorgatem/tesl-reborn-android'
+REPO = 'Solomag/tesl-reborn-android'
 ROOT = Path(__file__).resolve().parents[1]
 
 

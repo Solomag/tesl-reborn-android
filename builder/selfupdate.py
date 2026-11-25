@@ -18,7 +18,11 @@ import subprocess
 import sys
 import urllib.request
 
-RELEASE = "https://api.github.com/repos/ssorgatem/tesl-reborn-android/releases/tags/builder-{channel}"
+RELEASE = "https://api.github.com/repos/Solomag/tesl-reborn-android/releases/tags/builder-{channel}"
+# The repository moved from ssorgatem to Solomag (26.11.2026); GitHub may
+# still name the old owner in a download link.
+DOWNLOADS = ("https://github.com/Solomag/tesl-reborn-android/releases/download/",
+             "https://github.com/ssorgatem/tesl-reborn-android/releases/download/")
 LIMIT = 512 * 1024 * 1024
 
 
@@ -116,7 +120,7 @@ def check(version, fetch=_get):
         or not digest
         or not isinstance(size, int)
         or not 0 < size <= LIMIT
-        or not url.startswith("https://github.com/ssorgatem/tesl-reborn-android/releases/download/")
+        or not url.startswith(DOWNLOADS)
     ):
         raise ValueError("Invalid Builder release asset")
     build = int(label.group(1))

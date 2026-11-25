@@ -52,7 +52,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"  # Invoke-WebRequest is much faster without the progress bar.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$Repository = "ssorgatem/tesl-reborn-android"
+$Repository = "Solomag/tesl-reborn-android"
 $TaskName = "TESL Reborn fresh APK"
 
 if ($Unregister) {

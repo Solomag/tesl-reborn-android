@@ -10,7 +10,7 @@ import os
 import re
 from pathlib import Path
 
-STABLE_REPOSITORY = "ssorgatem/tesl-reborn-android"
+STABLE_REPOSITORY = "Solomag/tesl-reborn-android"
 STABLE_REF = "refs/heads/main"
 
 

@@ -1,6 +1,6 @@
 # Update channels: stable and test
 
-Both channels live in the main repository, `ssorgatem/tesl-reborn-android`:
+Both channels live in the main repository, `Solomag/tesl-reborn-android`:
 
 | Channel | Branch | Manifest |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ start.
 ```bash
 npm run build && npm test
 python tools/publish_hook.py --revision N --version android-N-… --channel test \
-  --base-url https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates
+  --base-url https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates
 ```
 
 Bump `revision` and `version` in `runtime/manifest.json` before `npm run build`.
@@ -73,7 +73,7 @@ promotion is a fast-forward of `main` to the tested commit, without merges:
 ```bash
 python tools/publish_hook.py --hook updates/payloads/<sha256>.js --revision N \
   --version android-N-… --channel stable \
-  --base-url https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/main/updates
+  --base-url https://raw.githubusercontent.com/Solomag/tesl-reborn-android/main/updates
 git add updates/   # the manifest, and payloads publish_hook.py removed
 git commit -m "Promote patch N to stable"
 git push upstream HEAD:android-ui-and-update-loader
@@ -82,6 +82,20 @@ git push upstream HEAD:main
 
 A phone never goes back to a lower revision: moving from Test to Stable, it
 keeps its revision until stable catches up.
+
+## Repository moves
+
+The test channel first lived in the fork `Solomag/tesl-reborn-android`;
+patch 85 moved phones to the main repository `ssorgatem/tesl-reborn-android`.
+On 26.11.2026 ssorgatem handed the repository over and it is
+`Solomag/tesl-reborn-android` again. GitHub still serves the old `ssorgatem/…`
+addresses (raw and jsDelivr), so installed phones keep working. The hook's
+`channel-migration` section rewrites the `ssorgatem/…` test feed to
+`Solomag/…` once (`updater: channel migration migrated …` in the log); the
+stable feed is left alone, since an APK from before the move would show it as
+Test in its settings. A Builder from before the move cannot update itself (it
+expects `ssorgatem/…` download links and GitHub now gives `Solomag/…`): it is
+downloaded again once.
 
 ## Builder updates
 

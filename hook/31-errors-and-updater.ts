@@ -37,13 +37,16 @@
   // END android-ui: unity-error-log
 
   // BEGIN android-ui: channel-migration
-  // The test channel moved from the Solomag fork to a branch of the main
-  // repository. Phones keep the feed the launcher wrote on first start
-  // (UpdateConfig only fills an empty one), so a new APK cannot move them;
-  // this OTA, still published to the fork, rewrites the old fork feed once.
-  // Applies from the next start; the current session finishes on the old one.
-  const LEGACY_TEST_FEED = "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
-  const MAIN_TEST_FEED = "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+  // Phones keep the feed the launcher wrote on first start (UpdateConfig only
+  // fills an empty one), so a new APK cannot move them; this rewrites an old
+  // feed once, from the next start. The test channel moved from the Solomag
+  // fork to ssorgatem's repository (patch 85), and on 26.11.2026 ssorgatem
+  // handed that repository over: it is Solomag/tesl-reborn-android again.
+  // GitHub still serves the ssorgatem addresses, so this is not urgent. The
+  // stable feed stays: an APK from before the move compares the feed with
+  // its own (ssorgatem) list and would show a Solomag stable feed as Test.
+  const LEGACY_TEST_FEED = "https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
+  const MAIN_TEST_FEED = "https://raw.githubusercontent.com/Solomag/tesl-reborn-android/android-ui-and-update-loader/updates/test/manifest.json";
   function migrateUpdateChannel(io) {
     let config;
     try { config = JSON.parse(io.read() || "null"); } catch (_) { return "unreadable"; }
@@ -60,7 +63,7 @@
         read: () => readTextFile(path),
         write: text => writeTextFile(path + ".part", text) && atomicRename(path + ".part", path)
       });
-      if (result !== "unchanged") log(`updater: channel migration ${result}${result === "migrated" ? " to the main repository test branch" : ""}`);
+      if (result !== "unchanged") log(`updater: channel migration ${result}${result === "migrated" ? " to Solomag/tesl-reborn-android" : ""}`);
     } catch (error) { log(`updater: channel migration failed: ${error}`); }
     const uriClass = ucls("System.Uri");
     log(`HTTP URI assembly: ${uriClass.image.name}`);

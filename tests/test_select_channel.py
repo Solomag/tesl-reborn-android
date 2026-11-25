@@ -11,11 +11,11 @@ class SelectChannelTest(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("select_channel", ROOT / "tools/select_channel.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        self.assertEqual(module.channel_for("ssorgatem/tesl-reborn-android", "refs/heads/main"), "stable")
+        self.assertEqual(module.channel_for("Solomag/tesl-reborn-android", "refs/heads/main"), "stable")
         for repository, ref in [
-            ("ssorgatem/tesl-reborn-android", "refs/heads/android-ui-and-update-loader"),
-            ("ssorgatem/tesl-reborn-android", "refs/pull/3/merge"),
-            ("Solomag/tesl-reborn-android", "refs/heads/main"),
+            ("Solomag/tesl-reborn-android", "refs/heads/android-ui-and-update-loader"),
+            ("Solomag/tesl-reborn-android", "refs/pull/3/merge"),
+            ("someone/tesl-reborn-android", "refs/heads/main"),
         ]:
             self.assertEqual(module.channel_for(repository, ref), "test")
         channels = json.loads((ROOT / "runtime/channel.json").read_text(encoding="utf-8"))
@@ -28,7 +28,7 @@ class SelectChannelTest(unittest.TestCase):
             self.assertEqual(json.loads(committed.stdout)["feedUrl"], channels["channels"]["test"],
                              "builds outside CI default to test")
         for url in channels["channels"].values():
-            self.assertTrue(url.startswith("https://raw.githubusercontent.com/ssorgatem/tesl-reborn-android/"))
+            self.assertTrue(url.startswith("https://raw.githubusercontent.com/Solomag/tesl-reborn-android/"))
         # The Game Data fallback for setups without hookChannels must not drift.
         java = (ROOT / "android-setup/src/org/teslreborn/setup/ResourceActivity.java").read_text(encoding="utf-8")
         self.assertIn('"' + channels["channels"]["stable"] + '"', java)
