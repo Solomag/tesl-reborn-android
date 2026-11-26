@@ -11,7 +11,7 @@ offers its update when started.
 goes up when a new APK is needed), the second the patch. A Builder is
 *Builder 2.230*: the level of the APKs it makes, then its build.
 
-## v3.321 — Test
+## v3.321 — Stable
 
 - Another try at the "Legends" screen hang on the Samsung Galaxy A25: the
   game's memory fix (the one from v2.315) is now put in place the moment
@@ -27,7 +27,7 @@ goes up when a new APK is needed), the second the patch. A Builder is
   more: download it once more from the
   [releases](https://github.com/Solomag/tesl-reborn-android/releases).
 
-## v3.320 — Test
+## v3.320
 
 - The game no longer hangs on the "Legends" screen on every start after
   the first (seen on a Samsung Galaxy A25 with Android 16): the patch asks

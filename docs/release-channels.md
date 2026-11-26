@@ -76,8 +76,8 @@ python tools/publish_hook.py --hook updates/payloads/<sha256>.js --revision N \
   --base-url https://raw.githubusercontent.com/Solomag/tesl-reborn-android/main/updates
 git add updates/   # the manifest, and payloads publish_hook.py removed
 git commit -m "Promote patch N to stable"
-git push upstream HEAD:android-ui-and-update-loader
-git push upstream HEAD:main
+git push origin HEAD:android-ui-and-update-loader
+git push origin HEAD:main
 ```
 
 A phone never goes back to a lower revision: moving from Test to Stable, it

@@ -45,8 +45,8 @@ python tools/publish_hook.py --hook updates/payloads/<sha256>.js --revision N \
   --base-url https://raw.githubusercontent.com/Solomag/tesl-reborn-android/main/updates
 git add updates/   # манифест и payload'ы, удалённые publish_hook.py
 git commit -m "Promote patch N to stable"
-git push upstream HEAD:android-ui-and-update-loader
-git push upstream HEAD:main
+git push origin HEAD:android-ui-and-update-loader
+git push origin HEAD:main
 ```
 
 Ревизия stable не может быть ниже уже установленной у телефона: при переходе с
